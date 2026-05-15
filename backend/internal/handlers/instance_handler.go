@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	"clawreef/internal/models"
 	"clawreef/internal/services"
+	"clawreef/internal/services/k8s"
 	"clawreef/internal/utils"
 
 	"github.com/gin-gonic/gin"
@@ -502,7 +504,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 }
 
 func (h *InstanceHandler) GetRuntimeDetails(c *gin.Context) {
-	id, _, ok := h.resolveOwnedInstance(c)
+	id, instance, ok := h.resolveOwnedInstance(c)
 	if !ok {
 		return
 	}
@@ -523,11 +525,65 @@ func (h *InstanceHandler) GetRuntimeDetails(c *gin.Context) {
 		return
 	}
 
+	// Augment the agent-reported system_info.cpu with cgroup-accurate Pod CPU
+	// usage from metrics-server. The agent currently ships /proc/loadavg as
+	// `cpu.load.*` with load_scope=host, which the frontend was using as if it
+	// were the pod's own usage — leading to misleading 100% readouts driven
+	// entirely by host-wide load. The frontend now prefers
+	// system_info.cpu.usage_percent_of_quota when present; we populate that
+	// here using true per-pod CPU usage divided by the pod's CPU limit.
+	enrichRuntimeWithPodMetrics(c.Request.Context(), runtime, instance)
+
 	utils.Success(c, http.StatusOK, "Instance runtime details retrieved successfully", InstanceRuntimeDetailsResponse{
 		Runtime:  runtime,
 		Agent:    agent,
 		Commands: commands,
 	})
+}
+
+// enrichRuntimeWithPodMetrics talks to metrics-server and stuffs accurate
+// CPU + memory readings into runtime.SystemInfo so the frontend doesn't have
+// to compute them from host loadavg. Soft-fails when metrics-server is
+// unavailable (just leaves the existing system_info alone).
+func enrichRuntimeWithPodMetrics(ctx context.Context, runtime *services.InstanceRuntimeStatusPayload, instance *models.Instance) {
+	if runtime == nil || instance == nil {
+		return
+	}
+	if instance.PodName == nil || instance.PodNamespace == nil {
+		return
+	}
+	metrics := k8s.NewMetricsService()
+	usage, _ := metrics.GetPodCPUUsage(ctx, *instance.PodNamespace, *instance.PodName)
+	if usage == nil {
+		return
+	}
+	quotaMillicores := int64(instance.CPUCores * 1000)
+	var percent float64
+	if quotaMillicores > 0 {
+		percent = float64(usage.UsageMillicores) / float64(quotaMillicores) * 100
+	}
+
+	if runtime.SystemInfo == nil {
+		runtime.SystemInfo = map[string]interface{}{}
+	}
+	cpu, _ := runtime.SystemInfo["cpu"].(map[string]interface{})
+	if cpu == nil {
+		cpu = map[string]interface{}{}
+	}
+	cpu["usage_millicores"] = usage.UsageMillicores
+	cpu["quota_millicores"] = quotaMillicores
+	cpu["usage_percent_of_quota"] = percent
+	cpu["usage_source"] = "metrics-server"
+	runtime.SystemInfo["cpu"] = cpu
+
+	if usage.MemoryBytes > 0 {
+		mem, _ := runtime.SystemInfo["memory"].(map[string]interface{})
+		if mem == nil {
+			mem = map[string]interface{}{}
+		}
+		mem["usage_bytes_from_metrics"] = usage.MemoryBytes
+		runtime.SystemInfo["memory"] = mem
+	}
 }
 
 func (h *InstanceHandler) CreateRuntimeCommand(c *gin.Context) {

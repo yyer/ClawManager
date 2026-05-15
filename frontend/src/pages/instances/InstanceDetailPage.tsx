@@ -2255,8 +2255,13 @@ function extractMetricSnapshot(systemInfoValue: unknown) {
   const cpuInfo = asRecord(systemInfo.cpu);
   const cpuLoad = asRecord(cpuInfo?.load);
   const cores = getNumber(cpuInfo?.cores) || 1;
+  // Prefer backend-augmented metrics-server reading. The fallback
+  // (load.1m / cores) uses HOST loadavg, which is misleading because it
+  // counts every process on the VM (host chromium, IDE, k3s, ...). Backend
+  // populates usage_percent_of_quota from the pod's true cgroup CPU usage.
+  const cpuPercentFromMetrics = getNumber(cpuInfo?.usage_percent_of_quota);
   const cpuPercent = Math.min(
-    (((getNumber(cpuLoad?.["1m"]) || 0) / cores) * 100) || 0,
+    (cpuPercentFromMetrics ?? (((getNumber(cpuLoad?.["1m"]) || 0) / cores) * 100)) || 0,
     100,
   );
 

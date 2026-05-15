@@ -66,9 +66,19 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 		} else {
 			config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "openclaw-desktop", defaultTag)
 		}
+		// Override the lsio base image's DEFAULT_RES (15360x8640 = 16K × 8K).
+		// At 24bpp that allocates ~380 MB of framebuffer in Xvfb alone, on top
+		// of the cost of selkies streaming a stupendous resolution; combined
+		// with the 1-core / 3GiB cgroup defaults it puts every openclaw pod
+		// permanently against its memory ceiling and ~70% CPU throttled.
+		// SELKIES_MANUAL_WIDTH/HEIGHT is the knob both svc-xorg and svc-de
+		// honor in lsio's base; can be overridden per-instance via ExtraEnv
+		// in instance.Env later if we ever expose a UI knob.
 		config.Env = map[string]string{
-			"TITLE":     "ClawManager Desktop",
-			"SUBFOLDER": "/",
+			"TITLE":                  "ClawManager Desktop",
+			"SUBFOLDER":              "/",
+			"SELKIES_MANUAL_WIDTH":   "1024",
+			"SELKIES_MANUAL_HEIGHT":  "768",
 		}
 	case "debian":
 		config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "debian-desktop", defaultTag)
@@ -100,7 +110,14 @@ func defaultMountPathForInstanceType(instanceType string) string {
 
 func defaultEnvForInstanceType(instanceType string) map[string]string {
 	switch instanceType {
-	case "ubuntu", "webtop", "openclaw":
+	case "openclaw":
+		return map[string]string{
+			"TITLE":                  "ClawManager Desktop",
+			"SUBFOLDER":              "/",
+			"SELKIES_MANUAL_WIDTH":   "1024",
+			"SELKIES_MANUAL_HEIGHT":  "768",
+		}
+	case "ubuntu", "webtop":
 		return map[string]string{
 			"TITLE":     "ClawManager Desktop",
 			"SUBFOLDER": "/",

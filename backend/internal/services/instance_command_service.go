@@ -28,7 +28,14 @@ const (
 	InstanceCommandTypeSyncSkillInventory  = "sync_skill_inventory"
 	InstanceCommandTypeRefreshSkillInventory = "refresh_skill_inventory"
 	InstanceCommandTypeCollectSkillPackage = "collect_skill_package"
-	instanceCommandStatusPending           = "pending"
+
+	// secplane (security protection platform) command types. Carry compiled
+	// configuration payloads for plugins running inside the OpenClaw instance
+	// (claw-aegis, secureclaw, ...).
+	InstanceCommandTypeSecplaneApplyAegisConfig      = "secplane.apply_aegis_config"
+	InstanceCommandTypeSecplaneApplySecureClawConfig = "secplane.apply_secureclaw_config"
+
+	instanceCommandStatusPending = "pending"
 	instanceCommandStatusDispatched        = "dispatched"
 	instanceCommandStatusRunning           = "running"
 	instanceCommandStatusSucceeded         = "succeeded"
@@ -304,7 +311,9 @@ func isSupportedCommandType(commandType string) bool {
 		InstanceCommandTypeHandleSkillRisk,
 		InstanceCommandTypeSyncSkillInventory,
 		InstanceCommandTypeRefreshSkillInventory,
-		InstanceCommandTypeCollectSkillPackage:
+		InstanceCommandTypeCollectSkillPackage,
+		InstanceCommandTypeSecplaneApplyAegisConfig,
+		InstanceCommandTypeSecplaneApplySecureClawConfig:
 		return true
 	default:
 		return false
