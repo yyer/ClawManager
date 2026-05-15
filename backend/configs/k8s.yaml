@@ -57,7 +57,7 @@ kubernetes:
     
     # 默认 StorageClass
     # 空字符串使用集群默认 StorageClass
-    storageClass: "external-default-sc"
+    storageClass: "local-path"
     
     # 请求超时时间（秒）
     timeout: 30

@@ -1,0 +1,246 @@
+# ClawManager minikube dev deployment
+# Mirrors what we'd been running under k3s (namespace clawreef-system,
+# image clawmanager-secplane:dev14, NodePort 30901) but written from scratch
+# so it's pinned to dev defaults — root/123456 mysql, no MinIO, no TLS, no
+# skill-scanner. For production use deployments/k8s/clawmanager.yaml instead.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clawreef-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clawmanager-app
+  namespace: clawreef-system
+---
+# Dev shortcut: bind the SA to cluster-admin so the backend can manage pods,
+# services, secrets, namespaces, etc. across all per-user namespaces without
+# fiddling with fine-grained RBAC. Don't do this in prod.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clawmanager-app-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: clawmanager-app
+    namespace: clawreef-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: clawreef-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --default-authentication-plugin=mysql_native_password
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "123456"
+            - name: MYSQL_DATABASE
+              value: "clawreef"
+            - name: MYSQL_ROOT_HOST
+              value: "%"
+          ports:
+            - containerPort: 3306
+              name: mysql
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p123456"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+      volumes:
+        # emptyDir for dev — data lives for the pod's lifetime only.
+        # For persistence across rollouts, replace with a PVC.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: clawreef-system
+spec:
+  type: ClusterIP
+  selector:
+    app: mysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clawmanager-app
+  namespace: clawreef-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clawmanager-app
+  template:
+    metadata:
+      labels:
+        app: clawmanager-app
+    spec:
+      serviceAccountName: clawmanager-app
+      # Wait for mysql to be Ready before starting clawmanager-app, otherwise
+      # the backend exits on "connection refused" and crash-loops a few times
+      # before mysql is up. The initContainer makes startup deterministic.
+      initContainers:
+        - name: wait-for-mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until mysqladmin ping -h mysql.clawreef-system.svc.cluster.local -uroot -p123456 --silent 2>/dev/null; do
+                echo "waiting for mysql..."
+                sleep 2
+              done
+              echo "mysql ready"
+      containers:
+        - name: clawmanager-app
+          image: clawmanager-secplane:dev17
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 9001
+          env:
+            - name: SERVER_ADDRESS
+              value: ":9001"
+            - name: SERVER_MODE
+              value: "debug"
+            - name: DB_HOST
+              value: "mysql.clawreef-system.svc.cluster.local"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "root"
+            - name: DB_PASSWORD
+              value: "123456"
+            - name: DB_NAME
+              value: "clawreef"
+            - name: JWT_SECRET
+              value: "clawreef-dev-secret-key-change-in-production"
+            - name: K8S_MODE
+              value: "incluster"
+            - name: K8S_NAMESPACE
+              value: "clawreef"
+            - name: CLAWMANAGER_SYSTEM_NAMESPACE
+              value: "clawreef-system"
+            - name: K8S_STORAGE_CLASS
+              value: "standard"
+            - name: CLAWMANAGER_AGENT_CONTROL_BASE_URL
+              value: "http://clawmanager-gateway.clawreef-system.svc.cluster.local:9001"
+            - name: CLAWMANAGER_LLM_GATEWAY_BASE_URL
+              value: "http://clawmanager-gateway.clawreef-system.svc.cluster.local:9001/api/v1/gateway/llm"
+            - name: CLAWMANAGER_EGRESS_PROXY_URL
+              value: "http://clawmanager-egress-proxy.clawreef-system.svc.cluster.local:3128"
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+          livenessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          volumeMounts:
+            - name: object-storage
+              mountPath: /app/.data
+      volumes:
+        - name: object-storage
+          persistentVolumeClaim:
+            claimName: clawmanager-object-storage
+---
+# Object-storage PVC — persists skill zip files across backend pod rollouts.
+# Previously this was emptyDir; pod recreation lost all skill artifacts while
+# the skill DB rows survived, so subsequent dispatches dedup'd to a missing
+# file and install_skill failed with 500.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clawmanager-object-storage
+  namespace: clawreef-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# NodePort 30901 → matches previous k3s setup; existing scripts/frontend
+# proxy configurations continue to work.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clawmanager-gateway
+  namespace: clawreef-system
+spec:
+  type: NodePort
+  selector:
+    app: clawmanager-app
+  ports:
+    - name: api
+      port: 9001
+      targetPort: 9001
+      nodePort: 30901
+---
+# Egress proxy service used by openclaw instance pods (HTTP_PROXY env).
+# Same selector as clawmanager-app — backend speaks HTTP proxy on port 3128.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clawmanager-egress-proxy
+  namespace: clawreef-system
+spec:
+  type: ClusterIP
+  selector:
+    app: clawmanager-app
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: 9001

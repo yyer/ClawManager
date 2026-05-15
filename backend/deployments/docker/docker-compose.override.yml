@@ -1,0 +1,22 @@
+# Local-dev override: aligns the mysql service with backend/configs/dev.yaml
+# (root/123456, port 13306). The override file is automatically loaded by
+# `docker compose` so commands stay short:
+#
+#   docker compose up -d mysql
+#
+# Notes:
+# - Drops the migrations bind-mount on /docker-entrypoint-initdb.d so the Go
+#   side's applyEmbeddedMigrations() is the single source of truth for schema
+#   evolution (avoids double-apply ordering issues during local dev).
+# - Only the mysql service is touched; the backend service inherited from
+#   docker-compose.yml is unused locally because we run `make run` on the host.
+services:
+  mysql:
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: "clawreef"
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql

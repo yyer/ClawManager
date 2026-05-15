@@ -1,7 +1,22 @@
+# Stage 1: just to grab CA certs (so HTTPS calls to public providers like
+# api.deepseek.com / api.openai.com / api.anthropic.com can verify TLS).
+# scratch-only images have no /etc/ssl/certs, which makes Go's net/http error
+# with "x509: certificate signed by unknown authority" on every outbound HTTPS.
+FROM alpine:3.19 AS certs
+RUN apk add --no-cache ca-certificates
+
 FROM scratch
 
-WORKDIR /
+# WORKDIR /app: backend's object storage uses relative path ".data/object-storage",
+# which is resolved against cwd. WORKDIR=/app makes the writes land in
+# /app/.data/object-storage, which is exactly where the object-storage PVC is
+# mounted (see deployments/minikube/clawmanager-dev.yaml). With WORKDIR=/ the
+# writes would land at /.data — outside the PVC — silently lost on pod
+# recreate while skill_blobs DB rows survived, leading to "no such file"
+# install_skill failures on the next dispatch.
+WORKDIR /app
 
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY bin/server /server
 
 EXPOSE 9001
