@@ -146,7 +146,10 @@ func (r *ruleRepository) Delete(ruleID string) error {
 // rule_ids are skipped (no overwrite) so operator edits via the admin UI
 // survive backend restarts.
 func (r *ruleRepository) seedDefaults() {
-	seeds := builtInRules()
+	// Legacy prompt_filter rules used to seed here via builtInRules() —
+	// dropped because compile.go no longer consumes them; their per-flag
+	// equivalents live in user_risk_flag / tool_result_flag rules now.
+	var seeds []Rule
 	seeds = append(seeds, builtInDefenseToggleRules()...)
 	seeds = append(seeds, builtInUserRiskFlagRules()...)
 	seeds = append(seeds, builtInToolResultFlagRules()...)
@@ -309,100 +312,3 @@ func stringsToInterfaces(in []string) []interface{} {
 
 func strPtr(s string) *string { return &s }
 
-// builtInRules is the seed list for FR-01 prompt_filter rules. Patterns are
-// deliberately conservative — operators can refine via the admin UI.
-func builtInRules() []Rule {
-	return []Rule{
-		{
-			RuleID:      "prompt_injection_ignore_previous",
-			Kind:        KindPromptFilter,
-			DisplayName: "提示词注入：忽略前文指令",
-			Description: strPtr("检测要求模型忽略/忘记之前指令的常见注入语句。"),
-			Pattern:     `(?i)(ignore\s+(?:all\s+|the\s+)?(?:previous|prior|above)\s+(?:instructions|prompts)|忽略(?:以上|之前|前面)?(?:所有)?(?:指令|提示))`,
-			Target:      TargetUserInput,
-			Severity:    SeverityHigh,
-			Action:      ActionBlock,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   10,
-		},
-		{
-			RuleID:      "prompt_injection_role_override",
-			Kind:        KindPromptFilter,
-			DisplayName: "提示词注入：角色覆盖",
-			Description: strPtr("检测试图覆盖系统角色或冒充开发者/管理员的语句。"),
-			Pattern:     `(?i)(you are now|act as|pretend to be|从现在起你是|扮演)\s*(?:DAN|developer|admin|root|system|管理员|开发者)`,
-			Target:      TargetUserInput,
-			Severity:    SeverityHigh,
-			Action:      ActionBlock,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   20,
-		},
-		{
-			RuleID:      "jailbreak_dan",
-			Kind:        KindPromptFilter,
-			DisplayName: "越狱：DAN/无限制模式",
-			Description: strPtr("检测 DAN/Jailbreak/不受限模式之类越狱套路。"),
-			Pattern:     `(?i)\b(DAN mode|do anything now|jailbreak|越狱|无限制模式|无规则模式)\b`,
-			Target:      TargetUserInput,
-			Severity:    SeverityHigh,
-			Action:      ActionBlock,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   30,
-		},
-		{
-			RuleID:      "system_prompt_extraction",
-			Kind:        KindPromptFilter,
-			DisplayName: "系统提示词窃取",
-			Description: strPtr("检测意图获取/泄露系统提示词、初始指令的请求。"),
-			Pattern:     `(?i)(reveal|show|print|leak|repeat|输出|展示|打印)\s+(your\s+)?(system\s+prompt|hidden\s+instructions?|initial\s+instructions?|系统提示(词)?|初始指令)`,
-			Target:      TargetUserInput,
-			Severity:    SeverityHigh,
-			Action:      ActionBlock,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   40,
-		},
-		{
-			RuleID:      "encoded_payload_marker",
-			Kind:        KindPromptFilter,
-			DisplayName: "编码载荷：base64/hex 长串",
-			Description: strPtr("检测疑似编码后的注入载荷（长 base64/hex 字符串）。"),
-			Pattern:     `(?i)\b(?:[A-Za-z0-9+/]{120,}={0,2}|[a-f0-9]{160,})\b`,
-			Target:      TargetUserInput,
-			Severity:    SeverityMedium,
-			Action:      ActionObserve,
-			Mode:        ModeObserve,
-			IsEnabled:   true,
-			SortOrder:   50,
-		},
-		{
-			RuleID:      "tool_misuse_shell_pipe",
-			Kind:        KindPromptFilter,
-			DisplayName: "高危工具诱导：curl|sh / wget|sh",
-			Description: strPtr("检测要求 Agent 通过 pipe-to-shell 方式执行远端脚本。"),
-			Pattern:     `(?i)(curl|wget)\s+[^|]+\|\s*(bash|sh|zsh)`,
-			Target:      TargetUserInput,
-			Severity:    SeverityHigh,
-			Action:      ActionBlock,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   60,
-		},
-		{
-			RuleID:      "rag_external_instruction",
-			Kind:        KindPromptFilter,
-			DisplayName: "RAG/外部内容注入",
-			Description: strPtr("检测从 RAG/网页/邮件来源混入的高优先级伪造指令。"),
-			Pattern:     `(?i)(\[\[\s*system\s*\]\]|<!--\s*system:|^\s*###\s*new\s+instructions)`,
-			Target:      TargetRAGResult,
-			Severity:    SeverityMedium,
-			Action:      ActionRedact,
-			Mode:        ModeEnforce,
-			IsEnabled:   true,
-			SortOrder:   70,
-		},
-	}
-}
