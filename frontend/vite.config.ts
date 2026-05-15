@@ -9,7 +9,13 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:9001',
+        // ClawManager backend now runs in minikube as Deployment
+        // clawmanager-app (Service clawmanager-gateway type=NodePort in ns
+        // clawreef-system). Targeting `minikube ip`:30901 directly is more
+        // reliable than `kubectl port-forward` (host port 30901 is blocked
+        // by some local rule, plus port-forwards die on idle / SIGKILL).
+        // If the minikube IP changes, refresh with: `minikube ip`.
+        target: 'http://192.168.49.2:30901',
         changeOrigin: true,
         ws: true,
       },

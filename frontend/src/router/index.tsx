@@ -25,6 +25,7 @@ import ModelManagementPage from '../pages/admin/ModelManagementPage';
 import SystemSettingsPage from '../pages/admin/SystemSettingsPage';
 import UserSettingsPage from '../pages/settings/UserSettingsPage';
 import OpenClawConfigCenterPage from '../pages/openclaw/OpenClawConfigCenterPage';
+import SecplaneInputDetectionPage from '../pages/admin/secplane/InputDetectionPage';
 
 // Instance Pages
 import InstanceListPage from '../pages/instances/InstanceListPage';
@@ -288,6 +289,20 @@ function AppRoutes() {
             <RiskRulesPage />
           </AdminRoute>
         }
+      />
+
+      {/* Secplane (Security Protection Platform) Routes */}
+      <Route
+        path="/admin/secplane/input-detection"
+        element={
+          <AdminRoute>
+            <SecplaneInputDetectionPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/secplane"
+        element={<Navigate to="/admin/secplane/input-detection" replace />}
       />
       <Route
         path="/admin/models"

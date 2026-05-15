@@ -42,6 +42,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => {
     { path: '/admin/users', label: t('nav.users'), icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
     { path: '/admin/instances', label: t('nav.instances'), icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
     { path: '/admin/security', label: t('nav.securityCenter'), icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/assets', '/admin/skills'] },
+    { path: '/admin/secplane/input-detection', label: '智能安全防护 / Secplane', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z', matchPaths: ['/admin/secplane'] },
     {
       path: '/admin/ai-gateway',
       label: t('nav.aiGateway'),
