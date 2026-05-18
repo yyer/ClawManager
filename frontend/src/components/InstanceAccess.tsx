@@ -7,6 +7,8 @@ interface InstanceAccessProps {
   instanceId: number;
   instanceName: string;
   isRunning: boolean;
+  frameHeightClassName?: string;
+  containerClassName?: string;
   overlay?: {
     gatewayStatus: string;
     canControl: boolean;
@@ -51,6 +53,8 @@ export function InstanceAccess({
   instanceId,
   instanceName,
   isRunning,
+  frameHeightClassName,
+  containerClassName,
   overlay,
 }: InstanceAccessProps) {
   const { t } = useI18n();
@@ -139,7 +143,8 @@ export function InstanceAccess({
 
   const frameHeightClass = isFullscreen
     ? "min-h-0 flex-1"
-    : "h-[54vh] min-h-[420px] max-h-[720px] md:h-[58vh] xl:h-[60vh]";
+    : frameHeightClassName ||
+      "h-[54vh] min-h-[420px] max-h-[720px] md:h-[58vh] xl:h-[60vh]";
   const showStartScreen = !embedUrl;
   const hasDesktopSession =
     shouldConnect || Boolean(embedUrl) || loading || reconnecting;
@@ -183,7 +188,7 @@ export function InstanceAccess({
     return (
       <div
         ref={containerRef}
-        className="relative overflow-hidden rounded-[28px] border border-[#1f2937] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.2),transparent_28%),linear-gradient(180deg,#111827_0%,#0f172a_100%)] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"
+        className={`relative overflow-hidden rounded-[28px] border border-[#1f2937] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.2),transparent_28%),linear-gradient(180deg,#111827_0%,#0f172a_100%)] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)] ${containerClassName || ""}`}
       >
         {overlay ? (
           <OpenClawDesktopOverlay
@@ -241,7 +246,7 @@ export function InstanceAccess({
   return (
     <div
       ref={containerRef}
-      className={`relative overflow-hidden bg-[#111827] ${isFullscreen ? "flex h-screen flex-col rounded-none" : "rounded-[28px] border border-[#1f2937] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"}`}
+      className={`relative overflow-hidden bg-[#111827] ${isFullscreen ? "flex h-screen flex-col rounded-none" : "rounded-[28px] border border-[#1f2937] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"} ${containerClassName || ""}`}
     >
       {overlay ? (
         <OpenClawDesktopOverlay
