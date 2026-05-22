@@ -150,6 +150,47 @@ func TestSystemImageSettingServiceGetRuntimeImageFallsBackToDefaultWhenNoRowsExi
 	}
 }
 
+func TestSystemImageSettingServiceListIncludesOpenClawShellDefault(t *testing.T) {
+	service := NewSystemImageSettingService(&stubSystemImageSettingRepository{})
+
+	items, err := service.List()
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+
+	found := false
+	for _, item := range items {
+		if item.InstanceType == "openclaw" && item.RuntimeType == "shell" {
+			found = true
+			if item.Image != defaultShellSystemImageSettings["openclaw"] {
+				t.Fatalf("expected default openclaw shell image %q, got %q", defaultShellSystemImageSettings["openclaw"], item.Image)
+			}
+			if !item.IsEnabled {
+				t.Fatalf("expected default openclaw shell image to be enabled")
+			}
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected default openclaw shell runtime image")
+	}
+}
+
+func TestSystemImageSettingServiceGetRuntimeImageForImageFallsBackToOpenClawShellDefault(t *testing.T) {
+	service := NewSystemImageSettingService(&stubSystemImageSettingRepository{})
+
+	selection, ok := service.GetRuntimeImageForImage("openclaw", defaultShellSystemImageSettings["openclaw"])
+	if !ok {
+		t.Fatalf("expected default openclaw shell runtime image to resolve")
+	}
+	if selection.RuntimeType != "shell" {
+		t.Fatalf("expected runtime type shell, got %q", selection.RuntimeType)
+	}
+	if selection.Image != defaultShellSystemImageSettings["openclaw"] {
+		t.Fatalf("expected shell image %q, got %q", defaultShellSystemImageSettings["openclaw"], selection.Image)
+	}
+}
+
 func TestSystemImageSettingServiceGetRuntimeImageForImageUsesCardRuntimeType(t *testing.T) {
 	repo := &stubSystemImageSettingRepository{
 		items: []models.SystemImageSetting{

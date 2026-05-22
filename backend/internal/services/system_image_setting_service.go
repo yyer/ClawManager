@@ -55,6 +55,10 @@ var defaultEnabledSystemImageTypes = map[string]bool{
 	"hermes":   true,
 }
 
+var defaultEnabledShellSystemImageTypes = map[string]bool{
+	"openclaw": true,
+}
+
 // RuntimeImageConfig is the runtime card selected for an instance type.
 type RuntimeImageConfig struct {
 	Image       string
@@ -113,13 +117,7 @@ func (s *systemImageSettingService) List() ([]models.SystemImageSetting, error) 
 	for _, instanceType := range orderedSystemImageTypes {
 		items := byType[instanceType]
 		if len(items) == 0 {
-			settings = append(settings, models.SystemImageSetting{
-				InstanceType: instanceType,
-				RuntimeType:  "desktop",
-				DisplayName:  displayNameForSystemImageType(instanceType),
-				Image:        defaultSystemImageSettings[instanceType],
-				IsEnabled:    defaultEnabledSystemImageTypes[instanceType],
-			})
+			settings = append(settings, defaultSystemImagePresetsForType(instanceType)...)
 			continue
 		}
 
@@ -166,7 +164,7 @@ func (s *systemImageSettingService) Save(setting *models.SystemImageSetting) (*m
 	setting.Image = image
 	setting.DisplayName = strings.TrimSpace(setting.DisplayName)
 	if setting.DisplayName == "" {
-		setting.DisplayName = supportedSystemImageTypes[normalizedType]
+		setting.DisplayName = displayNameForSystemImagePreset(normalizedType, runtimeType)
 	}
 	setting.IsEnabled = true
 
@@ -222,7 +220,7 @@ func (s *systemImageSettingService) disableTypeWithFallback(instanceType string)
 	return s.repo.Save(&models.SystemImageSetting{
 		InstanceType: instanceType,
 		RuntimeType:  "desktop",
-		DisplayName:  displayNameForSystemImageType(instanceType),
+		DisplayName:  displayNameForSystemImagePreset(instanceType, "desktop"),
 		Image:        defaultSystemImageSettings[instanceType],
 		IsEnabled:    false,
 	})
@@ -236,8 +234,13 @@ func (s *systemImageSettingService) GetRuntimeImage(instanceType string) (Runtim
 	}
 
 	if len(items) == 0 {
-		image := strings.TrimSpace(defaultSystemImageSettings[normalizedType])
-		return RuntimeImageConfig{Image: image, RuntimeType: "desktop"}, image != "" && defaultEnabledSystemImageTypes[normalizedType]
+		for _, item := range defaultSystemImagePresetsForType(normalizedType) {
+			image := strings.TrimSpace(item.Image)
+			if item.IsEnabled && image != "" {
+				return RuntimeImageConfig{Image: image, RuntimeType: item.RuntimeType}, true
+			}
+		}
+		return RuntimeImageConfig{}, false
 	}
 
 	for _, item := range items {
@@ -269,9 +272,11 @@ func (s *systemImageSettingService) GetRuntimeImageForImage(instanceType, image 
 	}
 
 	if len(items) == 0 {
-		defaultImage := strings.TrimSpace(defaultSystemImageSettings[normalizedType])
-		if defaultEnabledSystemImageTypes[normalizedType] && defaultImage == normalizedImage {
-			return RuntimeImageConfig{Image: defaultImage, RuntimeType: "desktop"}, true
+		for _, item := range defaultSystemImagePresetsForType(normalizedType) {
+			defaultImage := strings.TrimSpace(item.Image)
+			if item.IsEnabled && defaultImage == normalizedImage {
+				return RuntimeImageConfig{Image: defaultImage, RuntimeType: item.RuntimeType}, true
+			}
 		}
 		return RuntimeImageConfig{}, false
 	}
@@ -310,6 +315,41 @@ func displayNameForSystemImageType(instanceType string) string {
 		return name
 	}
 	return fmt.Sprintf("%s Image", instanceType)
+}
+
+func displayNameForSystemImagePreset(instanceType, runtimeType string) string {
+	normalizedRuntimeType := normalizeSystemImageRuntimeType(runtimeType)
+	if instanceType == "openclaw" {
+		if normalizedRuntimeType == "shell" {
+			return "OpenClaw Shell"
+		}
+		return "OpenClaw Desktop"
+	}
+	return displayNameForSystemImageType(instanceType)
+}
+
+func defaultSystemImagePresetsForType(instanceType string) []models.SystemImageSetting {
+	settings := []models.SystemImageSetting{{
+		InstanceType: instanceType,
+		RuntimeType:  "desktop",
+		DisplayName:  displayNameForSystemImagePreset(instanceType, "desktop"),
+		Image:        defaultSystemImageSettings[instanceType],
+		IsEnabled:    defaultEnabledSystemImageTypes[instanceType],
+	}}
+
+	if image := strings.TrimSpace(defaultShellSystemImageSettings[instanceType]); image != "" {
+		if defaultEnabledShellSystemImageTypes[instanceType] {
+			settings = append(settings, models.SystemImageSetting{
+				InstanceType: instanceType,
+				RuntimeType:  "shell",
+				DisplayName:  displayNameForSystemImagePreset(instanceType, "shell"),
+				Image:        image,
+				IsEnabled:    true,
+			})
+		}
+	}
+
+	return settings
 }
 
 func isSupportedSystemImageType(instanceType string) bool {
