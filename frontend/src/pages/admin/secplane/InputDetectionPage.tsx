@@ -9,8 +9,7 @@ import {
   type DispatchResult,
   type RuleMode,
 } from '../../../services/secplaneService';
-import { instanceService } from '../../../services/instanceService';
-import type { Instance } from '../../../types/instance';
+import DispatchPickerModal from '../../../components/secplane/DispatchPickerModal';
 
 // ---------------------------------------------------------------------------
 // Canonical ClawAegis taxonomy. Names + display labels must stay in sync with
@@ -152,13 +151,9 @@ const InputDetectionPage: React.FC = () => {
   const [dispatchResult, setDispatchResult] = useState<DispatchResult | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
 
-  // Dispatch target picker (modal)
+  // Dispatch target picker (modal). Picker owns the instance list state
+  // internally now — see components/secplane/DispatchPickerModal.
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [instances, setInstances] = useState<Instance[]>([]);
-  const [instancesLoading, setInstancesLoading] = useState(false);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [instanceFilter, setInstanceFilter] = useState('');
-  const [selectedInstanceIDs, setSelectedInstanceIDs] = useState<Set<number>>(new Set());
 
   // Saving (per-rule) tracker so the UI can spin a single row.
   const [savingRuleID, setSavingRuleID] = useState<string | null>(null);
@@ -272,63 +267,6 @@ const InputDetectionPage: React.FC = () => {
       setDispatching(false);
     }
   };
-
-  // openDispatchPicker eagerly loads the instance list. Cached for the
-  // session — repeat opens are instant unless the user hits "刷新" inside.
-  const openDispatchPicker = async () => {
-    setPickerOpen(true);
-    setInstanceFilter('');
-    if (instances.length > 0) return;
-    await loadInstances();
-  };
-
-  const loadInstances = async () => {
-    setInstancesLoading(true);
-    setInstancesError(null);
-    try {
-      // 200 is the cluster cap for openclaw instances at this stage; if a
-      // deployment ever crosses that, switch to paginated fetch here.
-      const resp = await instanceService.getInstances(1, 200);
-      setInstances(resp.instances);
-    } catch (e: any) {
-      setInstancesError(e?.response?.data?.error ?? e?.message ?? 'failed to load instances');
-    } finally {
-      setInstancesLoading(false);
-    }
-  };
-
-  const filteredInstances = useMemo(() => {
-    const q = instanceFilter.trim().toLowerCase();
-    if (!q) return instances;
-    return instances.filter((inst) => {
-      return (
-        inst.name.toLowerCase().includes(q) ||
-        String(inst.id).includes(q) ||
-        inst.status.toLowerCase().includes(q) ||
-        (inst.pod_name ?? '').toLowerCase().includes(q) ||
-        inst.type.toLowerCase().includes(q)
-      );
-    });
-  }, [instances, instanceFilter]);
-
-  const toggleInstanceSelected = (id: number) => {
-    setSelectedInstanceIDs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const selectAllVisible = () => {
-    setSelectedInstanceIDs((prev) => {
-      const next = new Set(prev);
-      for (const inst of filteredInstances) next.add(inst.id);
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelectedInstanceIDs(new Set());
 
   // ---- Renderers --------------------------------------------------------
 
@@ -760,7 +698,7 @@ const InputDetectionPage: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={openDispatchPicker}
+              onClick={() => setPickerOpen(true)}
               disabled={dispatching}
               className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-indigo-700 disabled:opacity-60"
               title="选择目标实例并下发 ClawAegis user_config"
@@ -842,147 +780,13 @@ const InputDetectionPage: React.FC = () => {
         </div>
       </div>
 
-      {pickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
-              <div>
-                <div className="text-base font-semibold text-gray-900">选择下发目标实例</div>
-                <div className="text-xs text-gray-500">
-                  把当前规则编译为 ClawAegis user_config，通过 install_skill 推送到选中的 OpenClaw 实例。
-                </div>
-              </div>
-              <button
-                onClick={() => setPickerOpen(false)}
-                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="border-b border-gray-200 px-5 py-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="relative flex-1 min-w-[200px]">
-                  <input
-                    type="text"
-                    value={instanceFilter}
-                    onChange={(e) => setInstanceFilter(e.target.value)}
-                    placeholder="按名称 / ID / 状态 / pod / 类型 过滤…"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <button
-                  onClick={selectAllVisible}
-                  disabled={filteredInstances.length === 0}
-                  className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                >
-                  全选当前 ({filteredInstances.length})
-                </button>
-                <button
-                  onClick={clearSelection}
-                  disabled={selectedInstanceIDs.size === 0}
-                  className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                >
-                  清空 ({selectedInstanceIDs.size})
-                </button>
-                <button
-                  onClick={loadInstances}
-                  className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                >
-                  刷新
-                </button>
-              </div>
-              <div className="mt-2 text-xs text-gray-500">
-                共 {instances.length} 个实例；过滤命中 {filteredInstances.length}；已选 {selectedInstanceIDs.size}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {instancesLoading && <div className="p-6 text-center text-sm text-gray-500">加载中…</div>}
-              {instancesError && (
-                <div className="m-5 rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{instancesError}</div>
-              )}
-              {!instancesLoading && filteredInstances.length === 0 && (
-                <div className="p-6 text-center text-sm text-gray-500">
-                  {instances.length === 0 ? '暂无实例' : '当前过滤条件无匹配实例'}
-                </div>
-              )}
-              <ul className="divide-y divide-gray-100">
-                {filteredInstances.map((inst) => {
-                  const checked = selectedInstanceIDs.has(inst.id);
-                  const statusTone = {
-                    running: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-                    stopped: 'bg-gray-100 text-gray-600 border-gray-200',
-                    creating: 'bg-sky-100 text-sky-700 border-sky-200',
-                    deleting: 'bg-amber-100 text-amber-700 border-amber-200',
-                    error: 'bg-rose-100 text-rose-700 border-rose-200',
-                  }[inst.status] ?? 'bg-gray-100 text-gray-600 border-gray-200';
-                  const notRunning = inst.status !== 'running';
-                  return (
-                    <li key={inst.id}>
-                      <label className={`flex cursor-pointer items-center gap-3 px-5 py-3 hover:bg-gray-50 ${checked ? 'bg-indigo-50/50' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleInstanceSelected(inst.id)}
-                          className="h-4 w-4 rounded border-gray-300"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate font-medium text-gray-900">{inst.name}</span>
-                            <span className="text-xs text-gray-500">#{inst.id}</span>
-                            <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase ${statusTone}`}>{inst.status}</span>
-                            <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">{inst.type}</span>
-                            {notRunning && <span className="text-[10px] text-amber-600" title="非 running 状态的实例下发后可能在启动后才应用">⚠ 未运行</span>}
-                          </div>
-                          {inst.pod_name && (
-                            <div className="mt-0.5 text-xs text-gray-500">
-                              <span className="font-mono">{inst.pod_namespace}/{inst.pod_name}</span>
-                              {inst.pod_ip && <span className="ml-2">{inst.pod_ip}</span>}
-                            </div>
-                          )}
-                        </div>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
-              <div className="text-xs text-gray-500">
-                {selectedInstanceIDs.size > 0
-                  ? `将下发到选中的 ${selectedInstanceIDs.size} 个实例`
-                  : '未选择任何实例 — 可改为下发到全部'}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPickerOpen(false)}
-                  className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => runDispatch(null)}
-                  disabled={dispatching || instances.length === 0}
-                  className="rounded border border-indigo-300 bg-white px-3 py-1.5 text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
-                  title="不带 instance_ids，由后端选取所有实例"
-                >
-                  {dispatching ? '下发中…' : `下发到全部 (${instances.length})`}
-                </button>
-                <button
-                  onClick={() => runDispatch(Array.from(selectedInstanceIDs))}
-                  disabled={dispatching || selectedInstanceIDs.size === 0}
-                  className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  {dispatching ? '下发中…' : `下发到选中 (${selectedInstanceIDs.size})`}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <DispatchPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onDispatch={runDispatch}
+        dispatching={dispatching}
+        hint="把当前 ClawAegis 规则编译为 user_config 并通过 install_skill 推送到选中的 OpenClaw 实例。"
+      />
     </AdminLayout>
   );
 };

@@ -3,10 +3,11 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import { CATEGORIES } from '../pages/admin/protection/_data';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
-  title: string;
+  title?: string;
 }
 
 interface NavItem {
@@ -15,14 +16,19 @@ interface NavItem {
   icon: string;
   matchPaths?: string[];
   exact?: boolean;
+  hasPopup?: boolean;
 }
 
-const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => {
+const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
   const location = useLocation();
   const { user, logout } = useAuth();
   const { t } = useI18n();
   const shellContainerClass = 'mx-auto w-full max-w-[1800px] px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12';
   const [profileExpanded, setProfileExpanded] = useState(false);
+  const [popoverItemPath, setPopoverItemPath] = useState<string | null>(null);
+
+  // 安全防护 popup 用 7 类别（移除总览 + events，跟主入口和侧边其他 nav 重复）
+  const PROTECTION_POPUP_CATS = CATEGORIES.filter((c) => c.id !== 'overview' && c.id !== 'events');
 
   const isActive = (item: NavItem) => {
     if (item.exact) {
@@ -42,7 +48,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => {
     { path: '/admin/users', label: t('nav.users'), icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
     { path: '/admin/instances', label: t('nav.instances'), icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
     { path: '/admin/security', label: t('nav.securityCenter'), icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/assets', '/admin/skills'] },
-    { path: '/admin/secplane/input-detection', label: '智能安全防护 / Secplane', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z', matchPaths: ['/admin/secplane'] },
+    { path: '/admin/secplane', label: '安全防护', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm'], hasPopup: true },
+    { path: '/admin/secplane/input-detection', label: '输入检测 / ClawAegis', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z' },
+    { path: '/admin/secplane/secureclaw', label: '审计加固 / SecureClaw', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
     {
       path: '/admin/ai-gateway',
       label: t('nav.aiGateway'),
@@ -168,30 +176,72 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => {
               </div>
               <div className="space-y-1.5">
                 {navItems.map((item) => (
-                  <Link
+                  <div
                     key={item.path}
-                    to={item.path}
-                    className={`flex items-center rounded-2xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
-                      isActive(item)
-                        ? 'bg-[#fff1eb] text-red-600 shadow-[inset_0_0_0_1px_rgba(243,199,183,0.8),0_16px_30px_-24px_rgba(220,38,38,0.45)]'
-                        : 'text-[#6e6763] hover:bg-[rgba(247,236,230,0.82)] hover:text-[#171212]'
-                    }`}
+                    className="relative"
+                    onMouseEnter={() => item.hasPopup && setPopoverItemPath(item.path)}
+                    onMouseLeave={() => item.hasPopup && setPopoverItemPath(null)}
                   >
-                    <svg
-                      className="mr-3 h-5 w-5 shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                    <Link
+                      to={item.path}
+                      className={`flex items-center rounded-2xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
+                        isActive(item)
+                          ? 'bg-[#fff1eb] text-red-600 shadow-[inset_0_0_0_1px_rgba(243,199,183,0.8),0_16px_30px_-24px_rgba(220,38,38,0.45)]'
+                          : 'text-[#6e6763] hover:bg-[rgba(247,236,230,0.82)] hover:text-[#171212]'
+                      }`}
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d={item.icon}
-                      />
-                    </svg>
-                    <span>{item.label}</span>
-                  </Link>
+                      <svg className="mr-3 h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                      </svg>
+                      <span>{item.label}</span>
+                      {item.hasPopup && (
+                        <svg
+                          className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                    </Link>
+                    {item.hasPopup && popoverItemPath === item.path && (
+                      <div
+                        className="absolute left-full top-0 z-40 ml-3 w-64 rounded-2xl border border-[#eadfd8] bg-white p-2 shadow-[0_24px_60px_-32px_rgba(72,44,24,0.42)]"
+                        onMouseEnter={() => setPopoverItemPath(item.path)}
+                        onMouseLeave={() => setPopoverItemPath(null)}
+                      >
+                        <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-[#b46c50]">
+                          7 大类别
+                        </div>
+                        {PROTECTION_POPUP_CATS.map((cat) => (
+                          <Link
+                            key={cat.id}
+                            to={cat.path}
+                            className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
+                              cat.disabled
+                                ? 'cursor-not-allowed opacity-50 muted'
+                                : 'hover:bg-[#fdf6f1] text-[#171212]'
+                            }`}
+                            onClick={(e) => {
+                              if (cat.disabled) e.preventDefault();
+                              setPopoverItemPath(null);
+                            }}
+                          >
+                            <span
+                              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                              style={{ background: cat.color }}
+                            />
+                            <span className="flex-1 truncate font-medium">{cat.label}</span>
+                            {cat.count !== undefined && !cat.disabled && (
+                              <span className="text-[10px] muted-strong">{cat.count} 场景</span>
+                            )}
+                            {cat.disabled && <span className="badge badge-slate text-[10px]">规划中</span>}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </nav>
