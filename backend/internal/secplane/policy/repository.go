@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -153,6 +155,14 @@ func (r *ruleRepository) seedDefaults() {
 	seeds = append(seeds, builtInDefenseToggleRules()...)
 	seeds = append(seeds, builtInUserRiskFlagRules()...)
 	seeds = append(seeds, builtInToolResultFlagRules()...)
+	seeds = append(seeds, builtInSecureClawRules()...)
+	seeds = append(seeds, builtInSecureClawAuditCheckRules()...)
+	seeds = append(seeds, builtInSecureClawHardeningRules()...)
+	seeds = append(seeds, builtInSecureClawDangerousCategoryRules()...)
+	seeds = append(seeds, builtInSecureClawDangerousPatternRules()...)
+	seeds = append(seeds, builtInSecureClawInjectionPatternRules()...)
+	seeds = append(seeds, builtInSecureClawPrivacyRuleRules()...)
+	seeds = append(seeds, builtInSecureClawIocRules()...)
 	for _, item := range seeds {
 		existing, err := r.GetByRuleID(item.RuleID)
 		if err != nil {
@@ -312,3 +322,197 @@ func stringsToInterfaces(in []string) []interface{} {
 
 func strPtr(s string) *string { return &s }
 
+// builtInSecureClawAuditCheckRules seeds one row per SC-* audit check.
+// All start enabled+enforce (default behavior) — operators can flip to
+// observe (record but don't auto-harden) or disabled (skip entirely)
+// via the admin UI.
+func builtInSecureClawAuditCheckRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawAuditCheckDefaults))
+	for idx, row := range SecureClawAuditCheckDefaults {
+		// rule_id namespace: sc.audit.<SC-XX-NNN>
+		out = append(out, Rule{
+			RuleID:      "sc.audit." + row.ID,
+			Kind:        KindSecureClawAuditCheck,
+			DisplayName: row.ID,
+			Description: strPtr(row.Title),
+			Pattern:     row.Category, // store category as pattern for cheap filtering
+			Target:      TargetUserInput,
+			Severity:    row.Severity,
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			IsEnabled:   true,
+			SortOrder:   2000 + idx*5,
+		})
+	}
+	return out
+}
+
+// builtInSecureClawHardeningRules seeds one row per SC-* hardening fix.
+// All disabled by default (autoHarden=false in the seed reinforces this)
+// so a fresh deploy never auto-mutates a pod's config. Enable per-fix
+// explicitly when an operator has reviewed the change.
+func builtInSecureClawHardeningRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawHardeningDefaults))
+	for idx, row := range SecureClawHardeningDefaults {
+		out = append(out, Rule{
+			RuleID:      "sc.harden." + row.ID,
+			Kind:        KindSecureClawHardening,
+			DisplayName: row.ID,
+			Description: strPtr(row.Description),
+			Pattern:     row.Module, // store module name for grouping
+			Target:      TargetUserInput,
+			Severity:    "medium",
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			IsEnabled:   false, // safe default — operator must opt in
+			SortOrder:   3000 + idx*5,
+		})
+	}
+	return out
+}
+
+// builtInSecureClawRules seeds the SecureClaw plugin config knobs (one
+// secplane_policy_rule row per setting). Sort orders 1000+ keep these
+// distinct from the aegis kinds (100-700).
+func builtInSecureClawRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawConfigDefaults))
+	for idx, row := range SecureClawConfigDefaults {
+		mode := ModeEnforce
+		if !row.IsEnabled {
+			mode = ModeObserve // off would hide it from default-on heuristics; observe = "value carried but flag off"
+		}
+		out = append(out, Rule{
+			RuleID:      row.RuleID,
+			Kind:        KindSecureClawConfig,
+			DisplayName: row.Display,
+			Description: strPtr(row.Description),
+			Pattern:     row.Pattern,
+			Target:      TargetUserInput,
+			Severity:    row.Severity,
+			Action:      row.Action,
+			Mode:        mode,
+			IsEnabled:   row.IsEnabled,
+			SortOrder:   1000 + idx*10,
+		})
+	}
+	return out
+}
+
+
+// sha8 returns first 8 hex chars of SHA-256 of s — used to derive stable
+// rule_id slugs for free-form data (regex patterns, IOC values).
+func sha8slug(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])[:8]
+}
+
+func builtInSecureClawDangerousCategoryRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawDangerousCategoryDefaults))
+	for idx, row := range SecureClawDangerousCategoryDefaults {
+		// Pattern stores both severity and action as a single string so the
+		// row schema stays single-column — compile.go parses it back. We
+		// also mirror Severity/Action into native columns for UI ergonomics.
+		out = append(out, Rule{
+			RuleID:      "sc.dc.cat." + row.Key,
+			Kind:        KindSecureClawDangerousCategory,
+			DisplayName: row.Key,
+			Description: strPtr("dangerous-commands.json category"),
+			Pattern:     row.Action, // primary control value (block/require_approval/warn)
+			Target:      TargetUserInput,
+			Severity:    row.Severity,
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			IsEnabled:   true,
+			SortOrder:   4000 + idx*5,
+		})
+	}
+	return out
+}
+
+func builtInSecureClawDangerousPatternRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawDangerousPatternDefaults))
+	for idx, row := range SecureClawDangerousPatternDefaults {
+		tags := row.Category
+		out = append(out, Rule{
+			RuleID:      "sc.dc.pat." + row.Category + "." + sha8slug(row.Pattern),
+			Kind:        KindSecureClawDangerousPattern,
+			DisplayName: row.Pattern,
+			Description: strPtr("dangerous-commands.json pattern under " + row.Category),
+			Pattern:     row.Pattern,
+			Target:      TargetUserInput,
+			Severity:    SeverityHigh,
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			Tags:        &tags,
+			IsEnabled:   true,
+			SortOrder:   4500 + idx,
+		})
+	}
+	return out
+}
+
+func builtInSecureClawInjectionPatternRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawInjectionPatternDefaults))
+	for idx, row := range SecureClawInjectionPatternDefaults {
+		tags := row.Category
+		out = append(out, Rule{
+			RuleID:      "sc.ip.pat." + row.Category + "." + sha8slug(row.Pattern),
+			Kind:        KindSecureClawInjectionPattern,
+			DisplayName: row.Pattern,
+			Description: strPtr("injection-patterns.json string under " + row.Category),
+			Pattern:     row.Pattern,
+			Target:      TargetUserInput,
+			Severity:    SeverityHigh,
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			Tags:        &tags,
+			IsEnabled:   true,
+			SortOrder:   5500 + idx,
+		})
+	}
+	return out
+}
+
+func builtInSecureClawPrivacyRuleRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawPrivacyRuleDefaults))
+	for idx, row := range SecureClawPrivacyRuleDefaults {
+		// Store the fix hint in Description so the UI can show + edit it
+		// alongside the regex. Action carries the rewrite/remove/block mode.
+		out = append(out, Rule{
+			RuleID:      "sc.pr." + row.ID,
+			Kind:        KindSecureClawPrivacyRule,
+			DisplayName: row.ID,
+			Description: strPtr(row.Fix),
+			Pattern:     row.Regex,
+			Target:      TargetUserInput,
+			Severity:    row.Severity,
+			Action:      row.Action,
+			Mode:        ModeEnforce,
+			IsEnabled:   true,
+			SortOrder:   7000 + idx*5,
+		})
+	}
+	return out
+}
+
+func builtInSecureClawIocRules() []Rule {
+	out := make([]Rule, 0, len(SecureClawIocDefaults))
+	for idx, row := range SecureClawIocDefaults {
+		tags := row.Subtype
+		out = append(out, Rule{
+			RuleID:      "sc.ioc." + row.Subtype + "." + sha8slug(row.Value),
+			Kind:        KindSecureClawIoc,
+			DisplayName: row.Value,
+			Description: strPtr("supply-chain-ioc.json entry under " + row.Subtype),
+			Pattern:     row.Value,
+			Target:      TargetUserInput,
+			Severity:    SeverityHigh,
+			Action:      ActionBlock,
+			Mode:        ModeEnforce,
+			Tags:        &tags,
+			IsEnabled:   true,
+			SortOrder:   8000 + idx,
+		})
+	}
+	return out
+}

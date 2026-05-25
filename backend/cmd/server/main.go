@@ -131,6 +131,7 @@ func main() {
 	// its routes, services and tables behind a single facade so the rest of
 	// the codebase stays unaware of its internals.
 	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
+	secplaneModule.StartBackgroundWorkers(context.Background())
 
 	// Start sync service to keep instance status in sync with K8s
 	syncService := services.NewSyncService(instanceRepo, instanceRuntimeStatusService)

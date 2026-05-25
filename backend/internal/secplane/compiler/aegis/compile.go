@@ -14,6 +14,13 @@ import (
 	"clawreef/internal/secplane/policy"
 )
 
+// OutboundTrustedEntry — 单条出站白名单条目。fingerprint 为空 = 仅域名白名单。
+type OutboundTrustedEntry struct {
+	Domain      string `json:"domain"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Label       string `json:"label,omitempty"`
+}
+
 // UserConfig mirrors ClawAegis ClawAegisPluginConfig (ClawAegis/src/config.ts).
 // Field names and JSON tags must stay byte-identical to what ClawAegis reads —
 // changes here MUST be paired with a config.ts update and a base zip rebuild.
@@ -43,8 +50,21 @@ type UserConfig struct {
 	ToolCallEnforcementEnabled   bool   `json:"toolCallEnforcementEnabled"`
 	DispatchGuardEnabled         bool   `json:"dispatchGuardEnabled"`
 	DispatchGuardMode            string `json:"dispatchGuardMode,omitempty"`
+	RequireHttpsEnabled          bool   `json:"requireHttpsEnabled"`
+	RequireHttpsMode             string `json:"requireHttpsMode,omitempty"`
+	OutboundTrustEnabled         bool   `json:"outboundTrustEnabled"`
+	OutboundTrustMode            string `json:"outboundTrustMode,omitempty"`
+
+	// 应急熔断（kill switch）。启用后 ClawAegis 在 before_tool_call 中
+	// 无条件 block 所有工具调用，理由取 KillSwitchReason。
+	KillSwitchEnabled bool   `json:"killSwitchEnabled"`
+	KillSwitchReason  string `json:"killSwitchReason,omitempty"`
 
 	StartupSkillScan bool `json:"startupSkillScan"`
+
+	// 出站可信端点（域名白名单 + 可选证书指纹）。ClawAegis before_tool_call 钩子
+	// 配合 RequireHttpsEnabled + OutboundTrustEnabled 校验。空列表 = 不限制（仅日志）。
+	OutboundTrustedEndpoints []OutboundTrustedEntry `json:"outboundTrustedEndpoints,omitempty"`
 
 	ProtectedPaths   []string `json:"protectedPaths,omitempty"`
 	ProtectedSkills  []string `json:"protectedSkills,omitempty"`
@@ -114,6 +134,10 @@ func Compile(rules []policy.Rule, revision string) (Bundle, error) {
 		ToolCallEnforcementEnabled:   true,
 		DispatchGuardEnabled:         true,
 		DispatchGuardMode:            modeEnforce,
+		RequireHttpsEnabled:          true,
+		RequireHttpsMode:             modeEnforce,
+		OutboundTrustEnabled:         true,
+		OutboundTrustMode:            modeEnforce,
 		StartupSkillScan:             true,
 	}
 
@@ -215,6 +239,12 @@ func applyDefenseToggle(cfg *UserConfig, r policy.Rule) {
 	case "dispatchGuard":
 		cfg.DispatchGuardEnabled = enabled
 		cfg.DispatchGuardMode = mode
+	case "requireHttps":
+		cfg.RequireHttpsEnabled = enabled
+		cfg.RequireHttpsMode = mode
+	case "outboundTrust":
+		cfg.OutboundTrustEnabled = enabled
+		cfg.OutboundTrustMode = mode
 	}
 }
 

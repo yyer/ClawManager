@@ -5,10 +5,15 @@
 package secplane
 
 import (
+	"context"
+	"time"
+
 	"clawreef/internal/middleware"
 	"clawreef/internal/repository"
 	"clawreef/internal/secplane/dispatch"
 	"clawreef/internal/secplane/ingest"
+	"clawreef/internal/secplane/killswitch"
+	"clawreef/internal/secplane/outbound"
 	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services"
 
@@ -26,6 +31,29 @@ type Module struct {
 	dispatchHandler *dispatch.Handler
 
 	ingestHandler *ingest.Handler
+
+	OutboundService outbound.Service
+	outboundHandler *outbound.Handler
+	outboundWatcher *outbound.Watcher
+
+	KillSwitchService killswitch.Service
+	killSwitchHandler *killswitch.Handler
+}
+
+// killSwitchAdapter — 把 killswitch.Service 适配成 dispatch.KillSwitchProvider，
+// 避免 dispatch 包直接 import killswitch（dispatch ← killswitch 单向）。
+type killSwitchAdapter struct{ svc killswitch.Service }
+
+func (a killSwitchAdapter) IsEnabled() (bool, string) {
+	st, err := a.svc.Get()
+	if err != nil || st == nil {
+		return false, ""
+	}
+	reason := ""
+	if st.Reason != nil {
+		reason = *st.Reason
+	}
+	return st.IsEnabled(), reason
 }
 
 // NewModule constructs the secplane module with all of its repositories and
@@ -42,14 +70,33 @@ func NewModule(
 	alertRepo := policy.NewAlertRepository(sess)
 	policySvc := policy.NewService(ruleRepo, alertRepo)
 
-	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc)
+	outboundRepo := outbound.NewRepository(sess)
+	outboundSvc := outbound.NewService(outboundRepo)
+
+	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc, outboundSvc)
+
+	killSwitchSvc := killswitch.NewService(sess)
+	dispatchSvc.SetKillSwitchProvider(killSwitchAdapter{svc: killSwitchSvc})
 
 	return &Module{
-		PolicyService:   policySvc,
-		policyHandler:   policy.NewHandler(policySvc),
-		DispatchService: dispatchSvc,
-		dispatchHandler: dispatch.NewHandler(dispatchSvc),
-		ingestHandler:   ingest.NewHandler(agentSvc, instanceRepo, policySvc),
+		PolicyService:     policySvc,
+		policyHandler:     policy.NewHandler(policySvc),
+		DispatchService:   dispatchSvc,
+		dispatchHandler:   dispatch.NewHandler(dispatchSvc),
+		ingestHandler:     ingest.NewHandler(agentSvc, instanceRepo, policySvc),
+		OutboundService:   outboundSvc,
+		outboundHandler:   outbound.NewHandler(outboundSvc),
+		outboundWatcher:   outbound.NewWatcher(outboundRepo, alertRepo, time.Hour),
+		KillSwitchService: killSwitchSvc,
+		killSwitchHandler: killswitch.NewHandler(killSwitchSvc, dispatchSvc),
+	}
+}
+
+// StartBackgroundWorkers 启动模块自己的周期任务（如出站证书指纹漂移巡检）。
+// 调用方传入 ctx，关闭即停。
+func (m *Module) StartBackgroundWorkers(ctx context.Context) {
+	if m.outboundWatcher != nil {
+		m.outboundWatcher.Start(ctx)
 	}
 }
 
@@ -78,7 +125,26 @@ func (m *Module) Register(api *gin.RouterGroup, userRepo repository.UserReposito
 		}
 		admin.GET("/alerts", m.policyHandler.ListAlerts)
 		admin.POST("/dispatch/aegis", m.dispatchHandler.DispatchAegis)
+		admin.POST("/dispatch/aegis-apply", m.dispatchHandler.DispatchAegisApply)
+		admin.POST("/dispatch/secureclaw", m.dispatchHandler.DispatchSecureClaw)
 		admin.GET("/instances/:id/effective-config", m.dispatchHandler.GetInstanceEffectiveConfig)
+		admin.GET("/instances/:id/aegis/live-config", m.dispatchHandler.GetInstanceLiveConfig)
+
+		outboundGrp := admin.Group("/outbound/trusted")
+		{
+			outboundGrp.GET("", m.outboundHandler.List)
+			outboundGrp.POST("", m.outboundHandler.Create)
+			outboundGrp.POST("/probe", m.outboundHandler.Probe)
+			outboundGrp.POST("/:id/reprobe", m.outboundHandler.Reprobe)
+			outboundGrp.DELETE("/:id", m.outboundHandler.Delete)
+		}
+
+		ks := admin.Group("/kill-switch")
+		{
+			ks.GET("", m.killSwitchHandler.Get)
+			ks.POST("/enable", m.killSwitchHandler.Enable)
+			ks.POST("/disable", m.killSwitchHandler.Disable)
+		}
 	}
 
 	// Agent-session-protected routes (security event ingest).
