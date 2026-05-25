@@ -134,7 +134,7 @@ spec:
               echo "mysql ready"
       containers:
         - name: clawmanager-app
-          image: clawmanager-secplane:dev17
+          image: clawmanager-secplane:dev33
           imagePullPolicy: Never
           ports:
             - name: http
