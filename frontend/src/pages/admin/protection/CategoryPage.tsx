@@ -2,20 +2,53 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../components/AdminLayout';
 import { CATEGORIES, getScenariosByCategory } from './_data';
+import { useSecurityCenterData } from '../security/securityCenterShared';
+
+// cat-4 (数据与组件可信) 用 SKILL 技能扫描真实数据；其他类目仍走静态 mock
+const CatTrustLiveStats: React.FC = () => {
+  const { summary, loading } = useSecurityCenterData();
+  const total = summary.total;
+  const pct = total > 0 ? Math.round((summary.completed / total) * 100) : 0;
+  return (
+    <div className="grid grid-cols-4 gap-3">
+      <div className="stat-card">
+        <div className="stat-card-label">受管技能</div>
+        <div className="stat-card-value">{loading ? '…' : total}</div>
+        <div className="stat-card-sub muted-strong">已纳管 skill / plugin 总数</div>
+      </div>
+      <div className="stat-card">
+        <div className="stat-card-label">高危技能</div>
+        <div className={`stat-card-value ${summary.highRisk > 0 ? 'tone-red' : 'tone-green'}`}>
+          {loading ? '…' : summary.highRisk}
+        </div>
+        <div className="stat-card-sub muted-strong">含供应链 IOC 命中</div>
+      </div>
+      <div className="stat-card">
+        <div className="stat-card-label">中危技能</div>
+        <div className={`stat-card-value ${summary.mediumRisk > 0 ? 'tone-orange' : ''}`}>
+          {loading ? '…' : summary.mediumRisk}
+        </div>
+        <div className="stat-card-sub muted-strong">建议复核</div>
+      </div>
+      <div className="stat-card">
+        <div className="stat-card-label">扫描覆盖</div>
+        <div className={`stat-card-value ${pct === 100 && total > 0 ? 'tone-green' : ''}`}>
+          {loading ? '…' : total > 0 ? `${summary.completed}/${total}` : '0'}
+        </div>
+        <div className="stat-card-sub muted-strong">已完成扫描 {pct}%</div>
+      </div>
+    </div>
+  );
+};
 
 // 每个类目页头部的统计卡 (mock，后续接 secplaneService stats API)
+// cat-4 不在表里——用上面的 CatTrustLiveStats 走真实接口
 const CAT_STATS: Record<string, { label: string; value: string; tone?: string; sub: string }[]> = {
   'cat-1': [
     { label: '场景数', value: '6', sub: '六层运行时防护' },
     { label: '24h 拦截', value: '624', tone: 'tone-red', sub: '含输入/工具/输出' },
     { label: '防护层数', value: '5', sub: '五层纵深防御' },
     { label: '规则覆盖', value: '100%', tone: 'tone-green', sub: '运行时全链路' },
-  ],
-  'cat-4': [
-    { label: '场景数', value: '2', sub: '组件可信扫描 + 出站治理' },
-    { label: '24h 风险拦截', value: '38', tone: 'tone-red', sub: '供应链 IOC + 出站违规' },
-    { label: '受管组件', value: '124', sub: 'skill / plugin / 镜像' },
-    { label: '出站白名单', value: '36', tone: 'tone-green', sub: '已批准域名' },
   ],
   'cat-2': [
     { label: '场景数', value: '1', sub: '统一身份与权限' },
@@ -51,7 +84,7 @@ const CAT_STATS: Record<string, { label: string; value: string; tone?: string; s
 
 const CAT_DESC: Record<string, string> = {
   'cat-1': '面向单智能体从初始化、输入、推理、决策到执行的完整运行时链路，覆盖输入面、状态面、决策面、输出面、资产保护、人因审批 6 个场景，构建运行时层纵深防御主链路。',
-  'cat-4': '面向智能体所依赖的技能、插件、镜像与外部通信，校验供应链可信、阻断未授权出站、保障"装得对、跑得直"。',
+  'cat-4': '面向智能体所依赖的技能、插件、镜像等供应链：六分析器并行扫描代码安全 + 凭据外泄 + IOC 命中 + LLM 语义复核，识别高危技能、阻断不可信组件落地。',
   'cat-2': '智能体身份签发、调用授权、最小权限策略；agent token 生命周期管理，强制最小权限访问。',
   'cat-6': '智能体运行环境的纵深加固：容器逃逸防护 + CIS 基线 + 勒索/挖矿/入侵检测 + 关键文件保护。',
   'cat-5': '面向运营与合规的审计回溯与应急处置：全链路事件聚合、风险评分、熔断处置、运营驾驶舱。',
@@ -93,16 +126,20 @@ const CategoryPage: React.FC<CategoryPageProps> = ({ catId }) => {
               <p className="h-subtitle">{desc}</p>
             </div>
           </div>
-          {stats.length > 0 && (
-            <div className="grid grid-cols-4 gap-3">
-              {stats.map((s, i) => (
-                <div key={i} className="stat-card">
-                  <div className="stat-card-label">{s.label}</div>
-                  <div className={`stat-card-value ${s.tone ?? ''}`}>{s.value}</div>
-                  <div className="stat-card-sub muted-strong">{s.sub}</div>
-                </div>
-              ))}
-            </div>
+          {catId === 'cat-4' ? (
+            <CatTrustLiveStats />
+          ) : (
+            stats.length > 0 && (
+              <div className="grid grid-cols-4 gap-3">
+                {stats.map((s, i) => (
+                  <div key={i} className="stat-card">
+                    <div className="stat-card-label">{s.label}</div>
+                    <div className={`stat-card-value ${s.tone ?? ''}`}>{s.value}</div>
+                    <div className="stat-card-sub muted-strong">{s.sub}</div>
+                  </div>
+                ))}
+              </div>
+            )
           )}
         </div>
 

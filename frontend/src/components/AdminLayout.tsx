@@ -47,8 +47,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
     { path: '/admin', label: t('nav.adminDashboard'), icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', exact: true },
     { path: '/admin/users', label: t('nav.users'), icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
     { path: '/admin/instances', label: t('nav.instances'), icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
-    { path: '/admin/security', label: t('nav.securityCenter'), icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/assets', '/admin/skills'] },
-    { path: '/admin/secplane', label: '安全防护', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm'], hasPopup: true },
+    // "安全中心"（/admin/security 一组）已挪到「安全防护 → 数据与组件可信 → SKILL 技能扫描」。
+    // 原路由保留可访问，仅从 nav 里隐藏。
+    { path: '/admin/secplane', label: '安全防护', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm', '/admin/security', '/admin/assets', '/admin/skills'], hasPopup: true },
     { path: '/admin/secplane/input-detection', label: '输入检测 / ClawAegis', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z' },
     { path: '/admin/secplane/secureclaw', label: '审计加固 / SecureClaw', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
     {
