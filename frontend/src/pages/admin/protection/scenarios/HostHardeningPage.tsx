@@ -2,88 +2,283 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 
-// 宿主加固 (scenario l) — 对齐 KSecForAIDemo/scenario-l-host.html
-// 5 tabs: CIS 基线矩阵 + 勒索防护 + 挖矿检测 + 入侵检测 + 文件保护
-// 当前为静态展示版，后续接 host-side agent 实时 metrics
+// 宿主加固 (scenario L) — 对齐 specs/001-clawmanager-hardening/prototypes/scenario-l-host.html
+// 3 个 tab：主机防护 / 勒索防护 / 入侵检测
+// 当前为原型态：本地 state 模拟交互，未接 host-side bridge
 
-type Tone = 'red' | 'orange' | 'amber' | 'blue' | 'purple' | 'green' | 'slate';
-type CISStat = 'ok' | 'warn' | 'fail';
+// ===========================
+// 辅助：Toast / Modal 占位
+// ===========================
 
-const NODES = ['east-1', 'east-2', 'east-3', 'west-1', 'west-2', 'staging', 'test', 'canary'];
+type ToastKind = 'info' | 'success' | 'warning';
+type ToastState = { message: string; kind: ToastKind } | null;
 
-const CIS_ITEMS: Array<[string, string, string, CISStat[]]> = [
-  ['1.1', 'PAM 最小密码长度', 'PAM', ['ok', 'ok', 'fail', 'ok', 'warn', 'ok', 'ok', 'ok']],
-  ['1.2', 'PAM 复杂度要求', 'PAM', ['ok', 'ok', 'fail', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['2.1', '账户失败锁定', '账户', ['ok', 'warn', 'fail', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['2.2', '密码最大有效期', '账户', ['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['3.1', 'SSH 禁用 root 登录', 'SSH', ['ok', 'warn', 'fail', 'fail', 'ok', 'warn', 'ok', 'ok']],
-  ['3.2', 'SSH 禁用密码登录', 'SSH', ['ok', 'ok', 'fail', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['3.3', 'SSH 协议仅 v2', 'SSH', ['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['4.1', 'sysctl 内核加固', '内核', ['ok', 'ok', 'warn', 'ok', 'ok', 'ok', 'ok', 'ok']],
-  ['4.2', '内核模块签名', '内核', ['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']],
-];
-
-const RANSOM_DIRS: Array<[string, 'enforce' | 'observe', number, string, Tone]> = [
-  ['/var/lib/openclaw/memory', 'enforce', 8, '2 分钟前', 'red'],
-  ['/var/lib/openclaw/skills', 'enforce', 5, '15 分钟前', 'red'],
-  ['/etc/openclaw/*', 'enforce', 3, '1 小时前', 'orange'],
-  ['/root/*.key', 'enforce', 2, '3 小时前', 'orange'],
-  ['/home/*/personal/*', 'observe', 0, '-', 'slate'],
-  ['/var/backup', 'enforce', 0, '-', 'green'],
-];
-
-const RANSOM_HITS: Array<[string, string, string, string, string, string, Tone]> = [
-  ['刚刚', 'node-east-3', 'suspicious-encryptor', '/tmp/.cache/abc', '247 次 unlink/分钟', 'BLOCK + KILL pid 8721', 'red'],
-  ['15 分钟前', 'node-canary-1', 'curl-rename-batch', '/tmp/x.sh', '可疑批量文件重命名 (146 次)', 'OBSERVE → 待处置', 'orange'],
-  ['2 小时前', 'node-east-2', 'xmrig-variant', '/var/tmp/proc1', 'XMRig YARA 签名命中', 'BLOCK + KILL pid 4231', 'red'],
-  ['5 小时前', 'node-west-1', 'python-encrypt', '/usr/bin/python3', '短时间内 50 次 .lock 写入', 'OBSERVE', 'amber'],
-];
-
-const MINING_ITEMS: Array<[string, string, boolean, number]> = [
-  ['矿池域名解析', '枚举已知矿池域名 IOC', true, 142],
-  ['矿池 IP 连接', 'TCP 连接已知矿池端口', true, 38],
-  ['CPU 异常占用', '持续 >95% 异常', true, 7],
-  ['病毒签名匹配', 'XMRig/Coinhive YARA', true, 5],
-];
-
-const INTRUSION_RULES: Array<[string, string, number, string, Tone]> = [
-  ['SSH 暴力破解', '同 IP 5 分钟内 ≥10 次失败', 24, '刚刚', 'red'],
-  ['可疑命令执行', 'wget|curl 下载 + chmod +x + exec', 12, '5m', 'orange'],
-  ['敏感目录写入', 'cron / systemd unit 文件修改', 8, '20m', 'red'],
-  ['提权尝试', 'sudo + suid 异常执行', 5, '1h', 'orange'],
-  ['可疑端口监听', 'bind 到非常用端口（>1024 持续）', 3, '2h', 'amber'],
-];
-
-const FILE_PROT: Array<[string, string, string, string, number, Tone]> = [
-  ['/etc/passwd /etc/shadow', '主机', 'hash baseline', '✓ 漂移检测启用', 0, 'green'],
-  ['/etc/openclaw/openclaw.json', '主机', 'hash baseline', '✓ 已基线', 0, 'green'],
-  ['/var/lib/openclaw/memory/*', '实例', 'enforce', '⚠ 漂移 (差 5 个文件)', 5, 'orange'],
-  ['/root/.ssh/authorized_keys', '主机', 'enforce', '✓ 已基线', 0, 'green'],
-  ['~/.openclaw/skills/*', '实例', 'enforce', '⚠ 漂移 (差 2)', 2, 'orange'],
-];
-
-const TABS = [
-  { id: 'cis', label: 'CIS 基线 (22)' },
-  { id: 'ransom', label: '勒索防护' },
-  { id: 'mining', label: '挖矿检测' },
-  { id: 'invasion', label: '入侵检测' },
-  { id: 'file', label: '文件保护' },
-] as const;
-
-type TabId = (typeof TABS)[number]['id'];
-
-const cisCellClass: Record<CISStat, string> = {
-  ok: 'bg-green-100 text-[#177245] border border-green-300',
-  warn: 'bg-orange-100 text-[#b45309] border border-orange-300',
-  fail: 'bg-red-100 text-[#b42318] border border-red-300',
+const Toast: React.FC<{ toast: ToastState; onClose: () => void }> = ({ toast, onClose }) => {
+  React.useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(onClose, 2000);
+    return () => clearTimeout(t);
+  }, [toast, onClose]);
+  if (!toast) return null;
+  const bg =
+    toast.kind === 'success' ? '#dcfce7' : toast.kind === 'warning' ? '#fef3c7' : '#dbeafe';
+  const fg =
+    toast.kind === 'success' ? '#166534' : toast.kind === 'warning' ? '#92400e' : '#1e40af';
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 24,
+        right: 24,
+        zIndex: 100,
+        padding: '10px 16px',
+        background: bg,
+        color: fg,
+        borderRadius: 10,
+        fontSize: 13,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+      }}
+    >
+      {toast.message}
+    </div>
+  );
 };
-const cisCellIcon: Record<CISStat, string> = { ok: '✓', warn: '!', fail: '✗' };
+
+const Modal: React.FC<{
+  open: boolean;
+  title: string;
+  eyebrow?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+}> = ({ open, title, eyebrow, onClose, children, footer }) => {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(44,30,22,0.48)] px-4"
+      onClick={onClose}
+    >
+      <div
+        className="panel"
+        style={{ maxWidth: 560, width: '100%', maxHeight: '90vh', overflow: 'auto' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {eyebrow && <div className="eyebrow text-[10px] mb-1">{eyebrow}</div>}
+        <h3 className="section-title-lg mb-4">{title}</h3>
+        <div className="mb-5">{children}</div>
+        <div className="flex justify-end gap-2">{footer}</div>
+      </div>
+    </div>
+  );
+};
+
+const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
+  <div className={`toggle${on ? ' toggle-on' : ''}`} onClick={() => onChange(!on)}>
+    <div className="toggle-thumb" />
+  </div>
+);
+
+// ===========================
+// 主机防护 — 内置规则数据
+// ===========================
+
+const BUILTIN_FILE_RULES: Array<[path: string, desc: string, type: '文件' | '目录']> = [
+  ['/usr/bin', '保护系统目录下可执行文件不被篡改', '目录'],
+  ['/usr/sbin', '保护系统目录下可执行文件不被篡改', '目录'],
+  ['/boot', '保护grub配置和内核镜像不被篡改', '目录'],
+  ['/etc/inittab', '保护系统运行级别配置文件不被篡改', '文件'],
+  ['/lib/systemd/system/graphical.target', '保护图形界面配置文件不被篡改', '文件'],
+  ['/usr/lib/systemd/system/graphical.target', '保护图形界面配置文件不被篡改', '文件'],
+  ['/lib/systemd/system/multi-user.target', '保护多用户命令行目标单元文件不被篡改', '文件'],
+  ['/usr/lib/systemd/system/multi-user.target', '保护多用户命令行目标单元文件不被篡改', '文件'],
+  ['/etc/audit', '保护日志和审计配置文件不被篡改', '目录'],
+  ['/etc/pam.d', '保护登录认证配置文件不被篡改', '目录'],
+  ['/etc/ld.so.preload', '保护动态库配置文件不被篡改', '文件'],
+  ['/etc/ssh', '保护SSH配置文件不被篡改', '目录'],
+  ['/etc/profile', '保护Bash配置文件不被篡改', '文件'],
+  ['/etc/profile.d', '保护Bash配置文件不被篡改', '目录'],
+  ['/etc/bash.bashrc', '保护Bash配置文件不被篡改', '文件'],
+  ['/etc/bashrc', '保护Bash配置文件不被篡改', '文件'],
+  ['/root/.bashrc', '保护Bash配置文件不被篡改', '文件'],
+  ['/root/.bash_profile', '保护Bash配置文件不被篡改', '文件'],
+  ['/etc/dnf/dnf.conf', '保护软件更新配置文件不被篡改', '文件'],
+  ['/etc/yum', '保护软件更新配置文件不被篡改', '目录'],
+  ['/etc/yum.repos.d', '保护软件更新配置文件不被篡改', '目录'],
+  ['/etc/apt', '保护软件更新配置文件不被篡改', '目录'],
+  ['/etc/cron.deny', '保护定时任务配置文件不被篡改', '文件'],
+  ['/etc/crontab', '保护定时任务配置文件不被篡改', '文件'],
+  ['/etc/cron.d', '保护定时任务配置文件不被篡改', '目录'],
+  ['/etc/cron.daily', '保护定时任务配置文件不被篡改', '目录'],
+  ['/etc/cron.hourly', '保护定时任务配置文件不被篡改', '目录'],
+  ['/etc/cron.monthly', '保护定时任务配置文件不被篡改', '目录'],
+  ['/etc/cron.weekly', '保护定时任务配置文件不被篡改', '目录'],
+  ['/var/spool/cron', '保护定时任务配置文件不被篡改', '目录'],
+  ['/etc/anacrontab', '保护定时任务配置文件不被篡改', '文件'],
+  ['/etc/resolv.conf', '保护域名解析文件不被篡改', '文件'],
+  ['/run/resolvconf/resolv.conf', '保护域名解析文件不被篡改', '文件'],
+  ['/etc/host.conf', '保护域名解析文件不被篡改', '文件'],
+  ['/etc/hosts.allow', '保护访问配置文件不被篡改', '文件'],
+  ['/etc/hosts.deny', '保护访问配置文件不被篡改', '文件'],
+  ['/proc/kallsyms', '保护内存镜像和内核导出符号文件不被篡改', '文件'],
+];
+
+type CustomFileRule = {
+  path: string;
+  trust: string;
+  r: boolean;
+  w: boolean;
+  x: boolean;
+  d: boolean;
+};
+const INITIAL_CUSTOM_FILE_RULES: CustomFileRule[] = [
+  { path: '/var/lib/clawmanager/data', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
+  { path: '/var/lib/clawmanager/uploads', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: true },
+  { path: '/etc/clawmanager', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
+  { path: '/opt/clawmanager/config/*', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
+  { path: '/var/lib/mysql/clawmanager', trust: '/usr/sbin/mysqld', r: true, w: true, x: false, d: false },
+  { path: '/var/log/clawmanager/*', trust: '/opt/clawmanager/server, /usr/sbin/rsyslogd', r: true, w: true, x: false, d: true },
+  { path: '/etc/nginx/nginx.conf', trust: '/usr/sbin/nginx', r: true, w: false, x: false, d: false },
+  { path: '/etc/ksecure/policies/*', trust: '/opt/ksecure/ksec', r: true, w: true, x: false, d: false },
+  { path: '/tmp/test-decoy', trust: '-', r: false, w: false, x: false, d: false },
+];
+
+type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
+const INITIAL_PROC_RULES: ProcRule[] = [
+  { path: '/usr/sbin/auditd', type: '进程保护' },
+  { path: '/opt/clawmanager/server', type: '进程保护' },
+];
+
+const FILE_PROT_LOG: Array<[string, string, string, string, string, string]> = [
+  ['2026-05-19 14:48:22', 'root', '/tmp/x (pid 8721)', '/etc/passwd', '写入', '已阻断'],
+  ['2026-05-19 14:35:15', 'www-data', '/bin/rm (pid 4521)', '/var/log/auth.log', '删除', '已阻断'],
+  ['2026-05-19 14:18:33', 'root', '/bin/chmod (pid 3211)', '/etc/shadow', '修改权限', '已阻断'],
+  ['2026-05-19 13:52:11', 'sshd', '/usr/sbin/sshd (pid 1024)', '/etc/ssh/sshd_config', '读取', '放行'],
+  ['2026-05-19 12:24:48', 'admin', '/bin/echo (pid 7811)', '/tmp/payload.sh', '写入', '非受保护'],
+];
+
+// ===========================
+// 勒索防护
+// ===========================
+
+const INITIAL_BAITS = [
+  '/var/lib/clawmanager/data',
+  '/var/lib/clawmanager/uploads',
+  '/etc/clawmanager',
+  '/root/.config',
+  '/home/admin/Documents',
+  '/var/backup',
+];
+const INITIAL_RANSOM_WHITE = [
+  '/usr/bin/rsync',
+  '/usr/local/bin/borg',
+  '/opt/clawmanager/backup-agent',
+];
+const RANSOM_LOG: Array<[string, string, string, string]> = [
+  ['2026-05-19 14:32:18', '/tmp/.cache/abc (pid 8721)', 'root', '已终止'],
+  ['2026-05-19 14:17:05', '/var/tmp/proc1 (pid 4231)', 'root', '已终止'],
+  ['2026-05-19 12:48:33', '/tmp/x.sh (pid 12044)', 'www-data', '未终止 · 待处置'],
+  ['2026-05-19 09:21:15', '/usr/bin/python3 (pid 7812)', 'admin', '未终止 · 监控中'],
+];
+
+// ===========================
+// 入侵检测
+// ===========================
+
+type IntrusionRule = { icon: string; cat: string; desc: string; enabled: boolean };
+const INITIAL_INTRUSION_RULES: IntrusionRule[] = [
+  { icon: '📡', cat: '反弹shell', desc: '检测进程的非法网络连接行为', enabled: true },
+  { icon: '🧠', cat: '无文件执行', desc: '检测使用 memfd_create 创建匿名内存文件并在其中执行代码的行为', enabled: true },
+  { icon: '🔼', cat: '本地提权', desc: '检测使用 setuid 改变用户权限的行为', enabled: true },
+  { icon: '🔼', cat: '本地提权', desc: '检测使用 chmod 设置 setuid 或 setgid 位权限的行为', enabled: true },
+  { icon: '🔼', cat: '本地提权', desc: '检测修改 sudoers 文件提升权限的行为', enabled: true },
+  { icon: '💉', cat: '进程注入', desc: '检测使用 ptrace 向进程注入代码的行为', enabled: true },
+  { icon: '💉', cat: '进程注入', desc: '检测篡改进程内存数据注入代码的行为', enabled: true },
+  { icon: '🔗', cat: '敏感文件泄漏', desc: '检测创建 /etc 或根目录下敏感文件硬链接的行为', enabled: true },
+  { icon: '🔗', cat: '敏感文件泄漏', desc: '检测创建 /etc 或根目录下敏感文件/目录软链接的行为', enabled: true },
+  { icon: '🦠', cat: 'rootkit攻击', desc: '检测 /dev 目录下创建文件的行为', enabled: true },
+  { icon: '🦠', cat: 'rootkit攻击', desc: '检测 /bin 等目录下创建文件的行为', enabled: true },
+  { icon: '🦠', cat: 'rootkit攻击', desc: '检测篡改 /etc/ld.so.preload 文件的行为', enabled: true },
+  { icon: '🧩', cat: '内核模块加载', desc: '检测使用 insmod 或 modprobe 加载内核模块的行为', enabled: true },
+  { icon: '🧹', cat: '痕迹擦除', desc: '检测清除系统审计日志的行为', enabled: true },
+  { icon: '⏰', cat: '计划任务篡改', desc: '检测创建或修改计划任务的行为', enabled: true },
+  { icon: '📂', cat: 'shm目录非法执行', desc: '检测 /dev/shm 目录下执行文件的行为', enabled: true },
+  { icon: '🛠️', cat: '可疑工具执行', desc: '检测主机/容器启动可疑网络工具的行为', enabled: true },
+];
+
+type LabeledItem = { value: string; desc: string };
+const INITIAL_WL_PROG: LabeledItem[] = [
+  { value: '/usr/bin/strace', desc: '调试工具' },
+  { value: '/usr/bin/gdb', desc: '调试器' },
+  { value: '/usr/bin/ansible-playbook', desc: '运维工具' },
+  { value: '/opt/clawmanager/upgrade-helper', desc: '内置升级辅助' },
+];
+const INITIAL_WL_FILE: LabeledItem[] = [
+  { value: '/var/lib/clawmanager/upgrade-pending', desc: '升级临时文件' },
+  { value: '/tmp/clawmanager-cache/*', desc: '缓存目录' },
+];
+const INITIAL_WL_IP: LabeledItem[] = [
+  { value: '10.0.0.0/8', desc: '内网 VPC' },
+  { value: '172.18.0.0/16', desc: 'K8s Pod 网段' },
+  { value: '203.0.113.42', desc: '运维跳板机' },
+];
+
+const INTRUSION_LOG: Array<[string, string, string, string, string]> = [
+  ['2026-05-19 14:42:11', 'SSH 暴力破解', '/usr/sbin/sshd (pid 9821)', 'sshd', '源 IP 45.142.x.x 在 1 分钟内 50 次失败登录'],
+  ['2026-05-19 14:18:03', '进程注入', '/usr/bin/curl (pid 9821)', 'www-data', 'curl 进程尝试 ptrace pid 1（init）'],
+  ['2026-05-19 13:22:45', '端口扫描', '/usr/bin/nmap (pid 7234)', 'admin', '检测到 217 端口连接/秒'],
+  ['2026-05-19 10:51:18', '本地提权', '/tmp/x (pid 6712)', 'www-data', '尝试修改 /etc/sudoers 提升权限'],
+  ['2026-05-19 09:33:22', '反弹shell', '/bin/bash (pid 5891)', 'root', '检测到 /dev/tcp/45.x.x.x/4444 反向 shell'],
+];
+
+// ===========================
+// 主页
+// ===========================
+
+type MainTab = 'file' | 'ransome' | 'invasion';
+type FileSubTab = 'builtin' | 'fileprot' | 'procprot';
+type RansomeSubTab = 'decoy' | 'whitelist';
+type InvasionSubTab = 'rules' | 'wl-prog' | 'wl-file' | 'wl-ip';
 
 const HostHardeningPage: React.FC = () => {
-  const [tab, setTab] = useState<TabId>('cis');
+  const [mainTab, setMainTab] = useState<MainTab>('file');
+  const [toast, setToast] = useState<ToastState>(null);
+  const fireToast = (message: string, kind: ToastKind = 'info') => setToast({ message, kind });
+
+  // 主机防护 state
+  const [fileMaster, setFileMaster] = useState(true);
+  const [defenseMode, setDefenseMode] = useState<'block' | 'monitor'>('monitor');
+  const [builtinEnabled, setBuiltinEnabled] = useState<boolean[]>(() => BUILTIN_FILE_RULES.map(() => true));
+  const [customFileRules, setCustomFileRules] = useState<CustomFileRule[]>(INITIAL_CUSTOM_FILE_RULES);
+  const [procRules, setProcRules] = useState<ProcRule[]>(INITIAL_PROC_RULES);
+  const [fileSub, setFileSub] = useState<FileSubTab>('builtin');
+
+  // 勒索防护 state
+  const [ransomMaster, setRansomMaster] = useState(true);
+  const [killProcess, setKillProcess] = useState(false);
+  const [baits, setBaits] = useState<string[]>(INITIAL_BAITS);
+  const [ransomWhite, setRansomWhite] = useState<string[]>(INITIAL_RANSOM_WHITE);
+  const [ransomSub, setRansomSub] = useState<RansomeSubTab>('decoy');
+
+  // 入侵检测 state
+  const [invasionMaster, setInvasionMaster] = useState(true);
+  const [intrusionRules, setIntrusionRules] = useState<IntrusionRule[]>(INITIAL_INTRUSION_RULES);
+  const [wlProg, setWlProg] = useState<LabeledItem[]>(INITIAL_WL_PROG);
+  const [wlFile, setWlFile] = useState<LabeledItem[]>(INITIAL_WL_FILE);
+  const [wlIP, setWlIP] = useState<LabeledItem[]>(INITIAL_WL_IP);
+  const [invasionSub, setInvasionSub] = useState<InvasionSubTab>('rules');
+
+  // Modal state
+  type ModalState =
+    | { kind: 'batch-path'; title: string; placeholder: string; onConfirm: (lines: string[]) => void }
+    | { kind: 'file-rule'; onConfirm: (rule: CustomFileRule) => void }
+    | { kind: 'proc-rule'; onConfirm: (rule: ProcRule) => void }
+    | null;
+  const [modal, setModal] = useState<ModalState>(null);
+  const closeModal = () => setModal(null);
+
   return (
     <AdminLayout>
-      <div className="cm-content space-y-6">
+      <div className="secp-scope space-y-6">
         <div className="crumb">
           <Link to="/admin/secplane">安全防护</Link>
           <span>/</span>
@@ -92,276 +287,866 @@ const HostHardeningPage: React.FC = () => {
           <span className="crumb-current">宿主加固</span>
         </div>
 
+        {/* Hero */}
         <div className="panel">
           <div className="flex items-start justify-between gap-6 mb-5">
             <div className="hero-block flex-1">
-              <div className="h-eyebrow">CIS 基线 + 主机异常检测</div>
+              <div className="h-eyebrow">主机层加固 · 运行时异常行为检测</div>
               <h2 className="h-title">宿主加固中心</h2>
-              <p className="h-subtitle">
-                CIS 风格主机加固基线 + 4 个安全模块（勒索防护 / 挖矿检测 / 入侵检测 / 文件保护）。所有加固操作遵循 Check → Reinforce → BackUp → RollBack 安全生命周期。
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 shrink-0">
-              <button className="btn-secondary">全量 Check</button>
-              <button className="btn-primary">批量加固</button>
+              <p className="h-subtitle">3 个运行时安全模块（主机防护 / 勒索防护 / 入侵检测）— 守护 ClawManager 所在宿主机安全。</p>
             </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div className="stat-card">
-              <div className="stat-card-label">集群节点</div>
-              <div className="stat-card-value">8</div>
-              <div className="stat-card-sub muted-strong">3 全加固 · 4 部分 · 1 未加固</div>
+              <div className="stat-card-label">加固代理状态</div>
+              <div className="stat-card-value tone-green">就绪</div>
+              <div className="stat-card-sub muted-strong">连接正常 · 策略已下发</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">CIS items</div>
-              <div className="stat-card-value">22</div>
-              <div className="stat-card-sub muted-strong">4 大类</div>
+              <div className="stat-card-label">24h 主机防护告警</div>
+              <div className="stat-card-value tone-red">5</div>
+              <div className="stat-card-sub muted-strong">文件拦截 4 · 进程拦截 1</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 高危告警</div>
-              <div className="stat-card-value tone-red">8</div>
-              <div className="stat-card-sub muted-strong">勒索 3 · 挖矿 2 · 入侵 3</div>
+              <div className="stat-card-label">24h 勒索防护告警</div>
+              <div className="stat-card-value tone-red">3</div>
+              <div className="stat-card-sub muted-strong">诱饵触发 + 终止进程</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">受保护文件</div>
-              <div className="stat-card-value tone-green">238</div>
-              <div className="stat-card-sub muted-strong">主机+实例</div>
+              <div className="stat-card-label">24h 入侵检测告警</div>
+              <div className="stat-card-value tone-red">3</div>
+              <div className="stat-card-sub muted-strong">本地提权 2 · 反弹shell 1</div>
             </div>
           </div>
         </div>
 
+        {/* Tabs */}
         <div className="panel" style={{ paddingBottom: 0 }}>
           <div className="tabs">
-            {TABS.map((t) => (
-              <button key={t.id} className={`tab${t.id === tab ? ' tab-active' : ''}`} onClick={() => setTab(t.id)}>
-                {t.label}
-              </button>
-            ))}
+            <button className={`tab${mainTab === 'file' ? ' tab-active' : ''}`} onClick={() => setMainTab('file')}>主机防护</button>
+            <button className={`tab${mainTab === 'ransome' ? ' tab-active' : ''}`} onClick={() => setMainTab('ransome')}>勒索防护</button>
+            <button className={`tab${mainTab === 'invasion' ? ' tab-active' : ''}`} onClick={() => setMainTab('invasion')}>入侵检测</button>
           </div>
         </div>
 
-        {tab === 'cis' && (
-          <div className="panel">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="section-title-lg">CIS 加固矩阵 · 22 items × 8 节点</h3>
-              <div className="flex gap-2">
-                <button className="btn-secondary btn-sm">仅 Check</button>
-                <button className="btn-primary btn-sm">批量 Reinforce</button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table>
-                <thead>
-                  <tr>
-                    <th className="text-left text-xs uppercase tracking-wider text-[#8f8681] font-bold p-3" style={{ width: 260 }}>
-                      基线项
-                    </th>
-                    {NODES.map((n) => (
-                      <th key={n} className="text-center text-xs text-[#8f8681] font-bold p-2" style={{ minWidth: 60 }}>
-                        node-{n}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {CIS_ITEMS.map(([id, name, cat, stats]) => (
-                    <tr key={id} className="border-t border-[#f1e2d9] hover:bg-[#fffaf7]">
-                      <td className="p-3">
-                        <div className="flex items-baseline gap-2">
-                          <code className="text-xs font-mono text-[#b46c50]">{id}</code>
-                          <div>
-                            <div className="text-sm font-semibold text-[#171212]">{name}</div>
-                            <div className="text-xs muted">{cat}</div>
-                          </div>
-                        </div>
-                      </td>
-                      {stats.map((s, i) => (
-                        <td key={i} className="p-2 text-center">
-                          <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg ${cisCellClass[s]} font-bold text-sm`}>
-                            {cisCellIcon[s]}
-                          </div>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="text-xs muted text-center mt-3">显示 1-9 / 共 22 items · 展开全部 22 项</div>
-          </div>
-        )}
-
-        {tab === 'ransom' && (
+        {/* ===== 主机防护 ===== */}
+        {mainTab === 'file' && (
           <div className="panel">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="eyebrow">勒索防护</div>
-                <h3 className="section-title-lg mt-1">勒索软件防护 · 基于 YARA + LSM hook</h3>
+                <div className="eyebrow">主机防护 · 文件 + 进程 双轨</div>
+                <h3 className="section-title-lg mt-1">关键文件与进程防护</h3>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs muted-strong">全局状态</span>
-                <div className="toggle toggle-on"><div className="toggle-thumb" /></div>
-                <span className="text-xs font-bold tone-green">已启用</span>
-                <button className="btn-secondary btn-sm">编辑策略</button>
+                <span className="text-xs muted-strong">总开关</span>
+                <Toggle on={fileMaster} onChange={(v) => { setFileMaster(v); fireToast('主机防护已切换', 'info'); }} />
+                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
-              监控 unlink/rmdir/truncate/rename 等高频文件操作，结合 YARA 签名识别勒索家族行为。检测到异常立即 BLOCK + kill 进程。
+              保护系统关键文件、进程，防止被篡改和删除。支持文件级权限控制（读/写/执行/删除）+ 进程白名单/黑名单双重控制。
             </div>
-            <div className="grid grid-cols-4 gap-3 mb-5">
-              {[
-                ['受保护目录', '42', '含通配符 8 条', ''],
-                ['24h 拦截', '3', '2 BLOCK · 1 KILL', 'tone-red'],
-                ['YARA 规则', '156', '8 家族签名', ''],
-                ['告警状态', '3', '待处置', 'tone-red'],
-              ].map(([label, val, sub, tone]) => (
-                <div key={label} className="card-warm">
-                  <div className="eyebrow text-[10px]">{label}</div>
-                  <div className={`text-2xl font-bold mt-1 ${tone || 'text-[#171212]'}`}>{val}</div>
-                  <div className="text-xs muted">{sub}</div>
+
+            {/* 防御模式 */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                padding: '12px 16px',
+                background: '#fdf6f1',
+                border: '1px solid #eadfd8',
+                borderRadius: 10,
+                marginBottom: 18,
+              }}
+            >
+              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>防御模式 ⓘ</span>
+              <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+                <input type="radio" name="defenseMode" checked={defenseMode === 'block'} onChange={() => setDefenseMode('block')} style={{ accentColor: '#dc2626' }} />
+                <span className="text-xs">拦截模式 · 命中即阻断</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+                <input type="radio" name="defenseMode" checked={defenseMode === 'monitor'} onChange={() => setDefenseMode('monitor')} style={{ accentColor: '#dc2626' }} />
+                <span className="text-xs">监控模式 · 仅告警不阻断</span>
+              </label>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mb-4">
+              <button className={`tab${fileSub === 'builtin' ? ' tab-active' : ''}`} onClick={() => setFileSub('builtin')}>
+                内置规则 {builtinEnabled.filter(Boolean).length}/{BUILTIN_FILE_RULES.length}
+              </button>
+              <button className={`tab${fileSub === 'fileprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('fileprot')}>
+                文件防护 ({customFileRules.length})
+              </button>
+              <button className={`tab${fileSub === 'procprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('procprot')}>
+                进程防护 {procRules.filter((p) => p.type === '进程保护').length} | {procRules.filter((p) => p.type === '进程黑名单').length}
+              </button>
+            </div>
+
+            {fileSub === 'builtin' && (
+              <>
+                <div className="text-xs muted mb-3">
+                  {BUILTIN_FILE_RULES.length} 条出厂内置防护规则，覆盖 /etc/、/boot/、/var/log/audit/ 等关键路径。
                 </div>
-              ))}
-            </div>
-            <div className="mb-5">
-              <h4 className="font-semibold text-[#171212] text-sm mb-3">受保护目录列表</h4>
+                <div style={{ maxHeight: 520, overflowY: 'auto', border: '1px solid #eadfd8', borderRadius: 10 }}>
+                  <table className="tbl" style={{ margin: 0 }}>
+                    <thead style={{ position: 'sticky', top: 0, background: '#fdfaf7', zIndex: 1 }}>
+                      <tr>
+                        <th>保护对象</th>
+                        <th>说明</th>
+                        <th style={{ width: 90 }}>类型</th>
+                        <th style={{ width: 90 }}>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BUILTIN_FILE_RULES.map(([path, desc, type], i) => (
+                        <tr key={path}>
+                          <td><code className="text-sm font-mono text-[#171212]">{path}</code></td>
+                          <td><span className="text-xs muted">{desc}</span></td>
+                          <td><span className="badge badge-slate text-[10px]">{type}</span></td>
+                          <td>
+                            <Toggle
+                              on={builtinEnabled[i]}
+                              onChange={(v) => {
+                                const next = [...builtinEnabled];
+                                next[i] = v;
+                                setBuiltinEnabled(next);
+                                fireToast(`${path} 已切换`, 'info');
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {fileSub === 'fileprot' && (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs muted">最多支持 20 条文件防护规则。每条可独立配置 读 / 写 / 执行 / 删除 四种权限。</span>
+                  <button
+                    className="btn-primary btn-sm"
+                    disabled={customFileRules.length >= 20}
+                    onClick={() =>
+                      setModal({
+                        kind: 'file-rule',
+                        onConfirm: (rule) => {
+                          setCustomFileRules([...customFileRules, rule]);
+                          closeModal();
+                          fireToast('已添加文件防护规则', 'success');
+                        },
+                      })
+                    }
+                  >
+                    + 添加
+                  </button>
+                </div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>保护文件/目录</th>
+                      <th>信任进程</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>读</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>写</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>执行</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>删除</th>
+                      <th style={{ width: 80 }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customFileRules.map((rule, i) => (
+                      <tr key={i}>
+                        <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
+                        <td><code className="text-xs font-mono muted-strong">{rule.trust}</code></td>
+                        {(['r', 'w', 'x', 'd'] as const).map((k) => (
+                          <td key={k} style={{ textAlign: 'center' }}>
+                            <span className={`badge badge-${rule[k] ? 'green' : 'slate'} text-[10px]`}>
+                              {rule[k] ? '✓' : '—'}
+                            </span>
+                          </td>
+                        ))}
+                        <td>
+                          <button
+                            className="text-xs text-[#dc2626] font-semibold hover:underline"
+                            onClick={() => {
+                              setCustomFileRules(customFileRules.filter((_, idx) => idx !== i));
+                              fireToast('已删除规则', 'success');
+                            }}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {fileSub === 'procprot' && (
+              <>
+                <div className="text-xs muted mb-3">最多支持 20 条进程保护规则、20 条进程黑名单规则。</div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-semibold text-[#171212] text-sm">进程保护 / 黑名单</span>
+                  <button
+                    className="btn-primary btn-sm"
+                    disabled={procRules.length >= 40}
+                    onClick={() =>
+                      setModal({
+                        kind: 'proc-rule',
+                        onConfirm: (rule) => {
+                          setProcRules([...procRules, rule]);
+                          closeModal();
+                          fireToast('已添加进程防护规则', 'success');
+                        },
+                      })
+                    }
+                  >
+                    + 添加
+                  </button>
+                </div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>进程路径</th>
+                      <th style={{ width: 130 }}>规则类型</th>
+                      <th style={{ width: 100 }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {procRules.map((rule, i) => (
+                      <tr key={i}>
+                        <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
+                        <td>
+                          <span className={`badge badge-${rule.type === '进程保护' ? 'red' : 'orange'}`}>
+                            {rule.type}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            className="text-xs text-[#dc2626] font-semibold hover:underline"
+                            onClick={() => {
+                              setProcRules(procRules.filter((_, idx) => idx !== i));
+                              fireToast('已删除规则', 'success');
+                            }}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {/* 主机防护日志 */}
+            <div style={{ marginTop: 24 }}>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-[#171212] text-sm">主机防护日志</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+              </div>
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>目录路径</th>
-                    <th style={{ width: 120 }}>防护模式</th>
-                    <th style={{ width: 120 }}>命中次数</th>
-                    <th style={{ width: 120 }}>最后命中</th>
+                    <th style={{ width: 140 }}>时间</th>
+                    <th style={{ width: 120 }}>进程用户</th>
+                    <th>进程</th>
+                    <th>保护对象</th>
+                    <th style={{ width: 80 }}>动作</th>
+                    <th style={{ width: 100 }}>处理结果</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {RANSOM_DIRS.map(([path, mode, hits, last]) => (
-                    <tr key={path}>
-                      <td><code className="text-sm font-mono text-[#171212]">{path}</code></td>
-                      <td><span className={`badge badge-${mode === 'enforce' ? 'red' : 'orange'}`}>{mode.toUpperCase()}</span></td>
-                      <td><span className={`font-bold ${hits > 0 ? 'tone-red' : 'muted-strong'}`}>{hits}</span></td>
-                      <td><span className="text-xs muted-strong">{last}</span></td>
+                  {FILE_PROT_LOG.map(([t, user, proc, obj, act, result], i) => {
+                    const tone = result === '已阻断' ? 'red' : result === '放行' ? 'green' : 'slate';
+                    return (
+                      <tr key={i}>
+                        <td><span className="text-xs muted-strong font-mono">{t}</span></td>
+                        <td><span className="text-xs">{user}</span></td>
+                        <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
+                        <td><code className="text-xs font-mono">{obj}</code></td>
+                        <td><span className="badge badge-slate text-[10px]">{act}</span></td>
+                        <td><span className={`badge badge-${tone}`}>{result}</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ===== 勒索防护 ===== */}
+        {mainTab === 'ransome' && (
+          <div className="panel">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="eyebrow">勒索病毒防护 · 诱饵文件 + 行为分析</div>
+                <h3 className="section-title-lg mt-1">勒索防护</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs muted-strong">总开关</span>
+                <Toggle on={ransomMaster} onChange={(v) => { setRansomMaster(v); fireToast('勒索防护已切换', 'info'); }} />
+                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
+              </div>
+            </div>
+            <div className="text-xs muted mb-4">
+              实时监测潜在的勒索病毒威胁，及时发现和阻止恶意软件的入侵。在系统关键位置投放诱饵文件，结合行为分析识别勒索家族。
+            </div>
+
+            {/* 关键开关 */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                padding: '12px 16px',
+                background: '#fdf6f1',
+                border: '1px solid #eadfd8',
+                borderRadius: 10,
+                marginBottom: 18,
+              }}
+            >
+              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>终止可疑进程</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="killSwitch" checked={killProcess} onChange={() => setKillProcess(true)} style={{ accentColor: '#dc2626' }} />
+                  <span className="text-xs">是 · 命中后自动 kill</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="killSwitch" checked={!killProcess} onChange={() => setKillProcess(false)} style={{ accentColor: '#dc2626' }} />
+                  <span className="text-xs">否 · 仅告警，由运维处置</span>
+                </label>
+              </div>
+              <span className="text-xs muted ml-auto">⚠ 启用后将自动终止可疑进程，建议确认无误报后再开</span>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mb-4">
+              <button className={`tab${ransomSub === 'decoy' ? ' tab-active' : ''}`} onClick={() => setRansomSub('decoy')}>
+                自定义诱饵目录 ({baits.length})
+              </button>
+              <button className={`tab${ransomSub === 'whitelist' ? ' tab-active' : ''}`} onClick={() => setRansomSub('whitelist')}>
+                白名单程序 ({ransomWhite.length})
+              </button>
+            </div>
+
+            {ransomSub === 'decoy' && (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs muted">默认在系统关键位置投放诱饵文件，并支持增加诱饵目录。最多支持 20 条自定义诱饵目录。</span>
+                  <button
+                    className="btn-primary btn-sm"
+                    onClick={() =>
+                      setModal({
+                        kind: 'batch-path',
+                        title: '添加自定义诱饵目录',
+                        placeholder: '支持输入单条/多条目录，每行填写一条，最多支持 20 条目录',
+                        onConfirm: (lines) => {
+                          setBaits([...baits, ...lines].slice(0, 20));
+                          closeModal();
+                          fireToast('已添加诱饵目录', 'success');
+                        },
+                      })
+                    }
+                  >
+                    + 添加
+                  </button>
+                </div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>诱饵目录</th>
+                      <th style={{ width: 120 }}>投放状态</th>
+                      <th style={{ width: 100 }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {baits.map((p, i) => (
+                      <tr key={i}>
+                        <td><code className="text-sm font-mono text-[#171212]">{p}</code></td>
+                        <td><span className="badge badge-green">已投放</span></td>
+                        <td>
+                          <button
+                            className="text-xs text-[#dc2626] font-semibold hover:underline"
+                            onClick={() => {
+                              setBaits(baits.filter((_, idx) => idx !== i));
+                              fireToast('已删除诱饵目录', 'success');
+                            }}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {ransomSub === 'whitelist' && (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs muted">白名单程序在触发诱饵时不会被判定为勒索行为（如备份程序）。最多支持 20 条。</span>
+                  <button
+                    className="btn-primary btn-sm"
+                    onClick={() =>
+                      setModal({
+                        kind: 'batch-path',
+                        title: '添加白名单程序路径',
+                        placeholder: '支持输入单条/多条路径，每行填写一条，最多支持 20 条路径',
+                        onConfirm: (lines) => {
+                          setRansomWhite([...ransomWhite, ...lines].slice(0, 20));
+                          closeModal();
+                          fireToast('已添加白名单', 'success');
+                        },
+                      })
+                    }
+                  >
+                    + 添加
+                  </button>
+                </div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>程序路径</th>
+                      <th style={{ width: 100 }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ransomWhite.map((p, i) => (
+                      <tr key={i}>
+                        <td><code className="text-sm font-mono text-[#171212]">{p}</code></td>
+                        <td>
+                          <button
+                            className="text-xs text-[#dc2626] font-semibold hover:underline"
+                            onClick={() => {
+                              setRansomWhite(ransomWhite.filter((_, idx) => idx !== i));
+                              fireToast('已删除白名单', 'success');
+                            }}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {/* 勒索防护日志 */}
+            <div style={{ marginTop: 24 }}>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-[#171212] text-sm">勒索防护日志</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+              </div>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 140 }}>时间</th>
+                    <th>进程</th>
+                    <th style={{ width: 120 }}>进程用户</th>
+                    <th style={{ width: 130 }}>终止进程</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RANSOM_LOG.map(([t, proc, user, act], i) => (
+                    <tr key={i}>
+                      <td><span className="text-xs muted-strong font-mono">{t}</span></td>
+                      <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
+                      <td><span className="text-xs">{user}</span></td>
+                      <td><span className={`badge badge-${act === '已终止' ? 'red' : 'orange'}`}>{act}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <h4 className="font-semibold text-[#171212] text-sm mb-3">最近可疑进程拦截</h4>
-            <div className="space-y-2">
-              {RANSOM_HITS.map(([t, node, pname, ppath, desc, act, tone]) => (
-                <div key={pname} className={`p-3 rounded-2xl border bg-${tone}-50 border-${tone}-200`}>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs font-bold">{node}</code>
-                      <code className="text-sm font-mono text-[#171212]">{pname}</code>
-                      <code className="text-xs muted">{ppath}</code>
-                    </div>
-                    <span className="muted-strong text-xs">{t}</span>
-                  </div>
-                  <div className="text-xs text-[#171212] mt-1">{desc}</div>
-                  <div className={`text-xs tone-${tone === 'amber' ? 'orange' : tone} font-bold mt-2`}>{act}</div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
-        {tab === 'mining' && (
+        {/* ===== 入侵检测 ===== */}
+        {mainTab === 'invasion' && (
           <div className="panel">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="eyebrow">挖矿检测</div>
-                <h3 className="section-title-lg mt-1">挖矿病毒检测 · 矿池连接 + 进程行为</h3>
+                <div className="eyebrow">入侵检测 · ATT&amp;CK 框架</div>
+                <h3 className="section-title-lg mt-1">主机入侵检测</h3>
               </div>
-              <button className="btn-primary btn-sm">立即检测</button>
+              <div className="flex items-center gap-3">
+                <span className="text-xs muted-strong">总开关</span>
+                <Toggle on={invasionMaster} onChange={(v) => { setInvasionMaster(v); fireToast('入侵检测已切换', 'info'); }} />
+                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
+              </div>
             </div>
             <div className="text-xs muted mb-4">
-              实时检测矿池域名解析、矿池 IP 连接、CPU 占用异常、已知挖矿病毒签名（XMRig / Coinhive 等）。检测项可配置。
+              基于 ATT&amp;CK 框架中的入侵模型，实时监控运行时基础事件并通过入侵引擎判决来识别入侵行为。
             </div>
-            <div className="grid grid-cols-4 gap-3 mb-5">
-              {MINING_ITEMS.map(([name, desc, enabled, hits]) => (
-                <div key={name} className="card-warm">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-xs font-bold text-[#171212]">{name}</div>
-                    <div className={`toggle${enabled ? ' toggle-on' : ''}`}><div className="toggle-thumb" /></div>
-                  </div>
-                  <div className="text-xs muted mb-2 leading-5">{desc}</div>
-                  <div className="flex justify-between">
-                    <span className="text-xs muted-strong">24h 命中</span>
-                    <span className={`font-bold tone-${hits > 0 ? 'red' : 'green'}`}>{hits}</span>
-                  </div>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mb-4">
+              <button className={`tab${invasionSub === 'rules' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('rules')}>
+                检测规则 {intrusionRules.filter((r) => r.enabled).length}/{intrusionRules.length}
+              </button>
+              <button className={`tab${invasionSub === 'wl-prog' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-prog')}>
+                白名单程序 ({wlProg.length})
+              </button>
+              <button className={`tab${invasionSub === 'wl-file' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-file')}>
+                白名单文件 ({wlFile.length})
+              </button>
+              <button className={`tab${invasionSub === 'wl-ip' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-ip')}>
+                白名单IP ({wlIP.length})
+              </button>
+            </div>
+
+            {invasionSub === 'rules' && (
+              <>
+                <div className="text-xs muted mb-3">17 项内置检测规则，按 ATT&amp;CK 战术分类。可逐项启用/禁用。</div>
+                <div className="space-y-2" style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 6 }}>
+                  {intrusionRules.map((r, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 14,
+                        padding: '12px 16px',
+                        border: '1px solid #eadfd8',
+                        borderRadius: 10,
+                        background: 'white',
+                      }}
+                    >
+                      <span style={{ fontSize: 18, flexShrink: 0 }}>{r.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="text-sm font-semibold text-[#171212]">{r.cat}</div>
+                        <div className="text-xs muted mt-0.5">{r.desc}</div>
+                      </div>
+                      <Toggle
+                        on={r.enabled}
+                        onChange={(v) => {
+                          const next = [...intrusionRules];
+                          next[i] = { ...next[i], enabled: v };
+                          setIntrusionRules(next);
+                          fireToast(`${r.cat} 已切换`, 'info');
+                        }}
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </>
+            )}
+
+            {invasionSub === 'wl-prog' && (
+              <WhitelistTable
+                desc="白名单程序在触发规则时不会被判定为入侵行为。"
+                items={wlProg}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单程序',
+                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 20 条程序路径',
+                    onConfirm: (lines) => {
+                      setWlProg([...wlProg, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
+                      closeModal();
+                      fireToast('已添加白名单程序', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlProg(wlProg.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="程序路径"
+              />
+            )}
+
+            {invasionSub === 'wl-file' && (
+              <WhitelistTable
+                desc="白名单文件操作不会触发入侵告警。"
+                items={wlFile}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单文件',
+                    placeholder: '支持输入单条/多条文件路径，每行填写一条，最多支持 20 条文件路径',
+                    onConfirm: (lines) => {
+                      setWlFile([...wlFile, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
+                      closeModal();
+                      fireToast('已添加白名单文件', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlFile(wlFile.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="文件路径"
+              />
+            )}
+
+            {invasionSub === 'wl-ip' && (
+              <WhitelistTable
+                desc="来自白名单 IP 的访问不会被判定为入侵。"
+                items={wlIP}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单IP',
+                    placeholder: '支持输入单条/多条IP地址，每行填写一条，最多支持 20 条IP地址',
+                    onConfirm: (lines) => {
+                      setWlIP([...wlIP, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
+                      closeModal();
+                      fireToast('已添加白名单IP', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlIP(wlIP.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="IP / CIDR"
+              />
+            )}
+
+            {/* 入侵检测日志 */}
+            <div style={{ marginTop: 24 }}>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-[#171212] text-sm">入侵检测日志</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+              </div>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 140 }}>时间</th>
+                    <th style={{ width: 120 }}>类别</th>
+                    <th>进程</th>
+                    <th style={{ width: 120 }}>进程用户</th>
+                    <th>描述</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {INTRUSION_LOG.map(([t, cat, proc, user, desc], i) => (
+                    <tr key={i}>
+                      <td><span className="text-xs muted-strong font-mono">{t}</span></td>
+                      <td><span className="badge badge-red text-[10px]">{cat}</span></td>
+                      <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
+                      <td><span className="text-xs">{user}</span></td>
+                      <td><span className="text-xs muted">{desc}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
-        {tab === 'invasion' && (
-          <div className="panel">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <div className="eyebrow">入侵检测</div>
-                <h3 className="section-title-lg mt-1">主机入侵检测 · 行为规则</h3>
-              </div>
-              <button className="btn-primary btn-sm">+ 新增规则</button>
-            </div>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>规则</th>
-                  <th>判定</th>
-                  <th style={{ width: 90 }}>24h 命中</th>
-                  <th style={{ width: 100 }}>最近</th>
-                </tr>
-              </thead>
-              <tbody>
-                {INTRUSION_RULES.map(([name, judge, hits, last, tone]) => (
-                  <tr key={name}>
-                    <td><span className="font-semibold text-[#171212]">{name}</span></td>
-                    <td><span className="text-xs muted">{judge}</span></td>
-                    <td><span className={`font-bold tone-${tone === 'amber' ? 'orange' : tone}`}>{hits}</span></td>
-                    <td><span className="text-xs muted-strong">{last}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {/* ===== Modals ===== */}
+        {modal?.kind === 'batch-path' && (
+          <BatchPathModal title={modal.title} placeholder={modal.placeholder} onCancel={closeModal} onConfirm={modal.onConfirm} />
         )}
+        {modal?.kind === 'file-rule' && <FileRuleModal onCancel={closeModal} onConfirm={modal.onConfirm} />}
+        {modal?.kind === 'proc-rule' && <ProcRuleModal onCancel={closeModal} onConfirm={modal.onConfirm} />}
 
-        {tab === 'file' && (
-          <div className="panel">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <div className="eyebrow">文件保护</div>
-                <h3 className="section-title-lg mt-1">关键文件 hash 漂移监测</h3>
-              </div>
-              <button className="btn-primary btn-sm">+ 新增基线</button>
-            </div>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>受保护资源</th>
-                  <th style={{ width: 90 }}>类型</th>
-                  <th style={{ width: 120 }}>模式</th>
-                  <th>状态</th>
-                  <th style={{ width: 90 }}>漂移</th>
-                </tr>
-              </thead>
-              <tbody>
-                {FILE_PROT.map(([path, type, mode, status, drift, tone]) => (
-                  <tr key={path}>
-                    <td><code className="text-xs font-mono">{path}</code></td>
-                    <td><span className={`badge ${type === '主机' ? 'badge-blue' : 'badge-orange'}`}>{type}</span></td>
-                    <td><span className="text-xs">{mode}</span></td>
-                    <td><span className={`text-xs tone-${tone === 'amber' ? 'orange' : tone} font-semibold`}>{status}</span></td>
-                    <td><span className={`font-bold tone-${drift > 0 ? 'red' : 'green'}`}>{drift}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <Toast toast={toast} onClose={() => setToast(null)} />
       </div>
     </AdminLayout>
+  );
+};
+
+// 抽出共用：白名单列表
+const WhitelistTable: React.FC<{
+  desc: string;
+  items: LabeledItem[];
+  onAdd: () => void;
+  onDelete: (i: number) => void;
+  col1: string;
+}> = ({ desc, items, onAdd, onDelete, col1 }) => (
+  <>
+    <div className="flex items-center justify-between mb-3">
+      <span className="text-xs muted">{desc}</span>
+      <button className="btn-primary btn-sm" onClick={onAdd}>+ 添加</button>
+    </div>
+    <table className="tbl">
+      <thead>
+        <tr>
+          <th style={{ width: 200 }}>{col1}</th>
+          <th>说明</th>
+          <th style={{ width: 100 }}>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item, i) => (
+          <tr key={i}>
+            <td><code className="text-sm font-mono text-[#171212]">{item.value}</code></td>
+            <td><span className="text-xs muted">{item.desc || '-'}</span></td>
+            <td>
+              <button className="text-xs text-[#dc2626] font-semibold hover:underline" onClick={() => onDelete(i)}>删除</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </>
+);
+
+// ===========================
+// Modals
+// ===========================
+
+const BatchPathModal: React.FC<{
+  title: string;
+  placeholder: string;
+  onCancel: () => void;
+  onConfirm: (lines: string[]) => void;
+}> = ({ title, placeholder, onCancel, onConfirm }) => {
+  const [text, setText] = useState('');
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  return (
+    <Modal
+      open
+      eyebrow="新建"
+      title={title}
+      onClose={onCancel}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onCancel}>取消</button>
+          <button className="btn-primary" disabled={lines.length === 0} onClick={() => onConfirm(lines)}>确定</button>
+        </>
+      }
+    >
+      <textarea
+        className="input"
+        rows={10}
+        style={{
+          width: '100%',
+          fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace',
+          fontSize: 12,
+          lineHeight: 1.6,
+          resize: 'vertical',
+        }}
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <div className="text-xs muted mt-2">每行填写一条，最多支持 20 条</div>
+    </Modal>
+  );
+};
+
+const FileRuleModal: React.FC<{
+  onCancel: () => void;
+  onConfirm: (rule: CustomFileRule) => void;
+}> = ({ onCancel, onConfirm }) => {
+  const [path, setPath] = useState('');
+  const [trust, setTrust] = useState('');
+  const [r, setR] = useState(false);
+  const [w, setW] = useState(false);
+  const [x, setX] = useState(false);
+  const [d, setD] = useState(false);
+  const canSubmit = path.startsWith('/');
+  return (
+    <Modal
+      open
+      eyebrow="新建"
+      title="添加文件防护规则"
+      onClose={onCancel}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onCancel}>取消</button>
+          <button className="btn-primary" disabled={!canSubmit} onClick={() => onConfirm({ path, trust: trust || '-', r, w, x, d })}>确定</button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <div className="eyebrow text-[10px] mb-1"><span style={{ color: '#dc2626' }}>*</span> 保护文件/目录</div>
+          <input className="input" placeholder="请输入绝对路径" value={path} onChange={(e) => setPath(e.target.value)} />
+        </div>
+        <div>
+          <div className="eyebrow text-[10px] mb-1">信任进程 <span className="muted" title="支持目录形式">ⓘ</span></div>
+          <textarea
+            className="input"
+            rows={5}
+            style={{ fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: 12, lineHeight: 1.6, resize: 'vertical' }}
+            placeholder="支持输入单条/多条信任进程，每行填写一条，最多 20 条；支持目录"
+            value={trust}
+            onChange={(e) => setTrust(e.target.value)}
+          />
+        </div>
+        <div>
+          <div className="eyebrow text-[10px] mb-2">权限</div>
+          <div className="flex items-center gap-5">
+            <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+              <input type="checkbox" style={{ accentColor: '#dc2626' }} checked={r} onChange={(e) => setR(e.target.checked)} /> 读
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+              <input type="checkbox" style={{ accentColor: '#dc2626' }} checked={w} onChange={(e) => setW(e.target.checked)} /> 写
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+              <input type="checkbox" style={{ accentColor: '#dc2626' }} checked={x} onChange={(e) => setX(e.target.checked)} /> 执行
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+              <input type="checkbox" style={{ accentColor: '#dc2626' }} checked={d} onChange={(e) => setD(e.target.checked)} /> 删除
+            </label>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const ProcRuleModal: React.FC<{
+  onCancel: () => void;
+  onConfirm: (rule: ProcRule) => void;
+}> = ({ onCancel, onConfirm }) => {
+  const [type, setType] = useState<'进程保护' | '进程黑名单'>('进程保护');
+  const [path, setPath] = useState('');
+  const lines = path.split('\n').map((l) => l.trim()).filter(Boolean);
+  return (
+    <Modal
+      open
+      eyebrow="新建"
+      title="添加进程防护规则"
+      onClose={onCancel}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onCancel}>取消</button>
+          <button
+            className="btn-primary"
+            disabled={lines.length === 0}
+            onClick={() => onConfirm({ path: lines[0], type })}
+          >
+            确定
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <div className="eyebrow text-[10px] mb-1"><span style={{ color: '#dc2626' }}>*</span> 规则类型</div>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value as ProcRule['type'])}>
+            <option value="进程保护">进程保护</option>
+            <option value="进程黑名单">进程黑名单</option>
+          </select>
+        </div>
+        <div>
+          <div className="eyebrow text-[10px] mb-1"><span style={{ color: '#dc2626' }}>*</span> 进程路径</div>
+          <textarea
+            className="input"
+            rows={6}
+            style={{ fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: 12, lineHeight: 1.6, resize: 'vertical' }}
+            placeholder="支持输入单条/多条进程路径，每行填写一条，最多支持 20 条"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+          />
+        </div>
+      </div>
+    </Modal>
   );
 };
 

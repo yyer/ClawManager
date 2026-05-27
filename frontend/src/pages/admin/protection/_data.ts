@@ -44,8 +44,8 @@ export const SCENARIOS: ProtectionScenario[] = [
   { id: 'sk', code: 'SK', label: 'SKILL 技能扫描', subtitle: '技能仓库扫描 / 报告 / Scanner 配置', path: '/admin/security', cat: 'cat-4' },
   { id: 'i', code: 'I', label: '应急熔断', subtitle: '主机/实例熔断+双人复核', path: '/admin/secplane/govern/breaker', cat: 'cat-5' },
   { id: 'j', code: 'J', label: '全链路审计', subtitle: '事件流聚合与回溯', path: '/admin/secplane/govern/audit', cat: 'cat-5' },
+  { id: 'l', code: 'L', label: '宿主加固', subtitle: '主机防护 + 勒索防护 + 入侵检测', path: '/admin/secplane/isolate/host', cat: 'cat-6' },
   { id: 'k', code: 'K', label: '容器隔离', subtitle: '容器策略与防逃逸', path: '/admin/secplane/isolate/container', cat: 'cat-6' },
-  { id: 'l', code: 'L', label: '宿主加固', subtitle: 'CIS基线+勒索+挖矿+入侵+文件保护', path: '/admin/secplane/isolate/host', cat: 'cat-6' },
   { id: 'm', code: 'M', label: '策略治理', subtitle: '统一策略中心+模板', path: '/admin/secplane/policy/governance', cat: 'cat-7' },
 ];
 
