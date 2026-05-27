@@ -28,6 +28,22 @@ fi
 export SERVER_ADDRESS="${SERVER_ADDRESS:-:9001}"
 export SERVER_MODE="${SERVER_MODE:-release}"
 
+# Render ksec-bridge upstream into nginx.conf. The vars ${KSEC_BRIDGE_HOST} and
+# ${KSEC_BRIDGE_PORT} are placeholders embedded in deployments/nginx/nginx.conf;
+# K8s injects KSEC_BRIDGE_HOST via Downward API (status.hostIP). For local docker
+# runs without these vars, fall back to 127.0.0.1:9101 so nginx still starts.
+export KSEC_BRIDGE_HOST="${KSEC_BRIDGE_HOST:-127.0.0.1}"
+export KSEC_BRIDGE_PORT="${KSEC_BRIDGE_PORT:-9101}"
+if command -v envsubst >/dev/null 2>&1; then
+  NGX_TPL=/etc/nginx/nginx.conf
+  NGX_TMP="$(mktemp)"
+  # Whitelist substitution — DO NOT replace $http_upgrade / $host / $remote_addr etc.
+  envsubst '${KSEC_BRIDGE_HOST} ${KSEC_BRIDGE_PORT}' < "${NGX_TPL}" > "${NGX_TMP}"
+  mv "${NGX_TMP}" "${NGX_TPL}"
+else
+  echo "WARN: envsubst not found; nginx.conf placeholders left unrendered." >&2
+fi
+
 /usr/local/bin/clawreef-server &
 backend_pid=$!
 

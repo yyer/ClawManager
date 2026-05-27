@@ -30,7 +30,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 
 FROM nginx:1.27-alpine
 
-RUN apk add --no-cache dumb-init openssl
+RUN apk add --no-cache dumb-init openssl gettext
 
 WORKDIR /app
 

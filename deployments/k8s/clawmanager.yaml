@@ -805,6 +805,15 @@ spec:
               value: ":9001"
             - name: SERVER_MODE
               value: "release"
+            # ksec-bridge reverse-proxy target. The bridge runs as a systemd unit
+            # on the same host as KSec — Downward API tells nginx which node IP
+            # to talk to (Phase 2 multi-host will replace this with a map / svc).
+            - name: KSEC_BRIDGE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: KSEC_BRIDGE_PORT
+              value: "9101"
             - name: DB_HOST
               value: "mysql"
             - name: DB_PORT

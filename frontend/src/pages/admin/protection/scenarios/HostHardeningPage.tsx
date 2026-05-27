@@ -1,6 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import {
+  getLogs,
+  getRansomPolicy,
+  openLogStream,
+  putRansomPolicy,
+} from '../../../../services/hostHardening';
+import {
+  DEFAULT_RANSOM_POLICY,
+  type LogEntry,
+  type RansomPolicy,
+} from '../../../../types/hostHardening';
 
 // 宿主加固 (scenario L) — 对齐 specs/001-clawmanager-hardening/prototypes/scenario-l-host.html
 // 3 个 tab：主机防护 / 勒索防护 / 入侵检测
@@ -76,6 +87,63 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
   <div className={`toggle${on ? ' toggle-on' : ''}`} onClick={() => onChange(!on)}>
     <div className="toggle-thumb" />
   </div>
+);
+
+// Button-based radio. Avoids browser-native radio group sync issues with
+// React-controlled `checked` (was causing both options to render unselected
+// after click in some cases). Pure React state, no <input type="radio">.
+const RadioBtn: React.FC<{ selected: boolean; onClick: () => void; label: string }> = ({
+  selected,
+  onClick,
+  label,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="flex items-center gap-1.5 cursor-pointer"
+    style={{ background: 'transparent', border: 'none', padding: 0 }}
+  >
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-block',
+        width: 14,
+        height: 14,
+        borderRadius: '50%',
+        border: '2px solid #dc2626',
+        background: selected ? '#dc2626' : 'transparent',
+        boxShadow: selected ? 'inset 0 0 0 2px #fff' : 'none',
+      }}
+    />
+    <span className="text-xs">{label}</span>
+  </button>
+);
+
+// Inline CSS spinner — no extra dep. SVG inside an animate-spin wrapper.
+// Color follows `currentColor` so it inherits the button's text color.
+const Spinner: React.FC<{ size?: number }> = ({ size = 12 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    style={{ animation: 'ksecbridge-spin 0.8s linear infinite' }}
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+    <path
+      d="M4 12a8 8 0 018-8"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      fill="none"
+    />
+  </svg>
+);
+
+// Inject keyframes once (vite's <style> de-dup is reliable across HMR).
+const SpinnerStyle: React.FC = () => (
+  <style>{`@keyframes ksecbridge-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 );
 
 // ===========================
@@ -156,29 +224,7 @@ const FILE_PROT_LOG: Array<[string, string, string, string, string, string]> = [
   ['2026-05-19 12:24:48', 'admin', '/bin/echo (pid 7811)', '/tmp/payload.sh', '写入', '非受保护'],
 ];
 
-// ===========================
-// 勒索防护
-// ===========================
-
-const INITIAL_BAITS = [
-  '/var/lib/clawmanager/data',
-  '/var/lib/clawmanager/uploads',
-  '/etc/clawmanager',
-  '/root/.config',
-  '/home/admin/Documents',
-  '/var/backup',
-];
-const INITIAL_RANSOM_WHITE = [
-  '/usr/bin/rsync',
-  '/usr/local/bin/borg',
-  '/opt/clawmanager/backup-agent',
-];
-const RANSOM_LOG: Array<[string, string, string, string]> = [
-  ['2026-05-19 14:32:18', '/tmp/.cache/abc (pid 8721)', 'root', '已终止'],
-  ['2026-05-19 14:17:05', '/var/tmp/proc1 (pid 4231)', 'root', '已终止'],
-  ['2026-05-19 12:48:33', '/tmp/x.sh (pid 12044)', 'www-data', '未终止 · 待处置'],
-  ['2026-05-19 09:21:15', '/usr/bin/python3 (pid 7812)', 'admin', '未终止 · 监控中'],
-];
+// 勒索防护数据已迁移到 ksec-bridge（/api/host/policy/ransome + /api/host/logs/stream?module=ransome）
 
 // ===========================
 // 入侵检测
@@ -252,12 +298,101 @@ const HostHardeningPage: React.FC = () => {
   const [procRules, setProcRules] = useState<ProcRule[]>(INITIAL_PROC_RULES);
   const [fileSub, setFileSub] = useState<FileSubTab>('builtin');
 
-  // 勒索防护 state
-  const [ransomMaster, setRansomMaster] = useState(true);
-  const [killProcess, setKillProcess] = useState(false);
-  const [baits, setBaits] = useState<string[]>(INITIAL_BAITS);
-  const [ransomWhite, setRansomWhite] = useState<string[]>(INITIAL_RANSOM_WHITE);
+  // === 勒索防护 state（已接 ksec-bridge）===
+  // serverPolicy: 后端最近一次返回的策略；policyDraft: 用户改动但还没保存
+  const [serverPolicy, setServerPolicy] = useState<RansomPolicy | null>(null);
+  const [policyDraft, setPolicyDraft] = useState<RansomPolicy | null>(null);
+  const [saving, setSaving] = useState(false);
+  const effectivePolicy: RansomPolicy = policyDraft ?? serverPolicy ?? DEFAULT_RANSOM_POLICY;
+  // SSE-fed log table
+  const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
   const [ransomSub, setRansomSub] = useState<RansomeSubTab>('decoy');
+
+  // 初次加载策略
+  useEffect(() => {
+    let cancelled = false;
+    getRansomPolicy()
+      .then((p) => {
+        if (!cancelled) setServerPolicy(p);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) fireToast(`加载策略失败：${err.message}`, 'warning');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // fireToast 是稳定引用，依赖空数组只跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 初次拉日志 + 持续 SSE 推流
+  useEffect(() => {
+    let mounted = true;
+    getLogs('ransome', 50)
+      .then((rows) => {
+        if (mounted) setLiveLogs(rows.reverse()); // 最新在前
+      })
+      .catch(() => undefined);
+    const es = openLogStream('ransome');
+    es.onmessage = (e) => {
+      try {
+        const entry = JSON.parse(e.data) as LogEntry;
+        setLiveLogs((prev) => [entry, ...prev].slice(0, 200));
+      } catch {
+        /* ignore malformed */
+      }
+    };
+    es.onerror = () => {
+      // EventSource auto-reconnects; nothing to do
+    };
+    return () => {
+      mounted = false;
+      es.close();
+    };
+  }, []);
+
+  // 派生 4 个 UI 变量
+  const ransomMaster = effectivePolicy['switch-on'];
+  const killProcess = effectivePolicy['kill-process'];
+  const baits = (effectivePolicy.decoyFileDir ?? []).map((b) => b.dir);
+  const ransomWhite = (effectivePolicy.whiteList ?? []).map((w) => w.path);
+
+  // 帮 setter：所有改动落到 draft，不直接动 server state
+  const patch = (next: Partial<RansomPolicy>): void => {
+    setPolicyDraft({ ...effectivePolicy, ...next });
+  };
+  const setRansomMaster = (v: boolean): void => patch({ 'switch-on': v });
+  const setKillProcess = (v: boolean): void => patch({ 'kill-process': v });
+  const setBaits = (next: string[] | ((prev: string[]) => string[])): void => {
+    const arr = typeof next === 'function' ? next(baits) : next;
+    patch({ decoyFileDir: arr.map((dir) => ({ dir })) });
+  };
+  const setRansomWhite = (next: string[] | ((prev: string[]) => string[])): void => {
+    const arr = typeof next === 'function' ? next(ransomWhite) : next;
+    patch({ whiteList: arr.map((path) => ({ path })) });
+  };
+
+  // 保存 — 走 PUT /api/host/policy/ransome
+  // 注意：当总开关 (switch-on) 翻转时 bridge 要走 daemon stop→改 KSec.yaml→start，
+  // 整个 PUT 可能 3-5 秒；其余只改诱饵/白名单的情况通常 <500ms。
+  const saveRansomPolicy = async (): Promise<void> => {
+    if (!policyDraft) return;
+    setSaving(true);
+    // 立即弹一条 info，让用户知道点击已收到——尤其首次 master switch 翻转
+    // 时 daemon 重启会让 PUT 拖到 3+ 秒。
+    const isMasterFlip = policyDraft['switch-on'] !== serverPolicy?.['switch-on'];
+    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    try {
+      await putRansomPolicy(policyDraft);
+      setServerPolicy(policyDraft);
+      setPolicyDraft(null);
+      fireToast('配置已保存', 'success');
+    } catch (err) {
+      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // 入侵检测 state
   const [invasionMaster, setInvasionMaster] = useState(true);
@@ -278,6 +413,7 @@ const HostHardeningPage: React.FC = () => {
 
   return (
     <AdminLayout>
+      <SpinnerStyle />
       <div className="secp-scope space-y-6">
         <div className="crumb">
           <Link to="/admin/secplane">安全防护</Link>
@@ -361,14 +497,8 @@ const HostHardeningPage: React.FC = () => {
               }}
             >
               <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>防御模式 ⓘ</span>
-              <label className="flex items-center gap-1.5 cursor-pointer text-sm">
-                <input type="radio" name="defenseMode" checked={defenseMode === 'block'} onChange={() => setDefenseMode('block')} style={{ accentColor: '#dc2626' }} />
-                <span className="text-xs">拦截模式 · 命中即阻断</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-sm">
-                <input type="radio" name="defenseMode" checked={defenseMode === 'monitor'} onChange={() => setDefenseMode('monitor')} style={{ accentColor: '#dc2626' }} />
-                <span className="text-xs">监控模式 · 仅告警不阻断</span>
-              </label>
+              <RadioBtn selected={defenseMode === 'block'} onClick={() => setDefenseMode('block')} label="拦截模式 · 命中即阻断" />
+              <RadioBtn selected={defenseMode === 'monitor'} onClick={() => setDefenseMode('monitor')} label="监控模式 · 仅告警不阻断" />
             </div>
 
             {/* Sub-tabs */}
@@ -591,8 +721,16 @@ const HostHardeningPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs muted-strong">总开关</span>
-                <Toggle on={ransomMaster} onChange={(v) => { setRansomMaster(v); fireToast('勒索防护已切换', 'info'); }} />
-                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
+                <Toggle on={ransomMaster} onChange={(v) => { setRansomMaster(v); }} />
+                <button
+                  className="btn-primary btn-sm"
+                  disabled={policyDraft === null || saving}
+                  onClick={() => { void saveRansomPolicy(); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {saving && <Spinner />}
+                  {saving ? '保存中…' : '保存并应用'}
+                </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
@@ -614,14 +752,8 @@ const HostHardeningPage: React.FC = () => {
             >
               <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>终止可疑进程</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="radio" name="killSwitch" checked={killProcess} onChange={() => setKillProcess(true)} style={{ accentColor: '#dc2626' }} />
-                  <span className="text-xs">是 · 命中后自动 kill</span>
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="radio" name="killSwitch" checked={!killProcess} onChange={() => setKillProcess(false)} style={{ accentColor: '#dc2626' }} />
-                  <span className="text-xs">否 · 仅告警，由运维处置</span>
-                </label>
+                <RadioBtn selected={killProcess === true} onClick={() => setKillProcess(true)} label="是 · 命中后自动 kill" />
+                <RadioBtn selected={killProcess === false} onClick={() => setKillProcess(false)} label="否 · 仅告警，由运维处置" />
               </div>
               <span className="text-xs muted ml-auto">⚠ 启用后将自动终止可疑进程，建议确认无误报后再开</span>
             </div>
@@ -756,14 +888,24 @@ const HostHardeningPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {RANSOM_LOG.map(([t, proc, user, act], i) => (
-                    <tr key={i}>
-                      <td><span className="text-xs muted-strong font-mono">{t}</span></td>
-                      <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
-                      <td><span className="text-xs">{user}</span></td>
-                      <td><span className={`badge badge-${act === '已终止' ? 'red' : 'orange'}`}>{act}</span></td>
+                  {liveLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="text-center py-6 text-xs muted">
+                        暂无日志
+                      </td>
                     </tr>
-                  ))}
+                  )}
+                  {liveLogs.map((entry, i) => {
+                    const act = entry.action ?? '-';
+                    return (
+                      <tr key={i}>
+                        <td><span className="text-xs muted-strong font-mono">{entry.time ?? '-'}</span></td>
+                        <td><code className="text-xs font-mono text-[#171212]">{entry.process ?? entry.path ?? entry.raw}</code></td>
+                        <td><span className="text-xs">{entry.user ?? '-'}</span></td>
+                        <td><span className={`badge badge-${act === '已终止' ? 'red' : 'orange'}`}>{act}</span></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
