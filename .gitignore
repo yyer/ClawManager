@@ -57,6 +57,10 @@ Thumbs.db
 *.temp
 /test_*
 
+# Python bytecode (used by tests/method-b harness)
+__pycache__/
+*.pyc
+
 dev_docs/
 devplan.md
 AGENTS.md
