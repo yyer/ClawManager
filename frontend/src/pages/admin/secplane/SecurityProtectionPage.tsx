@@ -26,7 +26,7 @@ const severityTone = (sev: string) => (sev === 'high' ? 'red' : sev === 'medium'
 
 // rule_id 前缀 → 防护场景中文。两套 rule_id 并存：
 // (1) defense_toggle 表里的 `defense.*` —— 后端 watcher 生成的告警；
-// (2) ClawAegis 运行时上报的短名 `outbound_trust` / `tool_result_scan` 等。
+// (2) ClawAegisEx 运行时上报的短名 `outbound_trust` / `tool_result_scan` 等。
 const SCENE_BY_PREFIX: Array<[string, string]> = [
   ['defense.requireHttps', '出站治理'],
   ['defense.outboundTrust', '出站治理'],
@@ -139,7 +139,7 @@ const SecurityProtectionPage: React.FC = () => {
   const enableKillSwitch = async () => {
     const reason = window.prompt('请输入熔断原因（将记录到所有 pod 的 user_config + 审计日志）：', '');
     if (reason === null) return;
-    if (!window.confirm('确认启用应急熔断？\n\n所有 ClawAegis pod 在 1-10 秒内会拒绝所有工具调用（http_get / browser / mcp 等）。webchat 仍能用，agent 出不去任何外部动作。')) return;
+    if (!window.confirm('确认启用应急熔断？\n\n所有 ClawAegisEx pod 在 1-10 秒内会拒绝所有工具调用（http_get / browser / mcp 等）。webchat 仍能用，agent 出不去任何外部动作。')) return;
     setKillBusy(true);
     try {
       const res = await secplaneService.enableKillSwitch(reason);
@@ -154,7 +154,7 @@ const SecurityProtectionPage: React.FC = () => {
     }
   };
   const disableKillSwitch = async () => {
-    if (!window.confirm('确认解除应急熔断？\n\n所有 ClawAegis pod 在 1-10 秒内恢复正常防护（按 defense_toggle 表的 mode 执行）。')) return;
+    if (!window.confirm('确认解除应急熔断？\n\n所有 ClawAegisEx pod 在 1-10 秒内恢复正常防护（按 defense_toggle 表的 mode 执行）。')) return;
     setKillBusy(true);
     try {
       const res = await secplaneService.disableKillSwitch();
@@ -194,7 +194,7 @@ const SecurityProtectionPage: React.FC = () => {
                     启用人：{killSwitch?.set_by || '(无)'} · 启用时间：{killSwitch?.set_at?.replace('T', ' ').slice(0, 19) ?? '-'}
                   </span>
                 </div>
-                <div className="text-xs muted mt-1">所有 ClawAegis pod 的 <code>before_tool_call</code> 会无条件拒绝工具调用（http_get / browser / mcp 等）。webchat 仍可访问。</div>
+                <div className="text-xs muted mt-1">所有 ClawAegisEx pod 的 <code>before_tool_call</code> 会无条件拒绝工具调用（http_get / browser / mcp 等）。webchat 仍可访问。</div>
               </div>
               <button className="btn-secondary btn-sm shrink-0" disabled={killBusy} onClick={disableKillSwitch}>
                 {killBusy ? '处理中…' : '解除熔断'}
@@ -369,7 +369,7 @@ const SecurityProtectionPage: React.FC = () => {
               {!alertsLoading && !alertsError && recentAlerts.length === 0 && (
                 <tr>
                   <td colSpan={6} className="muted text-sm py-4 text-center">
-                    暂无告警事件。ClawAegis / SecureClaw / 各检测器上报后会出现在这里。
+                    暂无告警事件。ClawAegisEx / SecureClaw / 各检测器上报后会出现在这里。
                   </td>
                 </tr>
               )}

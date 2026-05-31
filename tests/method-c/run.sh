@@ -30,8 +30,8 @@ if [[ "$phase" != "Running" ]]; then
 fi
 
 # === pod 上 ClawAegis 必须有完整 .ts src（method-c 走 .ts 路径，因为 .js 滞后）===
-if ! kubectl -n "$NS" exec "$POD" -- test -f /config/.openclaw/extensions/claw-aegis/src/handlers.ts 2>/dev/null; then
-  echo "ERROR: pod 上 /config/.openclaw/extensions/claw-aegis/src/handlers.ts 不存在" >&2
+if ! kubectl -n "$NS" exec "$POD" -- test -f /config/.openclaw/extensions/clawaegisex/src/handlers.ts 2>/dev/null; then
+  echo "ERROR: pod 上 /config/.openclaw/extensions/clawaegisex/src/handlers.ts 不存在" >&2
   echo "  确认 instance 至少 dispatch 过一次（install_skill 把 ClawAegis 落地）" >&2
   exit 2
 fi
@@ -59,7 +59,7 @@ AEGIS_COPY=/tmp/method-c-aegis
 kubectl -n "$NS" exec "$POD" -- sh -c "
 rm -rf $AEGIS_COPY 2>/dev/null
 mkdir -p $AEGIS_COPY
-cp -r /config/.openclaw/extensions/claw-aegis/. $AEGIS_COPY/
+cp -r /config/.openclaw/extensions/clawaegisex/. $AEGIS_COPY/
 find $AEGIS_COPY/src -name '*.js' -delete
 "
 

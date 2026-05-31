@@ -5,7 +5,7 @@ import { secplaneService, type KillSwitchState } from '../../../../services/secp
 import { instanceService } from '../../../../services/instanceService';
 
 // 应急熔断 (scenario i) — 接 secplane kill-switch 后端。
-// 当前后端实现的是"系统级 kill switch"：启用后 ClawAegis 在所有 running 实例
+// 当前后端实现的是"系统级 kill switch"：启用后 ClawAegisEx 在所有 running 实例
 // 的 before_tool_call 中无条件 block 工具调用。
 // 主机级熔断（NetworkPolicy / OS agent）和双人复核签字 不在本期范围内。
 
@@ -76,7 +76,7 @@ const BreakerPage: React.FC = () => {
 
   const doDisable = async () => {
     if (!active || ksBusy) return;
-    if (!window.confirm('确认解除应急熔断？所有 ClawAegis pod 1-10 秒内恢复正常防护。')) return;
+    if (!window.confirm('确认解除应急熔断？所有 ClawAegisEx pod 1-10 秒内恢复正常防护。')) return;
     setKsBusy(true);
     try {
       const res = await secplaneService.disableKillSwitch();
@@ -107,7 +107,7 @@ const BreakerPage: React.FC = () => {
             <div className="h-eyebrow">最后一道兜底</div>
             <h2 className="h-title">应急熔断中心</h2>
             <p className="h-subtitle">
-              当上层防御失效或出现可疑活动时，一键让所有 ClawAegis pod 拒绝所有工具调用（http_get / browser / mcp 等）。Pod 不停，webchat 可访问，agent 无法执行外部动作。
+              当上层防御失效或出现可疑活动时，一键让所有 ClawAegisEx pod 拒绝所有工具调用（http_get / browser / mcp 等）。Pod 不停，webchat 可访问，agent 无法执行外部动作。
             </p>
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
@@ -172,7 +172,7 @@ const BreakerPage: React.FC = () => {
               <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01" />
               </svg>
-              当前实现为"系统级 kill switch"，对所有 running ClawAegis pod 生效。主机级熔断（NetworkPolicy / OS agent）暂未支持。
+              当前实现为"系统级 kill switch"，对所有 running ClawAegisEx pod 生效。主机级熔断（NetworkPolicy / OS agent）暂未支持。
             </div>
 
             <div className="space-y-3 mb-4 text-sm">
@@ -239,7 +239,7 @@ const BreakerPage: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               {active
-                ? '解除后 ClawAegis 将立刻恢复按 defense_toggle 规则的正常防护。'
+                ? '解除后 ClawAegisEx 将立刻恢复按 defense_toggle 规则的正常防护。'
                 : '当前未处于熔断状态。'}
             </div>
             <div className="space-y-3 text-sm mb-4">

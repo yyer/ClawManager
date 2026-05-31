@@ -1,7 +1,7 @@
 import React from 'react';
 
 // Static reference data for the "查看规则" modal. The actual regexes live in
-// the ClawAegis plugin source (rules.ts etc.); we surface representative
+// the ClawAegisEx plugin source (rules.ts etc.); we surface representative
 // samples here so operators can see what each defense matches. Kept in sync
 // with the plugin manually — when a new rule is added there, update the
 // corresponding entry in the page's RULE_MODAL_DATA map.

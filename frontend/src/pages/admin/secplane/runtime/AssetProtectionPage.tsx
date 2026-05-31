@@ -93,7 +93,7 @@ const AssetProtectionPage: React.FC = () => {
             <div className="stat-card">
               <div className="stat-card-label">24h 拦截</div>
               <div className="stat-card-value tone-red">33</div>
-              <div className="stat-card-sub muted-strong">ClawAegis 应用层全部命中</div>
+              <div className="stat-card-sub muted-strong">ClawAegisEx 应用层全部命中</div>
             </div>
             <div className="stat-card">
               <div className="stat-card-label">Hash 漂移</div>

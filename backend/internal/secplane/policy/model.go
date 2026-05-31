@@ -415,7 +415,7 @@ var AegisToolResultFlagDisplay = map[string]string{
 	"remote-binary-bootstrap": "远程二进制引导",
 	"system-prompt-leak":      "系统提示泄漏",
 	"approval-bypass":         "审批流程绕过",
-	"disable-claw-aegis":      "禁用 ClawAegis",
+	"disable-claw-aegis":      "禁用 ClawAegisEx",
 	"high-risk-command":       "高危命令",
 	"credential-exfiltration": "凭据外发",
 }

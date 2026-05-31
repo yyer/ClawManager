@@ -5,13 +5,13 @@
 //   node /usr/local/lib/node_modules/openclaw/method-c-test/harness.mjs [filter]
 //
 // env 覆盖:
-//   METHOD_C_AEGIS_PATH  — 默认 /config/.openclaw/extensions/claw-aegis
+//   METHOD_C_AEGIS_PATH  — 默认 /config/.openclaw/extensions/clawaegisex
 //   METHOD_C_STATE_ROOT  — 默认 /tmp/aegis-method-c-state
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const POD_AEGIS = process.env.METHOD_C_AEGIS_PATH ?? "/config/.openclaw/extensions/claw-aegis";
+const POD_AEGIS = process.env.METHOD_C_AEGIS_PATH ?? "/config/.openclaw/extensions/clawaegisex";
 const STATE_ROOT = process.env.METHOD_C_STATE_ROOT ?? "/tmp/aegis-method-c-state";
 
 // pod 上 .js 是 stale 编译产物（不含 before_dispatch / 仍有 outbound_trust），
@@ -35,7 +35,7 @@ function makeRuntime(userConfig, caseLabel, apiOverride) {
   const fakeApi = {
     rootDir,
     pluginConfig: {},
-    config: { plugins: { entries: { "claw-aegis": { enabled: true } } } },
+    config: { plugins: { entries: { "clawaegisex": { enabled: true } } } },
     logger: {
       debug: (m, meta) => logs.push(["debug", m, meta]),
       info:  (m, meta) => logs.push(["info",  m, meta]),
@@ -52,7 +52,7 @@ function makeRuntime(userConfig, caseLabel, apiOverride) {
 }
 
 function readEvents(stateRoot) {
-  const p = path.join(stateRoot, "plugins", "claw-aegis", "defense-events.jsonl");
+  const p = path.join(stateRoot, "plugins", "clawaegisex", "defense-events.jsonl");
   if (!fs.existsSync(p)) return [];
   return fs.readFileSync(p, "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l));
 }
@@ -202,7 +202,7 @@ async function runOne(c, idx) {
 async function main() {
   fs.rmSync(STATE_ROOT, { recursive: true, force: true });
   fs.mkdirSync(STATE_ROOT, { recursive: true });
-  // ClawAegis userConfigCandidatePaths 优先级: ~/.openclaw/workspace/skills/claw-aegis/user_config.json
+  // ClawAegis userConfigCandidatePaths 优先级: ~/.openclaw/workspace/skills/clawaegisex/user_config.json
   // 高于 <rootDir>/user_config.json。pod 上这条路径已有 method-b 上次 dispatch 留下的 cfg →
   // 我们 fake 的 rootDir cfg 完全被覆盖。把 HOME 指到隔离 STATE_ROOT 让首候选不存在。
   process.env.HOME = STATE_ROOT;

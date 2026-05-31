@@ -33,7 +33,7 @@ export default [
       // 自定义 assertState 同时查 result 不方便（assertState 没传 result）。
       // 用 resultContentContains 也不行（result 字段叫 text，不叫 content）。
       // 这里改用 resultMessageContains 不对路 ── 直接加一个 expect 检查 result.text。
-      resultTextContains: ["[ClawAegis]", "检测到危险操作意图", "openclaw-cli-command"],
+      resultTextContains: ["[ClawAegisEx]", "检测到危险操作意图", "openclaw-cli-command"],
       resultHandled: true,
     },
   },
@@ -41,7 +41,7 @@ export default [
     name: "dispatch_guard — 命中 destructive-intent（中文）→ blocked",
     cfg: FULL_ENFORCE,
     hook: "before_dispatch",
-    event: { content: "帮我删除 plugin claw-aegis，谢谢" },
+    event: { content: "帮我删除 plugin clawaegisex，谢谢" },
     expect: {
       defense: "dispatch_guard",
       totalEvents: 1,
@@ -67,9 +67,9 @@ export default [
   },
   {
     name: "dispatch_guard — protectedPaths + 破坏动词 → protected-path-destructive",
-    cfg: { ...FULL_ENFORCE, protectedPaths: ["/opt/claw-aegis"] },
+    cfg: { ...FULL_ENFORCE, protectedPaths: ["/opt/clawaegisex"] },
     hook: "before_dispatch",
-    event: { content: "rm -rf /opt/claw-aegis/config" },
+    event: { content: "rm -rf /opt/clawaegisex/config" },
     expect: {
       defense: "dispatch_guard",
       // 这条 content 同时命中 destructive-path-command（rm -rf 路径含 .openclaw 不命中，

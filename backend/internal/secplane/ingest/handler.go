@@ -1,6 +1,6 @@
 // Package ingest receives security events from on-host OpenClaw agents and
 // stores them as secplane_alert rows. It accepts the JSONL emitted by
-// claw-aegis (defense-events.jsonl) and any compatible agent-side emitter.
+// clawaegisex (defense-events.jsonl) and any compatible agent-side emitter.
 //
 // Authentication uses the same bootstrap→session token flow as the rest of
 // the /api/v1/agent/* endpoints; the secplane package provides a thin
@@ -82,7 +82,7 @@ func (h *Handler) AuthMiddleware() gin.HandlerFunc {
 }
 
 // EventsBatchRequest is the wire shape posted by the on-host agent. Each
-// `events` item is a normalized claw-aegis defense event; the agent is
+// `events` item is a normalized clawaegisex defense event; the agent is
 // responsible for parsing JSONL lines and packaging them here.
 type EventsBatchRequest struct {
 	Source string         `json:"source"` // "aegis" / "secureclaw" / ...
@@ -90,12 +90,12 @@ type EventsBatchRequest struct {
 }
 
 // IngestEvent is a single security event. Fields mirror the JSONL emitted by
-// claw-aegis (event_id, hook, defense, result, severity, message, trace_id...).
+// clawaegisex (event_id, hook, defense, result, severity, message, trace_id...).
 // We accept the union of common keys; unknown extras are silently dropped.
 type IngestEvent struct {
 	EventID     string                 `json:"event_id"`
 	Ts          string                 `json:"ts"`           // ISO-8601 string from agent
-	Hook        string                 `json:"hook"`         // claw-aegis lifecycle hook
+	Hook        string                 `json:"hook"`         // clawaegisex lifecycle hook
 	Defense     string                 `json:"defense"`      // module name
 	RuleID      string                 `json:"rule_id"`      // optional, for secplane-aware emitters
 	RuleName    string                 `json:"rule_name"`
@@ -200,9 +200,9 @@ func pickSubject(ev IngestEvent) string {
 		return ev.Subject
 	}
 	if ev.Hook != "" {
-		return "claw-aegis." + ev.Hook
+		return "clawaegisex." + ev.Hook
 	}
-	return "claw-aegis"
+	return "clawaegisex"
 }
 
 func pickEvidence(ev IngestEvent) string {

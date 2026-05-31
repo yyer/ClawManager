@@ -27,7 +27,7 @@ function makeRuntime(userConfig, caseLabel, apiOverride) {
   const fakeApi = {
     rootDir,
     pluginConfig: {},
-    config: { plugins: { entries: { "claw-aegis": { enabled: true } } } },
+    config: { plugins: { entries: { "clawaegisex": { enabled: true } } } },
     logger: {
       debug: (m, meta) => logs.push(["debug", m, meta]),
       info:  (m, meta) => logs.push(["info",  m, meta]),
@@ -44,7 +44,7 @@ function makeRuntime(userConfig, caseLabel, apiOverride) {
 }
 
 function readEvents(stateRoot) {
-  const p = path.join(stateRoot, "plugins", "claw-aegis", "defense-events.jsonl");
+  const p = path.join(stateRoot, "plugins", "clawaegisex", "defense-events.jsonl");
   if (!fs.existsSync(p)) return [];
   return fs.readFileSync(p, "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l));
 }

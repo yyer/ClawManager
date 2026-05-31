@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { secplaneService, type LiveAegisConfig } from '../../services/secplaneService';
 import { instanceService } from '../../services/instanceService';
 
-// 按钮 + modal — 拉取某个 openclaw 实例 pod 内 ClawAegis 实时 user_config.json
+// 按钮 + modal — 拉取某个 openclaw 实例 pod 内 ClawAegisEx 实时 user_config.json
 // 通过 GET /secplane/instances/:id/aegis/live-config
-//   → backend 从 instance 的 claw-aegis skill_blob 解 zip 拿 user_config.json
+//   → backend 从 instance 的 clawaegisex skill_blob 解 zip 拿 user_config.json
 //   → 比 effective-config（DB 里 last-dispatched 那份）更接近 pod 真实状态
 
 type InstanceLite = { id: number; name: string; status?: string };
@@ -88,7 +88,7 @@ const LiveAegisConfigButton: React.FC = () => {
             <div style={{ padding: '20px 24px', borderBottom: '1px solid #eadfd8', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
               <div>
                 <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#171212', margin: 0 }}>
-                  Pod 实时 ClawAegis user_config
+                  Pod 实时 ClawAegisEx user_config
                 </h3>
                 <p className="muted-strong" style={{ fontSize: 11, marginTop: 4, marginBottom: 0 }}>
                   从 agent 最近一次上传的 skill_blob 解出 — 比 last-dispatched 更接近 pod 真实状态
@@ -135,7 +135,7 @@ const LiveAegisConfigButton: React.FC = () => {
                 </div>
               )}
               {!error && !data && !loading && (
-                <div className="muted text-sm">选实例 → 点"拉取实时配置"。后端会去找 instance 的 claw-aegis skill_blob，解 zip 取出 user_config.json。</div>
+                <div className="muted text-sm">选实例 → 点"拉取实时配置"。后端会去找 instance 的 clawaegisex skill_blob，解 zip 取出 user_config.json。</div>
               )}
               {data && (
                 <>

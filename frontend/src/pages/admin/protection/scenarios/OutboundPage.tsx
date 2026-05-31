@@ -191,7 +191,7 @@ const OutboundPage: React.FC = () => {
           </div>
           <div className="grid grid-cols-[1fr_120px] gap-4 items-start">
             <div className="text-xs muted leading-6">
-              在 ClawAegis <code className="text-[11px] text-[#7a4a30] bg-[#fdf6f1] px-1.5 py-0.5 rounded">before_tool_call</code> 钩子里扫描工具参数中所有 URL：
+              在 ClawAegisEx <code className="text-[11px] text-[#7a4a30] bg-[#fdf6f1] px-1.5 py-0.5 rounded">before_tool_call</code> 钩子里扫描工具参数中所有 URL：
               一旦命中 <code className="text-[11px] text-[#b42318]">http://</code>、<code className="text-[11px] text-[#b42318]">ws://</code>、
               <code className="text-[11px] text-[#b42318]">ftp://</code> 等明文协议 →
               <strong className="text-[#171212]"> enforce 阻断 + 告警</strong>，
@@ -348,7 +348,7 @@ const OutboundPage: React.FC = () => {
             </tbody>
           </table>
           <div className="text-xs muted mt-3 leading-5">
-            <strong className="text-[#171212]">行为</strong>：ClawAegis 在 <code className="text-[11px] text-[#7a4a30] bg-[#fdf6f1] px-1.5 py-0.5 rounded">before_tool_call</code> 钩子扫描工具参数中的 https/wss URL，
+            <strong className="text-[#171212]">行为</strong>：ClawAegisEx 在 <code className="text-[11px] text-[#7a4a30] bg-[#fdf6f1] px-1.5 py-0.5 rounded">before_tool_call</code> 钩子扫描工具参数中的 https/wss URL，
             <code className="text-[11px] text-[#b42318]">host 不在表里 → 阻断</code>；observe 仅告警。支持 <code className="text-[11px] text-[#7a4a30]">*.openai.com</code> 这样的通配域名。改完点"保存并应用"，pod 内 1 秒内 hot-reload 生效。
             <br />
             <strong className="text-[#171212]">证书指纹（Phase 2a）</strong>：新增条目时点"探测指纹"，后端 TLS 握手抓 leaf cert SHA256 并填入；后台每小时自动重探所有 pinned 条目，发现指纹漂移时写入告警并刷新基线（通配条目不参与）。

@@ -50,10 +50,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
     // "安全中心"（/admin/security 一组）已挪到「安全防护 → 数据与组件可信 → SKILL 技能扫描」。
     // 原路由保留可访问，仅从 nav 里隐藏。
     { path: '/admin/secplane', label: '安全防护', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm', '/admin/security', '/admin/assets', '/admin/skills'], hasPopup: true },
-    // 暂时隐藏：'输入检测 / ClawAegis' (/admin/secplane/input-detection) 与
+    // 暂时隐藏：'输入检测 / ClawAegisEx' (/admin/secplane/input-detection) 与
     // '审计加固 / SecureClaw' (/admin/secplane/secureclaw)。路由仍在，直接
     // 访问 URL 可达；只是从左侧 nav 暂时隐藏。恢复时把下面两行的注释去掉即可。
-    // { path: '/admin/secplane/input-detection', label: '输入检测 / ClawAegis', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z' },
+    // { path: '/admin/secplane/input-detection', label: '输入检测 / ClawAegisEx', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2zm0 6l4 2v3l-4 2-4-2v-3l4-2z' },
     // { path: '/admin/secplane/secureclaw', label: '审计加固 / SecureClaw', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
     {
       path: '/admin/ai-gateway',

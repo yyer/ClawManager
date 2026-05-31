@@ -5,7 +5,7 @@
 // The pipeline:
 //   policyService.List(rules)
 //     -> compiler/aegis.Compile(rules) -> UserConfig
-//     -> compiler/aegis.PackageSkill(UserConfig) -> claw-aegis-vX.zip
+//     -> compiler/aegis.PackageSkill(UserConfig) -> clawaegisex-vX.zip
 //        (embedded ClawAegis source + injected user_config.json)
 //     -> skillService.ImportArchiveBytes -> SkillPayload (versioned)
 //     -> for each target instance: cmdService.Create(install_skill, ...)
@@ -53,28 +53,28 @@ type Service interface {
 	// source itself needs to be (re)deployed.
 	DispatchAegisApply(ctx context.Context, issuedBy *int, instanceIDs []int) (DispatchResult, error)
 	DispatchSecureClaw(ctx context.Context, issuedBy *int, instanceIDs []int) (DispatchResult, error)
-	// GetEffectiveAegisConfig returns the most recent claw-aegis user_config
+	// GetEffectiveAegisConfig returns the most recent clawaegisex user_config
 	// that was successfully dispatched to the given instance, by scanning
-	// instance_commands for either the last install_skill of target_name="claw-aegis"
+	// instance_commands for either the last install_skill of target_name="clawaegisex"
 	// or the last secplane.apply_aegis_config — whichever is most recent.
 	// Returns (nil, nil) when no dispatch has happened for this instance yet.
 	GetEffectiveAegisConfig(instanceID int) (*EffectiveAegisConfig, error)
 	// GetLiveAegisConfig returns the user_config.json from the LATEST skill_blob
-	// the agent has uploaded for this instance's claw-aegis skill. Closer to
+	// the agent has uploaded for this instance's clawaegisex skill. Closer to
 	// "ground truth on pod" than GetEffectiveAegisConfig (which only knows what
 	// was last DISPATCHED, not what's actually on disk). Reads from skill_blobs
 	// via SkillService.DownloadSkill, unzips, and extracts the user_config.json
-	// file (typically at top level claw-aegis/user_config.json).
+	// file (typically at top level clawaegisex/user_config.json).
 	//
 	// Returns (nil, error) when:
-	//   - instance has no claw-aegis skill registered (agent never reported it)
+	//   - instance has no clawaegisex skill registered (agent never reported it)
 	//   - latest blob is missing or not a valid zip
 	//   - user_config.json is not present in the zip
 	GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, error)
 }
 
 // LiveAegisConfig is the user_config.json read from the most-recent skill_blob
-// the agent uploaded for the instance's claw-aegis skill. Use to compare
+// the agent uploaded for the instance's clawaegisex skill. Use to compare
 // against EffectiveAegisConfig (what was dispatched) to detect drift between
 // "what we sent" and "what the agent is actually carrying on disk".
 type LiveAegisConfig struct {
@@ -184,16 +184,16 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 	cfgSum := sha256.Sum256(userCfgJSON)
 	cfgSha := hex.EncodeToString(cfgSum[:])
 
-	// Upload as a new version of the claw-aegis skill (skill_service dedups
+	// Upload as a new version of the clawaegisex skill (skill_service dedups
 	// by content_hash, so when the user_config differs the directory hash
 	// differs and we get a fresh version).
-	fname := fmt.Sprintf("claw-aegis-secplane-%s.zip", revision)
+	fname := fmt.Sprintf("clawaegisex-secplane-%s.zip", revision)
 	payloads, err := s.skills.ImportArchiveBytes(ctx, adminUserID, fname, zipBytes)
 	if err != nil {
-		return DispatchResult{}, fmt.Errorf("import claw-aegis skill: %w", err)
+		return DispatchResult{}, fmt.Errorf("import clawaegisex skill: %w", err)
 	}
 	if len(payloads) == 0 {
-		return DispatchResult{}, fmt.Errorf("import claw-aegis skill: empty result")
+		return DispatchResult{}, fmt.Errorf("import clawaegisex skill: empty result")
 	}
 	skill := payloads[0]
 
@@ -285,7 +285,7 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 // alias this to DispatchAegis, which uses the proven install_skill path:
 // zip the ClawAegis source + new user_config.json → upload as a new skill
 // version → enqueue install_skill on each target → pod agent extracts to
-// workspace/skills/claw-aegis/ → plugin's mtime watcher picks up the new
+// workspace/skills/clawaegisex/ → plugin's mtime watcher picks up the new
 // user_config.json and hot-reloads.
 //
 // Trade-off vs the original design: every "apply" rebuilds the full skill
@@ -436,7 +436,7 @@ func (s *service) resolveTargets(in []int) ([]int, error) {
 
 // GetEffectiveAegisConfig walks instance_commands backwards for the given
 // instance and returns whichever happened most recently:
-//   - an install_skill with target_name="claw-aegis" carrying aegis_user_config
+//   - an install_skill with target_name="clawaegisex" carrying aegis_user_config
 //     (bundle path — produced by DispatchAegis), OR
 //   - a secplane.apply_aegis_config carrying user_config (config-only fast
 //     path — produced by DispatchAegisApply).
@@ -459,7 +459,7 @@ func (s *service) GetEffectiveAegisConfig(instanceID int) (*EffectiveAegisConfig
 
 		switch cmd.CommandType {
 		case services.InstanceCommandTypeInstallSkill:
-			if name, _ := cmd.Payload["target_name"].(string); name != "claw-aegis" {
+			if name, _ := cmd.Payload["target_name"].(string); name != "clawaegisex" {
 				continue
 			}
 			ucRaw, ok := cmd.Payload["aegis_user_config"]
@@ -505,7 +505,7 @@ func (s *service) GetEffectiveAegisConfig(instanceID int) (*EffectiveAegisConfig
 
 // GetLiveAegisConfig — see Service interface doc.
 func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, error) {
-	// 1. Find this instance's claw-aegis skill row.
+	// 1. Find this instance's clawaegisex skill row.
 	items, err := s.skills.ListInstanceSkills(instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("list instance skills: %w", err)
@@ -516,13 +516,13 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		if it.Skill == nil {
 			continue
 		}
-		// 名字匹配 "claw-aegis" 或类似 (大小写不敏感, 容忍连字符变体)
+		// 名字匹配 "clawaegisex" 或类似 (大小写不敏感, 容忍连字符变体)
 		nameLower := strings.ToLower(it.Skill.Name)
 		keyLower := strings.ToLower(it.Skill.SkillKey)
-		if strings.Contains(nameLower, "claw-aegis") ||
+		if strings.Contains(nameLower, "clawaegisex") ||
 			strings.Contains(nameLower, "clawaegis") ||
 			strings.Contains(nameLower, "ksecforclaw") ||
-			strings.Contains(keyLower, "claw-aegis") ||
+			strings.Contains(keyLower, "clawaegisex") ||
 			strings.Contains(keyLower, "clawaegis") ||
 			strings.Contains(keyLower, "ksecforclaw") {
 			aegisSkillID = it.SkillID
@@ -531,7 +531,7 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		}
 	}
 	if aegisSkillID == 0 {
-		return nil, fmt.Errorf("claw-aegis skill not registered on instance %d (agent may not have reported yet)", instanceID)
+		return nil, fmt.Errorf("clawaegisex skill not registered on instance %d (agent may not have reported yet)", instanceID)
 	}
 
 	// 2. Pull the latest version's blob bytes via SkillService.DownloadSkill.

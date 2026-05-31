@@ -11,7 +11,7 @@ package aegis_assets
 
 import _ "embed"
 
-//go:embed claw-aegis-base.zip
+//go:embed clawaegisex-base.zip
 var baseZip []byte
 
 //go:embed secureclaw-base.zip

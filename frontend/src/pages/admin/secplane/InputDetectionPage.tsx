@@ -12,9 +12,9 @@ import {
 import DispatchPickerModal from '../../../components/secplane/DispatchPickerModal';
 
 // ---------------------------------------------------------------------------
-// Canonical ClawAegis taxonomy. Names + display labels must stay in sync with
-// the Go side (`backend/internal/secplane/policy/model.go`) and the ClawAegis
-// schema (`ClawAegis/src/config.ts`). The seed inserts one rule per row here.
+// Canonical ClawAegisEx taxonomy. Names + display labels must stay in sync with
+// the Go side (`backend/internal/secplane/policy/model.go`) and the ClawAegisEx
+// schema (`ClawAegisEx/src/config.ts`). The seed inserts one rule per row here.
 // ---------------------------------------------------------------------------
 
 interface DefenseSpec {
@@ -26,7 +26,7 @@ interface DefenseSpec {
 }
 
 const DEFENSES: DefenseSpec[] = [
-  { name: 'selfProtection', display: '受保护路径访问拦截', help: '拦截读取/写入/删除/搜索 protectedPaths、protectedSkills 与 ClawAegis 源码目录的请求。', supportsMode: true, ruleID: 'defense.selfProtection' },
+  { name: 'selfProtection', display: '受保护路径访问拦截', help: '拦截读取/写入/删除/搜索 protectedPaths、protectedSkills 与 ClawAegisEx 源码目录的请求。', supportsMode: true, ruleID: 'defense.selfProtection' },
   { name: 'commandBlock', display: '高危命令拦截', help: '阻止 rm -rf /、curl | sh、shutdown 等明显高危 shell 模式。', supportsMode: true, ruleID: 'defense.commandBlock' },
   { name: 'encodingGuard', display: '编码/混淆载荷检测', help: '检测有界的 base64/base32/hex/url 编码载荷里隐藏的危险命令或外发逻辑。', supportsMode: true, ruleID: 'defense.encodingGuard' },
   { name: 'scriptProvenanceGuard', display: '脚本来源追踪', help: '跟踪本轮新落地的脚本，发现含高危命令或外发信号时阻止后续执行。', supportsMode: true, ruleID: 'defense.scriptProvenanceGuard' },
@@ -68,7 +68,7 @@ const TOOL_RESULT_FLAGS: FlagSpec[] = [
   { flag: 'remote-binary-bootstrap', display: '远程二进制引导', ruleID: 'trf.remote-binary-bootstrap' },
   { flag: 'system-prompt-leak', display: '系统提示泄漏', ruleID: 'trf.system-prompt-leak' },
   { flag: 'approval-bypass', display: '审批流程绕过', ruleID: 'trf.approval-bypass' },
-  { flag: 'disable-claw-aegis', display: '禁用 ClawAegis', ruleID: 'trf.disable-claw-aegis' },
+  { flag: 'disable-claw-aegis', display: '禁用 ClawAegisEx', ruleID: 'trf.disable-claw-aegis' },
   { flag: 'high-risk-command', display: '高危命令', ruleID: 'trf.high-risk-command' },
   { flag: 'credential-exfiltration', display: '凭据外发', ruleID: 'trf.credential-exfiltration' },
 ];
@@ -80,11 +80,11 @@ const TOOL_RESULT_FLAGS: FlagSpec[] = [
 type TabKey = 'defenses' | 'userRisk' | 'toolResult' | 'protected' | 'alerts';
 
 const TABS: Array<{ key: TabKey; label: string; help: string }> = [
-  { key: 'defenses', label: '防御开关', help: '14 个 ClawAegis 防御模块的总开关与运行模式' },
+  { key: 'defenses', label: '防御开关', help: '14 个 ClawAegisEx 防御模块的总开关与运行模式' },
   { key: 'userRisk', label: '输入风险标记', help: 'userRiskScan 内置 flag 的三态控制（启用 / observe / 关闭）' },
   { key: 'toolResult', label: '工具结果检测', help: 'toolResultScan 内置 flag 的三态控制' },
   { key: 'protected', label: '受保护资源', help: '运行时受保护的 paths / skills / plugins 列表' },
-  { key: 'alerts', label: '告警日志', help: '来自 ClawAegis、平台与其他防御端的统一告警流' },
+  { key: 'alerts', label: '告警日志', help: '来自 ClawAegisEx、平台与其他防御端的统一告警流' },
 ];
 
 const MODE_LABEL: Record<RuleMode, string> = {
@@ -451,7 +451,7 @@ const InputDetectionPage: React.FC = () => {
     return (
       <div className="space-y-4">
         <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700">
-          每个开关对应一个 ClawAegis 内置防御模块。修改后点上方"下发到实例"即可热重载 — 无需重启 gateway。
+          每个开关对应一个 ClawAegisEx 内置防御模块。修改后点上方"下发到实例"即可热重载 — 无需重启 gateway。
           <span className="ml-1 text-blue-900/70">Enforce</span> = 拦截 + 注入 LLM 提示词；
           <span className="ml-1 text-blue-900/70">Observe</span> = 仅写告警，LLM 行为不变；
           <span className="ml-1 text-blue-900/70">Off</span> = 整模块不跑。
@@ -621,7 +621,7 @@ const InputDetectionPage: React.FC = () => {
               className="ml-2 rounded border border-gray-300 px-2 py-1 text-sm"
             >
               <option value="">全部</option>
-              <option value="aegis">aegis（Pod 端 ClawAegis）</option>
+              <option value="aegis">aegis（Pod 端 ClawAegisEx）</option>
               <option value="platform">platform（平台测试）</option>
               <option value="gateway">gateway</option>
               <option value="secureclaw">secureclaw</option>
@@ -691,17 +691,17 @@ const InputDetectionPage: React.FC = () => {
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-indigo-600">claw-aegis · secplane</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-indigo-600">clawaegisex · secplane</div>
               <div className="mt-1 text-2xl font-semibold text-gray-900">智能安全防护</div>
               <div className="mt-1 text-sm text-gray-600">
-                统一管理 ClawAegis 14 个防御模块、{USER_RISK_FLAGS.length + TOOL_RESULT_FLAGS.length} 个内置 flag、受保护资源列表，以及来自 Pod 与平台的告警流。规则修改后点击右上"下发到实例"即可热重载至所有运行中的 OpenClaw 实例。
+                统一管理 ClawAegisEx 14 个防御模块、{USER_RISK_FLAGS.length + TOOL_RESULT_FLAGS.length} 个内置 flag、受保护资源列表，以及来自 Pod 与平台的告警流。规则修改后点击右上"下发到实例"即可热重载至所有运行中的 OpenClaw 实例。
               </div>
             </div>
             <button
               onClick={() => setPickerOpen(true)}
               disabled={dispatching}
               className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-indigo-700 disabled:opacity-60"
-              title="选择目标实例并下发 ClawAegis user_config"
+              title="选择目标实例并下发 ClawAegisEx user_config"
             >
               {dispatching ? '下发中…' : '下发到实例…'}
             </button>
@@ -733,7 +733,7 @@ const InputDetectionPage: React.FC = () => {
                 ))}
               </div>
               <div className="mt-2 text-gray-500">
-                ClawAegis 会在 ≤1s 自动 hot-reload 新 user_config（无需重启 OpenClaw）。
+                ClawAegisEx 会在 ≤1s 自动 hot-reload 新 user_config（无需重启 OpenClaw）。
               </div>
             </div>
           )}
@@ -785,7 +785,7 @@ const InputDetectionPage: React.FC = () => {
         onClose={() => setPickerOpen(false)}
         onDispatch={runDispatch}
         dispatching={dispatching}
-        hint="把当前 ClawAegis 规则编译为 user_config 并通过 install_skill 推送到选中的 OpenClaw 实例。"
+        hint="把当前 ClawAegisEx 规则编译为 user_config 并通过 install_skill 推送到选中的 OpenClaw 实例。"
       />
     </AdminLayout>
   );

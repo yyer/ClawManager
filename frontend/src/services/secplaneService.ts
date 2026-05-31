@@ -144,7 +144,7 @@ export const secplaneService = {
     return response.data.data?.items ?? [];
   },
 
-  // Compile current rules → ClawAegis user_config → upload as new skill
+  // Compile current rules → ClawAegisEx user_config → upload as new skill
   // version → enqueue install_skill on each target. Empty instance_ids =
   // dispatch to ALL OpenClaw instances.
   dispatchAegis: async (instanceIds?: number[]): Promise<DispatchResult> => {

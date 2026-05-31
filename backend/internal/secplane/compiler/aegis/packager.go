@@ -14,7 +14,7 @@ import (
 // PackageSkill builds a fresh ClawAegis skill zip with the supplied user_config
 // merged in, ready to be uploaded via the existing /api/v1/skills/import flow.
 //
-// The injection point is `claw-aegis/user_config.json` — the patched
+// The injection point is `clawaegisex/user_config.json` — the patched
 // ClawAegis loader (see ClawAegis/src/config.ts) reads this file at startup
 // and merges its contents on top of `api.pluginConfig`.
 //
@@ -34,7 +34,7 @@ func PackageSkill(cfg UserConfig) ([]byte, []byte, error) {
 	var out bytes.Buffer
 	zw := zip.NewWriter(&out)
 
-	const target = "claw-aegis/user_config.json"
+	const target = "clawaegisex/user_config.json"
 	wroteOverride := false
 	for _, f := range src.File {
 		// Drop any pre-existing user_config.json so the new one wins.

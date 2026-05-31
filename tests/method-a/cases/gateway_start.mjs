@@ -27,9 +27,9 @@ export default [
         if (!roots.some(r => r.endsWith("/root"))) {
           errs.push(`protectedRoots 应含 rootDir (.../root), 实际=${JSON.stringify(roots)}`);
         }
-        // stateDir 形如 .../plugins/claw-aegis
-        if (!roots.some(r => r.endsWith("/plugins/claw-aegis"))) {
-          errs.push(`protectedRoots 应含 stateDir (.../plugins/claw-aegis), 实际=${JSON.stringify(roots)}`);
+        // stateDir 形如 .../plugins/clawaegisex
+        if (!roots.some(r => r.endsWith("/plugins/clawaegisex"))) {
+          errs.push(`protectedRoots 应含 stateDir (.../plugins/clawaegisex), 实际=${JSON.stringify(roots)}`);
         }
         const integrity = rt.state.getSelfIntegrityRecord();
         if (!integrity) errs.push(`getSelfIntegrityRecord() 应非空（selfProtection 开时启动应刷新）`);
@@ -55,7 +55,7 @@ export default [
   },
   {
     name: "gateway_start — protectedSkills + protectedPlugins → stateRoot 下子目录进 protectedRoots",
-    cfg: { ...FULL_ENFORCE, protectedSkills: ["claw-aegis"], protectedPlugins: ["claw-aegis"] },
+    cfg: { ...FULL_ENFORCE, protectedSkills: ["clawaegisex"], protectedPlugins: ["clawaegisex"] },
     hook: "gateway_start",
     event: {},
     expect: {
@@ -63,17 +63,17 @@ export default [
       assertState: (rt) => {
         const roots = rt.state.getProtectedRoots();
         const errs = [];
-        if (!roots.some(r => r.endsWith("/skills/claw-aegis"))) {
-          errs.push(`期望含 .../skills/claw-aegis, 实际=${JSON.stringify(roots)}`);
+        if (!roots.some(r => r.endsWith("/skills/clawaegisex"))) {
+          errs.push(`期望含 .../skills/clawaegisex, 实际=${JSON.stringify(roots)}`);
         }
-        if (!roots.some(r => r.endsWith("/workspace/skills/claw-aegis"))) {
-          errs.push(`期望含 .../workspace/skills/claw-aegis, 实际=${JSON.stringify(roots)}`);
+        if (!roots.some(r => r.endsWith("/workspace/skills/clawaegisex"))) {
+          errs.push(`期望含 .../workspace/skills/clawaegisex, 实际=${JSON.stringify(roots)}`);
         }
-        if (!roots.some(r => r.endsWith("/extensions/claw-aegis"))) {
-          errs.push(`期望含 .../extensions/claw-aegis, 实际=${JSON.stringify(roots)}`);
+        if (!roots.some(r => r.endsWith("/extensions/clawaegisex"))) {
+          errs.push(`期望含 .../extensions/clawaegisex, 实际=${JSON.stringify(roots)}`);
         }
-        if (!roots.some(r => r.endsWith("/plugins/claw-aegis"))) {
-          errs.push(`期望含 .../plugins/claw-aegis, 实际=${JSON.stringify(roots)}`);
+        if (!roots.some(r => r.endsWith("/plugins/clawaegisex"))) {
+          errs.push(`期望含 .../plugins/clawaegisex, 实际=${JSON.stringify(roots)}`);
         }
         return errs;
       },

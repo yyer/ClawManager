@@ -177,7 +177,7 @@ const SecurityEventsPage: React.FC = () => {
               <div className="h-eyebrow">SECURITY EVENTS · 跨场景事件流</div>
               <h2 className="h-title">事件日志</h2>
               <p className="h-subtitle">
-                来自 ClawAegis（运行时）、SecureClaw（审计加固）、KSecure（主机层）的告警事件。
+                来自 ClawAegisEx（运行时）、SecureClaw（审计加固）、KSecure（主机层）的告警事件。
                 支持按来源、严重度、规则 ID 多维筛选；关键字搜索 trace_id / 主体 / 证据片段。
               </p>
             </div>

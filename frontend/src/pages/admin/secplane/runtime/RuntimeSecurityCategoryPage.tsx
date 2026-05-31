@@ -71,7 +71,7 @@ const RuntimeSecurityCategoryPage: React.FC = () => {
             <h2 className="h-title">智能体运行时安全</h2>
             <p className="h-subtitle">
               面向单智能体从初始化、输入、推理、决策到执行的完整运行时链路，覆盖输入面、状态面、决策面、输出面、资产保护
-              5 个场景，构建运行时层纵深防御主链路。底层由 ClawAegis 插件强制执行，配置变更通过
+              5 个场景，构建运行时层纵深防御主链路。底层由 ClawAegisEx 插件强制执行，配置变更通过
               <code className="mx-1 px-1 py-0.5 rounded bg-[#fdf6f1] text-[#7a4a30] text-xs">install_skill</code>
               下发到 pod，插件在 ≤1s 内 hot-reload user_config.json 生效。
             </p>
@@ -85,7 +85,7 @@ const RuntimeSecurityCategoryPage: React.FC = () => {
             <div className="stat-card">
               <div className="stat-card-label">支撑防御</div>
               <div className="stat-card-value">14</div>
-              <div className="stat-card-sub muted-strong">ClawAegis defense</div>
+              <div className="stat-card-sub muted-strong">ClawAegisEx defense</div>
             </div>
             <div className="stat-card">
               <div className="stat-card-label">下发通道</div>

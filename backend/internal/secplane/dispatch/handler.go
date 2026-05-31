@@ -119,7 +119,7 @@ func (h *Handler) DispatchSecureClaw(c *gin.Context) {
 
 // GetInstanceEffectiveConfig — GET /api/v1/secplane/instances/:id/effective-config
 //
-// Returns the most recent claw-aegis user_config that was dispatched to the
+// Returns the most recent clawaegisex user_config that was dispatched to the
 // given instance (as recorded in instance_commands.payload_json). This is
 // "what was last pushed" — for ground-truth "what's actually loaded by the
 // plugin right now", a future enhancement will round-trip through the agent.
@@ -128,7 +128,7 @@ func (h *Handler) DispatchSecureClaw(c *gin.Context) {
 //
 //	{ data: EffectiveAegisConfig | null, ... }
 //
-// `null` data means no claw-aegis dispatch has happened for this instance yet
+// `null` data means no clawaegisex dispatch has happened for this instance yet
 // (or the dispatches predate the persistence of aegis_user_config in payload).
 func (h *Handler) GetInstanceEffectiveConfig(c *gin.Context) {
 	id, err := strconv.Atoi(strings.TrimSpace(c.Param("id")))
@@ -147,7 +147,7 @@ func (h *Handler) GetInstanceEffectiveConfig(c *gin.Context) {
 // GetInstanceLiveConfig — GET /api/v1/secplane/instances/:id/aegis/live-config
 //
 // Reads the user_config.json out of the latest skill_blob the agent has
-// uploaded for this instance's claw-aegis skill. Closer to "what the pod
+// uploaded for this instance's clawaegisex skill. Closer to "what the pod
 // actually has on disk" than GetInstanceEffectiveConfig (which only reflects
 // what was last dispatched). See service.GetLiveAegisConfig for caveats.
 func (h *Handler) GetInstanceLiveConfig(c *gin.Context) {

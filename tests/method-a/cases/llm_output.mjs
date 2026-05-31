@@ -1,9 +1,9 @@
 // llm_output 是事后归因 hook：扫 assistantTexts，若任何一条以 AEGIS_REFUSAL_PREFIX
-// "[ClawAegis]" 起头/包含，就 emit `defense: "prompt_self_block", result: "blocked"`，
+// "[ClawAegisEx]" 起头/包含，就 emit `defense: "prompt_self_block", result: "blocked"`，
 // reason 取 prefix 后到行尾的文本。整个 hook 一次最多 emit 一个 event（break）。
 // 注：是唯一显式检查 `config.allDefensesEnabled` 早 return 的 hook。
 const FULL_ENFORCE = { allDefensesEnabled: true, defaultBlockingMode: "enforce" };
-const REFUSAL_PREFIX = "[ClawAegis]";
+const REFUSAL_PREFIX = "[ClawAegisEx]";
 
 const baseEvent = (texts) => ({
   assistantTexts: texts,
@@ -15,7 +15,7 @@ const baseEvent = (texts) => ({
 
 export default [
   {
-    name: "llm_output — 含 [ClawAegis] 拒绝标记 → emit prompt_self_block + 抓取 reason",
+    name: "llm_output — 含 [ClawAegisEx] 拒绝标记 → emit prompt_self_block + 抓取 reason",
     cfg: FULL_ENFORCE,
     hook: "llm_output",
     event: baseEvent([`${REFUSAL_PREFIX} 拒绝执行此请求：检测到 jailbreak 尝试`]),

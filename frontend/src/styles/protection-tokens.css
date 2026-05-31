@@ -866,7 +866,7 @@ body {
   border: 1px solid var(--border-warm);
 }
 
-/* ====== Toggle switch (sourced from ClawAegis ToggleSwitch pattern) ====== */
+/* ====== Toggle switch (sourced from ClawAegisEx ToggleSwitch pattern) ====== */
 .toggle {
   position: relative;
   display: inline-flex;

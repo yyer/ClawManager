@@ -173,7 +173,7 @@ class WSChat:
 # ─── ClawAegis defense-events.jsonl 增量观察 ──────────────────────────
 
 class DefenseEventsTail:
-    JSONL = "/config/.openclaw/plugins/claw-aegis/defense-events.jsonl"
+    JSONL = "/config/.openclaw/plugins/clawaegisex/defense-events.jsonl"
 
     def __init__(self, pod: Pod):
         self.pod = pod
@@ -365,7 +365,7 @@ def ensure_instance_running(backend: "Backend", instance_id: int, *, timeout_s: 
     while time.monotonic() < deadline:
         if pod_phase() == "Running":
             print(f"  [setup] pod Running ✓")
-            # 还等 openclaw gateway 起来（claw-aegis 注册 + 端口 listen）
+            # 还等 openclaw gateway 起来（clawaegisex 注册 + 端口 listen）
             # 简单 sleep 一段时间让 gateway 装好
             time.sleep(6)
             return True
@@ -543,7 +543,7 @@ class Harness:
                 "sort_order": spec.get("sort_order", 900),
             })
 
-    USER_CONFIG_PATH = "/config/.openclaw/extensions/claw-aegis/user_config.json"
+    USER_CONFIG_PATH = "/config/.openclaw/extensions/clawaegisex/user_config.json"
 
     def _user_config_mtime(self) -> float:
         rc, out, _ = self.pod.exec(f"stat -c %Y {self.USER_CONFIG_PATH} 2>/dev/null", check=False)

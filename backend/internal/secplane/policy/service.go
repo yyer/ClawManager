@@ -66,7 +66,7 @@ type Service interface {
 	Test(in TestInput) (AnalysisResult, error)
 	ListAlerts(filter AlertFilter) ([]Alert, error)
 	// RecordExternalAlert persists an Alert produced by an external emitter
-	// (claw-aegis JSONL ingest, secureclaw, ksecure relay, ...).
+	// (clawaegisex JSONL ingest, secureclaw, ksecure relay, ...).
 	RecordExternalAlert(alert *Alert) error
 }
 

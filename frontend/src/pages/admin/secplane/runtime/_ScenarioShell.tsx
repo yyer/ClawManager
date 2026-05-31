@@ -224,7 +224,7 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
           <div className="stat-card">
             <div className="stat-card-label">防御项</div>
             <div className="stat-card-value">{meta.defenses.length}</div>
-            <div className="stat-card-sub muted-strong">已映射至 ClawAegis</div>
+            <div className="stat-card-sub muted-strong">已映射至 ClawAegisEx</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">已启用</div>

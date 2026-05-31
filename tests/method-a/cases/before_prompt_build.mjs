@@ -57,7 +57,7 @@ export default [
     apiOverride: {
       config: {
         plugins: {
-          entries: { "claw-aegis": { enabled: true, hooks: { allowPromptInjection: false } } },
+          entries: { "clawaegisex": { enabled: true, hooks: { allowPromptInjection: false } } },
         },
       },
     },

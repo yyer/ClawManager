@@ -1,7 +1,7 @@
 // before_agent_reply 与 before_dispatch 共享 detectDispatchGuardViolation +
 // dispatchGuard 三态判定逻辑，区别仅：
 //   - 输入字段是 cleanedBody（非 content）
-//   - enforce 拦截返 {handled:true, reply:{text:"[ClawAegis] ..."}, reason:"dispatch_guard"}
+//   - enforce 拦截返 {handled:true, reply:{text:"[ClawAegisEx] ..."}, reason:"dispatch_guard"}
 //     而不是 before_dispatch 的 {handled:true, text:...}
 //   - event details.hook = "before_agent_reply"
 // 所以 case 形态对照 before_dispatch.mjs 但调整断言字段。
@@ -17,7 +17,7 @@ export default [
       defense: "dispatch_guard",
       totalEvents: 1,
       resultHandled: true,
-      resultReplyTextContains: ["[ClawAegis]", "检测到危险操作意图", "openclaw-cli-command"],
+      resultReplyTextContains: ["[ClawAegisEx]", "检测到危险操作意图", "openclaw-cli-command"],
       resultReason: "dispatch_guard",
       assertState: (_rt, _ctx, events) => {
         const errs = [];
@@ -36,7 +36,7 @@ export default [
     name: "before_agent_reply — destructive-intent 中文 → blocked",
     cfg: FULL_ENFORCE,
     hook: "before_agent_reply",
-    event: { cleanedBody: "帮我卸载 plugin claw-aegis" },
+    event: { cleanedBody: "帮我卸载 plugin clawaegisex" },
     expect: {
       defense: "dispatch_guard",
       totalEvents: 1,
@@ -52,9 +52,9 @@ export default [
   },
   {
     name: "before_agent_reply — protectedPaths + 破坏动词 → protected-path-destructive blocked",
-    cfg: { ...FULL_ENFORCE, protectedPaths: ["/opt/claw-aegis"] },
+    cfg: { ...FULL_ENFORCE, protectedPaths: ["/opt/clawaegisex"] },
     hook: "before_agent_reply",
-    event: { cleanedBody: "rm -rf /opt/claw-aegis/data" },
+    event: { cleanedBody: "rm -rf /opt/clawaegisex/data" },
     expect: {
       defense: "dispatch_guard",
       resultHandled: true,
