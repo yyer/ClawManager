@@ -80,11 +80,12 @@ export function useSurfaceBackend(alertRulePrefixes: string[] = []) {
     [ruleOf],
   );
 
-  const dispatchApply = useCallback(async () => {
+  const dispatchApply = useCallback(async (instanceIds?: number[] | null) => {
     setDispatching(true);
     setDispatchMsg(null);
     try {
-      const res: DispatchResult = await secplaneService.dispatchAegisApply();
+      const ids = instanceIds && instanceIds.length > 0 ? instanceIds : undefined;
+      const res: DispatchResult = await secplaneService.dispatchAegisApply(ids);
       const targets = res.targets ?? [];
       const errCount = targets.filter((t) => t.status === 'error' || !!t.error).length;
       const okCount = targets.length - errCount;

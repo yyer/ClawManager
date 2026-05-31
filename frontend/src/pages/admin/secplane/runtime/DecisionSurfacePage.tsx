@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 决策面防护 (scenario c) — 对齐 KSecForAIDemo/scenario-c-decision.html
@@ -154,9 +155,7 @@ const DecisionSurfacePage: React.FC = () => {
               <div className="eyebrow">工具调用三态防护 · 5 项独立配置</div>
               <h3 className="section-title-lg mt-1">工具调用防护配置</h3>
             </div>
-            <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-              {dispatching ? '下发中…' : '保存并应用'}
-            </button>
+            <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
             {dispatchMsg && <span className="text-xs muted ml-2">{dispatchMsg}</span>}
           </div>
           <div className="space-y-2.5">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 状态面防护 (scenario b) — 对齐 KSecForAIDemo/scenario-b-state.html
@@ -112,9 +113,7 @@ const StateSurfacePage: React.FC = () => {
                   停止
                 </button>
               </div>
-              <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-                {dispatching ? '下发中…' : '保存并应用'}
-              </button>
+              <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
               {dispatchMsg && <span className="text-xs muted ml-2">{dispatchMsg}</span>}
             </div>
           </div>

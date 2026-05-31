@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import {
   secplaneService,
   type SecplaneRule,
@@ -179,7 +180,6 @@ const InputSurfacePage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [dispatchResult, setDispatchResult] = useState<DispatchResult | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
-  const [confirmNeeded, setConfirmNeeded] = useState(false);
   const instanceHealth = useInstanceHealth();
 
   const loadAll = useCallback(async () => {
@@ -223,13 +223,13 @@ const InputSurfacePage: React.FC = () => {
     }
   };
 
-  const doApply = async () => {
+  const doApply = async (instanceIds: number[] | null) => {
     setBusy(true);
     setDispatchError(null);
     setDispatchResult(null);
-    setConfirmNeeded(false);
     try {
-      const res = await secplaneService.dispatchAegisApply();
+      const ids = instanceIds && instanceIds.length > 0 ? instanceIds : undefined;
+      const res = await secplaneService.dispatchAegisApply(ids);
       setDispatchResult(res);
       // Refresh alerts in case the just-applied policy already started firing.
       const fresh = await secplaneService.listAlerts({ source: 'aegis', limit: 20 });
@@ -240,19 +240,6 @@ const InputSurfacePage: React.FC = () => {
     } finally {
       setBusy(false);
     }
-  };
-
-  const handleApply = () => {
-    if (
-      !confirmNeeded &&
-      !instanceHealth.loading &&
-      !instanceHealth.error &&
-      instanceHealth.unhealthy.length > 0
-    ) {
-      setConfirmNeeded(true);
-      return;
-    }
-    doApply();
   };
 
   const modal = modalKey ? RULE_MODAL_DATA[modalKey] : null;
@@ -280,37 +267,19 @@ const InputSurfacePage: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-col items-end gap-2">
+              <ApplyDispatchButton
+                onDispatch={doApply}
+                busy={busy}
+                triggerLabel="应用到实例…"
+              />
               <button
                 type="button"
-                className={confirmNeeded ? 'btn-danger' : 'btn-primary'}
-                onClick={handleApply}
+                className="btn-secondary btn-sm"
+                onClick={loadAll}
                 disabled={busy}
               >
-                {busy
-                  ? '下发中…'
-                  : confirmNeeded
-                    ? `确认下发（含 ${instanceHealth.unhealthy.length} 个不健康实例）`
-                    : '应用到所有实例'}
+                刷新
               </button>
-              {confirmNeeded ? (
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  onClick={() => setConfirmNeeded(false)}
-                  disabled={busy}
-                >
-                  取消
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  onClick={loadAll}
-                  disabled={busy}
-                >
-                  刷新
-                </button>
-              )}
             </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
@@ -347,16 +316,6 @@ const InputSurfacePage: React.FC = () => {
           error={instanceHealth.error}
           onReload={instanceHealth.reload}
         />
-
-        {confirmNeeded && (
-          <div className="alert alert-warning">
-            <span>
-              目标中有 <strong>{instanceHealth.unhealthy.length}</strong> 个实例不处于 running 状态
-              （{instanceHealth.unhealthy.map((i) => i.name).join('、')}）。
-              下发命令会入队但卡在 pending，直到实例恢复才会被消费。再点一次按钮确认继续。
-            </span>
-          </div>
-        )}
 
         {/* Dispatch result banner — reports per-target status honestly. */}
         {dispatchResult && <DispatchResultBanner result={dispatchResult} />}

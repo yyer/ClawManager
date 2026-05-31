@@ -7,6 +7,7 @@ import {
   type DispatchResult,
   type RuleMode,
 } from '../../../../services/secplaneService';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import RuleDetailModal, { type RuleModalData } from './RuleDetailModal';
 import DispatchResultBanner from './DispatchResultBanner';
 import InstanceHealthPanel from './InstanceHealthPanel';
@@ -70,7 +71,6 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
   const [dispatchResult, setDispatchResult] = useState<DispatchResult | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [openRuleModalFor, setOpenRuleModalFor] = useState<string | null>(null);
-  const [confirmNeeded, setConfirmNeeded] = useState(false);
   const instanceHealth = useInstanceHealth();
 
   const wantsAlerts = !!(meta.alertRuleIdPrefixes && meta.alertRuleIdPrefixes.length);
@@ -136,13 +136,13 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
     updateRule({ ...r, mode, is_enabled: mode !== 'off' });
   };
 
-  const doApply = async () => {
+  const doApply = async (instanceIds: number[] | null) => {
     setBusy(true);
     setDispatchError(null);
     setDispatchResult(null);
-    setConfirmNeeded(false);
     try {
-      const res = await secplaneService.dispatchAegisApply();
+      const ids = instanceIds && instanceIds.length > 0 ? instanceIds : undefined;
+      const res = await secplaneService.dispatchAegisApply(ids);
       setDispatchResult(res);
       if (wantsAlerts) {
         const fresh = await secplaneService.listAlerts({ source: 'aegis', limit: 50 });
@@ -153,22 +153,6 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
     } finally {
       setBusy(false);
     }
-  };
-
-  const handleApply = () => {
-    // Two-step confirm when any target instance is unhealthy. Skip the check
-    // if the instance list failed to load (don't block the user on a flaky
-    // /admin/instances response).
-    if (
-      !confirmNeeded &&
-      !instanceHealth.loading &&
-      !instanceHealth.error &&
-      instanceHealth.unhealthy.length > 0
-    ) {
-      setConfirmNeeded(true);
-      return;
-    }
-    doApply();
   };
 
   const enabledCount = meta.defenses.filter((d) => ruleByDefense[d.ruleId]?.is_enabled).length;
@@ -191,33 +175,14 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
             <p className="h-subtitle">{meta.subtitle}</p>
           </div>
           <div className="flex flex-col items-end gap-2">
-            <button
-              type="button"
-              className={confirmNeeded ? 'btn-danger' : 'btn-primary'}
-              onClick={handleApply}
-              disabled={busy}
-            >
-              {busy
-                ? '下发中…'
-                : confirmNeeded
-                  ? `确认下发（含 ${instanceHealth.unhealthy.length} 个不健康实例）`
-                  : '应用到所有实例'}
+            <ApplyDispatchButton
+              onDispatch={doApply}
+              busy={busy}
+              triggerLabel="应用到实例…"
+            />
+            <button type="button" className="btn-secondary btn-sm" onClick={loadAll} disabled={busy}>
+              刷新
             </button>
-            {confirmNeeded && (
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={() => setConfirmNeeded(false)}
-                disabled={busy}
-              >
-                取消
-              </button>
-            )}
-            {!confirmNeeded && (
-              <button type="button" className="btn-secondary btn-sm" onClick={loadAll} disabled={busy}>
-                刷新
-              </button>
-            )}
           </div>
         </div>
         <div className="grid grid-cols-4 gap-3">
@@ -251,15 +216,7 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
         onReload={instanceHealth.reload}
       />
 
-      {confirmNeeded && (
-        <div className="alert alert-warning">
-          <span>
-            目标中有 <strong>{instanceHealth.unhealthy.length}</strong> 个实例不处于 running 状态
-            （{instanceHealth.unhealthy.map((i) => i.name).join('、')}）。
-            下发命令会入队但卡在 pending，直到实例恢复才会被消费。再点一次按钮确认继续。
-          </span>
-        </div>
-      )}
+
 
       {dispatchResult && <DispatchResultBanner result={dispatchResult} />}
       {dispatchError && (

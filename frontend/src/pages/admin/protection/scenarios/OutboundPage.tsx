@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useSurfaceBackend } from '../../secplane/runtime/useSurfaceBackend';
 import {
   secplaneService,
@@ -183,9 +184,7 @@ const OutboundPage: React.FC = () => {
                   停止
                 </button>
               </div>
-              <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-                {dispatching ? '下发中…' : '保存并应用'}
-              </button>
+              <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
               {dispatchMsg && <span className="text-xs muted ml-1">{dispatchMsg}</span>}
             </div>
           </div>
@@ -227,9 +226,7 @@ const OutboundPage: React.FC = () => {
                   停止
                 </button>
               </div>
-              <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-                {dispatching ? '下发中…' : '保存并应用'}
-              </button>
+              <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
               {dispatchMsg && <span className="text-xs muted ml-1">{dispatchMsg}</span>}
               <span className={`text-xs font-bold tone-${trustHits > 0 ? 'red' : 'green'}`}>24h 拦截 {trustHits}</span>
             </div>

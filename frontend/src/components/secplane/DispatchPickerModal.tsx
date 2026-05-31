@@ -33,7 +33,7 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
   onDispatch,
   dispatching,
   title = '选择下发目标实例',
-  hint = '把当前规则编译并通过 install_skill 推送到选中的 OpenClaw 实例。',
+  hint = '把当前规则编译并推送到选中的 OpenClaw 实例。',
 }) => {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(false);

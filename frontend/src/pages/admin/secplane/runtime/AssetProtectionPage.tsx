@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 资产防篡改 (scenario f) — 对齐 KSecForAIDemo/scenario-f-asset.html
@@ -114,9 +115,7 @@ const AssetProtectionPage: React.FC = () => {
               <div className="eyebrow">资产防护三态规则 · 3 项独立配置</div>
               <h3 className="section-title-lg mt-1">资产防护规则配置</h3>
             </div>
-            <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-              {dispatching ? '下发中…' : '保存并应用'}
-            </button>
+            <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
             {dispatchMsg && <span className="text-xs muted ml-2">{dispatchMsg}</span>}
           </div>
           <div className="space-y-2.5">

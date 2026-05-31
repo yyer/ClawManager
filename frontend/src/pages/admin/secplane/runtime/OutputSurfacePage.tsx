@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 输出面防护 (scenario d) — 对齐 KSecForAIDemo/scenario-d-output.html
@@ -141,9 +142,7 @@ const OutputSurfacePage: React.FC = () => {
               >
                 <div style={{ width: 18, height: 18, borderRadius: 9, background: 'white', position: 'absolute', top: 2, left: enabled ? 18 : 2, transition: 'left .15s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }} />
               </button>
-              <button className="btn-primary btn-sm" disabled={dispatching} onClick={dispatchApply}>
-                {dispatching ? '下发中…' : '保存并应用'}
-              </button>
+              <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
               {dispatchMsg && <span className="text-xs muted ml-2">{dispatchMsg}</span>}
             </div>
           </div>
