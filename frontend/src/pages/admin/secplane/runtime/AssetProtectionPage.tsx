@@ -1,12 +1,26 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
+import { secplaneService, type SecplaneRule } from '../../../../services/secplaneService';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 资产防篡改 (scenario f) — 对齐 KSecForAIDemo/scenario-f-asset.html
 // 接 backend：3 项 defense_toggle (memoryGuard/loopGuard/selfProtection) + dispatchAegisApply + alerts
-// 自定义资产 (protected_path/skill/plugin) CRUD 仍 mock，后续 polish 接 listRules/saveRule。
+// 运维追加的 protectedPaths/Skills/Plugins 走 secplane policy_rule (kind=protected_*)，
+// add / remove 立即 upsert 到 backend；下方 ApplyDispatch 把当前规则编译进 user_config 推送。
+
+const CUSTOM_KINDS = [
+  { kind: 'protected_path' as const,   name: 'Protected Paths',   field: 'protectedPaths · 路径数组',   badge: 'orange' as const, placeholder: '/path/to/protected', hint: '智能体决策时阻止读/写/删/搜该路径',                idPrefix: 'pp.' },
+  { kind: 'protected_skill' as const,  name: 'Protected Skills',  field: 'protectedSkills · 技能 ID 数组', badge: 'purple' as const, placeholder: 'release-guard',     hint: '阻止智能体卸载 / 替换 / 篡改该可信技能',           idPrefix: 'psk.' },
+  { kind: 'protected_plugin' as const, name: 'Protected Plugins', field: 'protectedPlugins · 插件 ID 数组', badge: 'green' as const,  placeholder: 'audit-guard',       hint: '阻止智能体卸载 / 替换 / 篡改该核心插件',           idPrefix: 'ppl.' },
+];
+type CustomKind = (typeof CUSTOM_KINDS)[number]['kind'];
+
+async function sha8(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 8);
+}
 
 const ALERT_PREFIXES = ['defense.memoryGuard', 'defense.loopGuard', 'defense.selfProtection', 'pp.', 'psk.', 'ppl.'];
 
@@ -19,12 +33,6 @@ const RULES: Array<[string, string, string, string, string, Tone, number, string
   ['defense.memoryGuard', '记忆完整性', 'memoryGuardEnabled + memoryGuardMode', '拒绝对 memory_store / MEMORY.md / SOUL.md / memory/ 的可疑或超大写入', 'before_tool_call · before_message_write', 'red', 23, 'target ∈ {memory_store, MEMORY.md, SOUL.md, memory/**}'],
   ['defense.loopGuard', '循环写入兜底', 'loopGuardEnabled + loopGuardMode', '限制单次运行内重复变更工具次数 — memory_store 属 LOOP_GUARD_TOOL_NAMES', 'before_tool_call', 'red', 4, 'memory_store ∈ LOOP_GUARD_TOOL_NAMES · retry > budget / run'],
   ['defense.selfProtection', '受保护资产', 'selfProtectionEnabled + selfProtectionMode', '拦截对 protectedPaths / protectedSkills / protectedPlugins 的读/写/删/搜', 'before_tool_call', 'red', 7, 'skill ∈ {claude-skill-v2}; plugin ∈ {@openclaw/auth}'],
-];
-
-const CUSTOM_GROUPS: Array<{ key: string; name: string; field: string; badge: Tone; count: number; placeholder: string; items: string[]; hint: string }> = [
-  { key: 'paths', name: 'Protected Paths', field: 'protectedPaths · 路径数组', badge: 'orange', count: 2, placeholder: '/path/to/protected', items: ['/opt/myapp/secrets', '/etc/myapp.conf'], hint: '智能体决策时阻止读/写/删/搜该路径' },
-  { key: 'skills', name: 'Protected Skills', field: 'protectedSkills · 技能 ID 数组', badge: 'purple', count: 1, placeholder: 'release-guard', items: ['claude-skill-v2'], hint: '阻止智能体卸载 / 替换 / 篡改该可信技能' },
-  { key: 'plugins', name: 'Protected Plugins', field: 'protectedPlugins · 插件 ID 数组', badge: 'green', count: 1, placeholder: 'audit-guard', items: ['@openclaw/auth'], hint: '阻止智能体卸载 / 替换 / 篡改该核心插件' },
 ];
 
 const CORE_ASSETS: Array<[string, string, AssetKind, string, 'realtime' | 'install' | 'manual']> = [
@@ -67,6 +75,86 @@ const autoBadge = (a: 'realtime' | 'install' | 'manual') =>
 const AssetProtectionPage: React.FC = () => {
   const { alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
   const [customMode, setCustomMode] = useState<Mode>('enforce');
+  const [customRules, setCustomRules] = useState<Record<CustomKind, SecplaneRule[]>>({
+    protected_path: [],
+    protected_skill: [],
+    protected_plugin: [],
+  });
+  const [customInputs, setCustomInputs] = useState<Record<CustomKind, string>>({
+    protected_path: '',
+    protected_skill: '',
+    protected_plugin: '',
+  });
+  const [customBusy, setCustomBusy] = useState(false);
+  const [customError, setCustomError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [p, s, pl] = await Promise.all(
+          CUSTOM_KINDS.map((k) => secplaneService.listRules(k.kind)),
+        );
+        setCustomRules({
+          protected_path: p.filter((r) => r.is_enabled),
+          protected_skill: s.filter((r) => r.is_enabled),
+          protected_plugin: pl.filter((r) => r.is_enabled),
+        });
+      } catch {
+        // ignore — UI 仍可手动添加；下次 dispatch 会重新拉
+      }
+    })();
+  }, []);
+
+  const addCustomItem = async (cfg: (typeof CUSTOM_KINDS)[number]) => {
+    const pattern = customInputs[cfg.kind].trim();
+    if (!pattern) return;
+    setCustomBusy(true);
+    setCustomError(null);
+    try {
+      const id = `${cfg.idPrefix}${await sha8(pattern)}`;
+      const displayName = pattern.length > 60 ? `${pattern.slice(0, 60)}…` : pattern;
+      const saved = await secplaneService.saveRule({
+        rule_id: id,
+        kind: cfg.kind,
+        display_name: displayName,
+        pattern,
+        target: 'user_input',
+        severity: 'medium',
+        action: 'block',
+        mode: customMode,
+        is_enabled: true,
+        sort_order: 0,
+      });
+      setCustomRules((prev) => {
+        const list = prev[cfg.kind];
+        const next = list.some((r) => r.rule_id === saved.rule_id)
+          ? list.map((r) => (r.rule_id === saved.rule_id ? saved : r))
+          : [...list, saved];
+        return { ...prev, [cfg.kind]: next };
+      });
+      setCustomInputs((prev) => ({ ...prev, [cfg.kind]: '' }));
+    } catch (e) {
+      setCustomError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCustomBusy(false);
+    }
+  };
+
+  const removeCustomItem = async (kind: CustomKind, rule: SecplaneRule) => {
+    setCustomBusy(true);
+    setCustomError(null);
+    try {
+      await secplaneService.disableRule(rule.rule_id);
+      setCustomRules((prev) => ({
+        ...prev,
+        [kind]: prev[kind].filter((r) => r.rule_id !== rule.rule_id),
+      }));
+    } catch (e) {
+      setCustomError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCustomBusy(false);
+    }
+  };
 
   return (
     <AdminLayout title="安全防护">
@@ -159,43 +247,77 @@ const AssetProtectionPage: React.FC = () => {
               <h3 className="section-title-lg mt-1">运维追加的 protectedPaths / Skills / Plugins</h3>
             </div>
             <div className="shrink-0 flex items-center gap-3">
-              <div className="mode-selector">
+              <div className="mode-selector" title="选择新添加项的初始模式；已存在项保持原模式">
                 <button className={customMode === 'enforce' ? 'active-enforce' : ''} onClick={() => setCustomMode('enforce')}>拦截</button>
                 <button className={customMode === 'observe' ? 'active-observe' : ''} onClick={() => setCustomMode('observe')}>监控</button>
                 <button className={customMode === 'off' ? 'active-off' : ''} onClick={() => setCustomMode('off')}>停止</button>
               </div>
-              <button className="btn-primary btn-sm">保存并应用</button>
+              <ApplyDispatchButton
+                onDispatch={dispatchApply}
+                busy={dispatching || customBusy}
+                className="btn-primary btn-sm"
+                triggerLabel="保存并应用"
+              />
             </div>
           </div>
+          {customError && (
+            <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{customError}</div>
+          )}
           <div className="space-y-3">
-            {CUSTOM_GROUPS.map((g) => (
-              <div key={g.key} className="p-4 rounded-2xl border border-[#eadfd8] bg-white">
-                <div className="flex items-center justify-between mb-2.5 gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-[#171212]">{g.name}</span>
-                    <code className="text-[10px] muted-strong tracking-wider">{g.field}</code>
-                    <span className={`badge badge-${g.badge} text-[10px]`}>{g.count} 项</span>
+            {CUSTOM_KINDS.map((cfg) => {
+              const items = customRules[cfg.kind];
+              return (
+                <div key={cfg.kind} className="p-4 rounded-2xl border border-[#eadfd8] bg-white">
+                  <div className="flex items-center justify-between mb-2.5 gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-[#171212]">{cfg.name}</span>
+                      <code className="text-[10px] muted-strong tracking-wider">{cfg.field}</code>
+                      <span className={`badge badge-${cfg.badge} text-[10px]`}>{items.length} 项</span>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        className="input"
+                        placeholder={cfg.placeholder}
+                        style={{ width: 200, height: 30, fontSize: 12 }}
+                        value={customInputs[cfg.kind]}
+                        onChange={(e) => setCustomInputs((p) => ({ ...p, [cfg.kind]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addCustomItem(cfg); } }}
+                        disabled={customBusy}
+                      />
+                      <button
+                        className="btn-primary btn-sm"
+                        onClick={() => void addCustomItem(cfg)}
+                        disabled={customBusy || !customInputs[cfg.kind].trim()}
+                      >
+                        + 添加
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-2 items-center">
-                    <input className="input" placeholder={g.placeholder} style={{ width: 200, height: 30, fontSize: 12 }} />
-                    <button className="btn-primary btn-sm">+ 添加</button>
+                  <div className="text-xs muted mb-2">{cfg.hint}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {items.length === 0 && <span className="text-xs muted">（暂无）</span>}
+                    {items.map((r) => (
+                      <span
+                        key={r.rule_id}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono"
+                        style={{ background: '#fdf6f1', border: '1px solid #eadfd8', color: '#7a4a30' }}
+                        title={`mode=${r.mode}`}
+                      >
+                        {r.pattern}
+                        <button
+                          className="text-[#dc2626] hover:text-[#991b1b] text-sm leading-none ml-1 font-bold disabled:opacity-50"
+                          onClick={() => void removeCustomItem(cfg.kind, r)}
+                          disabled={customBusy}
+                          aria-label={`移除 ${r.pattern}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
                   </div>
                 </div>
-                <div className="text-xs muted mb-2">{g.hint}</div>
-                <div className="flex flex-wrap gap-2">
-                  {g.items.map((item) => (
-                    <span
-                      key={item}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono"
-                      style={{ background: '#fdf6f1', border: '1px solid #eadfd8', color: '#7a4a30' }}
-                    >
-                      {item}
-                      <button className="text-[#dc2626] hover:text-[#991b1b] text-sm leading-none ml-1 font-bold">×</button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="text-xs muted mt-4 pt-3 border-t border-[#eadfd8]">
             本面板追加的资产仅受 <strong className="text-[#171212]">写时拦截层</strong> 保护；完整性巡检 / 实时漂移告警 不会自动覆盖新追加项，覆盖范围限于上方"受保护的智能体核心资产"清单中标注 🟢/🟡/🔴 的 8 项内置资产。
