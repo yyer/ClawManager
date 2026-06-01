@@ -4,6 +4,7 @@ import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+import { FEATURES } from '../../../../config/features';
 
 // 输出面防护 (scenario d) — 对齐 KSecForAIDemo/scenario-d-output.html
 // 接 backend：defense.outputRedaction toggle + apply + 实时脱敏 alerts
@@ -176,7 +177,7 @@ const OutputSurfacePage: React.FC = () => {
           </div>
         </div>
 
-        <div className="panel">
+        {FEATURES.credentialInventory && <div className="panel">
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="eyebrow">存量凭据巡检</div>
@@ -222,7 +223,7 @@ const OutputSurfacePage: React.FC = () => {
               );
             })}
           </div>
-        </div>
+        </div>}
 
         <div className="panel">
           <div className="flex items-center justify-between mb-4">
