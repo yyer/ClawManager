@@ -97,7 +97,7 @@ export const DEFAULT_INVASION_POLICY: InvasionPolicy = {
 };
 
 export interface LogEntry {
-  // KSec SecLog passthrough (see KSecMain/types/types.go:215)
+  // KSec SecLog passthrough (ransom + access_control, see KSecMain/types/types.go:215)
   time?: string;
   logType?: string;
   action?: string;
@@ -113,7 +113,11 @@ export interface LogEntry {
   tags?: string[];
   message?: string;
 
-  // bridge-derived display field "<source-or-path> (pid <n>)"
+  // Falco IdsLogEntry passthrough (invasion module, see KSecMain/types/types.go:766)
+  rule?: string;
+  output_fields?: Record<string, unknown>;
+
+  // bridge-derived display field "<source-or-path-or-proc.name> (pid <n>)"
   process?: string;
 
   // raw line, always populated
