@@ -173,28 +173,77 @@ type CustomFileRule = {
   d: boolean;
 };
 
+// KSec mode tokens (与 KSecGUI/components/FileProtect.vue strModeToArr 保持一致)：
+//   r   → 读
+//   wcm → 写（KSec 把"写"扩展为 w+c+m：写/创建/移动或重命名 三种系统调用，作为一个整体 token）
+//   x   → 执行
+//   d   → 删除
+//   all → 四种全部
 function fileRuleFromServer(s: ServerFileRule): CustomFileRule {
   const m = s.mode ?? '';
   return {
     path: s.objPath,
     trust: (s.fromSource ?? []).map((f) => f.subPath).join(', ') || '-',
-    r: m.includes('r') || m.includes('all'),
-    w: m.includes('w') || m.includes('all'),
-    x: m.includes('x') || m.includes('all'),
-    d: m.includes('d') || m.includes('all'),
+    r: m === 'all' || m.includes('r'),
+    w: m === 'all' || m.includes('wcm'),
+    x: m === 'all' || m.includes('x'),
+    d: m === 'all' || m.includes('d'),
   };
 }
-/** "rx" / "rwxd" / "all" → "读/执行" / "读/写/执行/删除" / "全部" 中文展示。 */
+/**
+ * KSec SecLog.Operation 中文化（与 KSecGUI/components/FileProtectLog.vue getOerationDesc 对齐）。
+ * 注意：write / create / move or rename 三者底层同属"写"权限（mode token wcm），
+ * 日志层仍保留细粒度 syscall 标签，便于排查具体行为。
+ */
+function operationToChinese(op: string | undefined): string {
+  if (!op) return '-';
+  const map: Record<string, string> = {
+    chmod: '修改权限',
+    read: '读文件',
+    write: '写文件',
+    execute: '执行进程',
+    delete: '删除文件',
+    create: '创建文件',
+    kill: '终止进程',
+    'move or rename': '移动或重命名文件',
+  };
+  return map[op] ?? op;
+}
+
+/** KSec SecLog.Action（命中后的处理结果）中文化。
+ *  只有两种：BLOCK→阻断（拦截模式命中），MONITOR→放行（监控模式命中）。 */
+function actionToChinese(action: string | undefined): string {
+  if (!action) return '-';
+  const key = action.toUpperCase();
+  if (key === 'BLOCK') return '阻断';
+  if (key === 'MONITOR') return '放行';
+  return action;
+}
+
+/**
+ * KSec mode 字符串中文化。token 边界：r / wcm / x / d / all。
+ * "wcm" 是"写"权限的整体编码（写/创建/移动或重命名 3 个 syscall 一组），不能按字符拆。
+ * 与 KSecGUI/components/FileProtect.vue strModeToArr 一致。
+ */
 function modeToChinese(mode: string | undefined): string {
   if (!mode) return '-';
   if (mode === 'all') return '全部';
-  const map: Record<string, string> = { r: '读', w: '写', x: '执行', d: '删除', c: '创建', m: '修改' };
-  const parts = Array.from(mode).map((c) => map[c] ?? c);
+  const parts: string[] = [];
+  if (mode.includes('r')) parts.push('读');
+  if (mode.includes('wcm')) parts.push('写');
+  if (mode.includes('x')) parts.push('执行');
+  if (mode.includes('d')) parts.push('删除');
   return parts.length > 0 ? parts.join(' / ') : mode;
 }
 
 function fileRuleToServer(u: CustomFileRule): ServerFileRule {
-  const mode = (['r', 'w', 'x', 'd'] as const).filter((k) => u[k]).join('');
+  // 输出顺序与 KSecGUI 一致：r / wcm / x / d，"写"勾选时拼成 "wcm" 整体 token
+  const parts: string[] = [];
+  if (u.r) parts.push('r');
+  if (u.w) parts.push('wcm');
+  if (u.x) parts.push('x');
+  if (u.d) parts.push('d');
+  const mode = parts.join('');
   // Trust input is a textarea: split on newlines AND commas (CN 逗号 included),
   // emit each path as its own `- subPath: ...` entry to match KSec's
   // MatchSourceType { Path string `json:"subPath"` } schema.
@@ -853,16 +902,16 @@ const HostHardeningPage: React.FC = () => {
                     <tr><td colSpan={6} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无主机防护日志</td></tr>
                   )}
                   {fileLogs.map((row, i) => {
-                    const result = row.action ?? '-';
-                    const tone = result === 'Block' ? 'red' : result === 'Audit' || result === 'Allow' ? 'green' : 'slate';
+                    const a = (row.action ?? '').toUpperCase();
+                    const tone = a === 'BLOCK' ? 'red' : a === 'MONITOR' ? 'green' : 'slate';
                     return (
                       <tr key={i}>
                         <td><span className="text-xs muted-strong font-mono">{row.time ?? '-'}</span></td>
                         <td><span className="text-xs">{row.user ?? '-'}</span></td>
                         <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
                         <td><code className="text-xs font-mono">{row.path ?? '-'}</code></td>
-                        <td><span className="badge badge-slate text-[10px]">{row.operation ?? '-'}</span></td>
-                        <td><span className={`badge badge-${tone}`}>{result}</span></td>
+                        <td><span className="badge badge-slate text-[10px]">{operationToChinese(row.operation)}</span></td>
+                        <td><span className={`badge badge-${tone}`}>{actionToChinese(row.action)}</span></td>
                       </tr>
                     );
                   })}
@@ -1331,7 +1380,10 @@ const FileRuleModal: React.FC<{
           <input className="input" placeholder="请输入绝对路径" value={path} onChange={(e) => setPath(e.target.value)} />
         </div>
         <div>
-          <div className="eyebrow text-[10px] mb-1">信任进程 <span className="muted" title="支持目录形式">ⓘ</span></div>
+          <div className="eyebrow text-[10px] mb-1">信任进程 <span
+            className="muted"
+            title={'信任进程为空时表示信任所有进程\n支持目录形式'}
+          >ⓘ</span></div>
           <textarea
             className="input"
             rows={5}
@@ -1342,7 +1394,10 @@ const FileRuleModal: React.FC<{
           />
         </div>
         <div>
-          <div className="eyebrow text-[10px] mb-2">权限</div>
+          <div className="eyebrow text-[10px] mb-2">权限 <span
+            className="muted"
+            title={'1、权限：配置信任进程对保护文件/目录的权限，非信任进程对保护文件/目录无权限\n2、写：包含创建、写、移动或重命名权限'}
+          >ⓘ</span></div>
           <div className="flex items-center gap-5">
             <label className="flex items-center gap-1.5 cursor-pointer text-sm">
               <input type="checkbox" style={{ accentColor: '#dc2626' }} checked={r} onChange={(e) => setR(e.target.checked)} /> 读
