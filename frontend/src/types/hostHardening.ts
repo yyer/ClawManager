@@ -31,6 +31,71 @@ export const DEFAULT_RANSOM_POLICY: RansomPolicy = {
   whiteList: [],
 };
 
+/** Process protect or blacklist entry — ac.yaml processProtectList / processBlackList. */
+export interface ProcRule {
+  path: string;
+  desc?: string;
+}
+
+/** File-protection custom rule — ac.yaml fileProtectList. */
+export interface FileRule {
+  objPath: string;
+  mode?: string;
+  fromSource?: Array<{ subPath: string }>;
+}
+
+/** Built-in pre-file rule — ac.yaml preFileList.rules. `mode` optional (e.g. /proc/kallsyms has none). */
+export interface PreFileRule {
+  path: string;
+  mode?: string;
+  desc?: string;
+}
+
+/**
+ * Host file/process protection policy — mirrors bridge `FilePolicy`.
+ * `switch-on` is the effective bridge-side master (AND of ac.yaml + KSec.yaml.access_control).
+ */
+export interface FilePolicy {
+  name: string;
+  module: string;
+  'switch-on': boolean;
+  action: 'Monitor' | 'Block';
+  processBlackList?: ProcRule[];
+  processProtectList?: ProcRule[];
+  fileProtectList?: FileRule[];
+  preFileList: {
+    'switch-on': boolean;
+    rules: PreFileRule[];
+  };
+}
+
+export const DEFAULT_FILE_POLICY: FilePolicy = {
+  name: 'access-control-policy',
+  module: 'access_control',
+  'switch-on': false,
+  action: 'Monitor',
+  processBlackList: [],
+  processProtectList: [],
+  fileProtectList: [],
+  preFileList: { 'switch-on': false, rules: [] },
+};
+
+/**
+ * Intrusion-detection policy — mirrors bridge `InvasionPolicy`.
+ * Only `programWhitelist` is user-editable; `rules` is read-only.
+ */
+export interface InvasionPolicy {
+  'switch-on': boolean;
+  programWhitelist: string[];
+  rules: Array<{ name: string; desc?: string }>;
+}
+
+export const DEFAULT_INVASION_POLICY: InvasionPolicy = {
+  'switch-on': false,
+  programWhitelist: [],
+  rules: [],
+};
+
 export interface LogEntry {
   // KSec SecLog passthrough (see KSecMain/types/types.go:215)
   time?: string;

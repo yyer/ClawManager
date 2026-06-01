@@ -1,4 +1,10 @@
-import type { AgentStatus, LogEntry, RansomPolicy } from '../types/hostHardening';
+import type {
+  AgentStatus,
+  FilePolicy,
+  InvasionPolicy,
+  LogEntry,
+  RansomPolicy,
+} from '../types/hostHardening';
 
 // All endpoints same-origin via Nginx (or vite dev proxy → ksec-bridge :9101).
 // MVP: no auth headers — bridge has KSEC_BRIDGE_AUTH_ENABLED=false.
@@ -25,9 +31,43 @@ export async function getRansomPolicy(): Promise<RansomPolicy> {
   return jsonOrThrow(await fetch(`${base}/policy/ransome`));
 }
 
-export async function putRansomPolicy(pol: RansomPolicy): Promise<void> {
-  await jsonOrThrow(
+/** PUT result. `warning` set when the master switch flipped OK but policy load failed. */
+export interface PutResult {
+  success: boolean;
+  warning?: string;
+}
+
+export async function putRansomPolicy(pol: RansomPolicy): Promise<PutResult> {
+  return jsonOrThrow<PutResult>(
     await fetch(`${base}/policy/ransome`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pol),
+    }),
+  );
+}
+
+export async function getFilePolicy(): Promise<FilePolicy> {
+  return jsonOrThrow(await fetch(`${base}/policy/file`));
+}
+
+export async function putFilePolicy(pol: FilePolicy): Promise<PutResult> {
+  return jsonOrThrow<PutResult>(
+    await fetch(`${base}/policy/file`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pol),
+    }),
+  );
+}
+
+export async function getInvasionPolicy(): Promise<InvasionPolicy> {
+  return jsonOrThrow(await fetch(`${base}/policy/invasion`));
+}
+
+export async function putInvasionPolicy(pol: InvasionPolicy): Promise<PutResult> {
+  return jsonOrThrow<PutResult>(
+    await fetch(`${base}/policy/invasion`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(pol),

@@ -2,13 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import {
+  getFilePolicy,
+  getInvasionPolicy,
   getLogs,
   getRansomPolicy,
   openLogStream,
+  putFilePolicy,
+  putInvasionPolicy,
   putRansomPolicy,
 } from '../../../../services/hostHardening';
 import {
+  DEFAULT_FILE_POLICY,
+  DEFAULT_INVASION_POLICY,
   DEFAULT_RANSOM_POLICY,
+  type FilePolicy,
+  type FileRule as ServerFileRule,
+  type InvasionPolicy,
   type LogEntry,
   type RansomPolicy,
 } from '../../../../types/hostHardening';
@@ -147,49 +156,13 @@ const SpinnerStyle: React.FC = () => (
 );
 
 // ===========================
-// 主机防护 — 内置规则数据
+// 主机防护 — UI ↔ server FilePolicy 类型转换
 // ===========================
 
-const BUILTIN_FILE_RULES: Array<[path: string, desc: string, type: '文件' | '目录']> = [
-  ['/usr/bin', '保护系统目录下可执行文件不被篡改', '目录'],
-  ['/usr/sbin', '保护系统目录下可执行文件不被篡改', '目录'],
-  ['/boot', '保护grub配置和内核镜像不被篡改', '目录'],
-  ['/etc/inittab', '保护系统运行级别配置文件不被篡改', '文件'],
-  ['/lib/systemd/system/graphical.target', '保护图形界面配置文件不被篡改', '文件'],
-  ['/usr/lib/systemd/system/graphical.target', '保护图形界面配置文件不被篡改', '文件'],
-  ['/lib/systemd/system/multi-user.target', '保护多用户命令行目标单元文件不被篡改', '文件'],
-  ['/usr/lib/systemd/system/multi-user.target', '保护多用户命令行目标单元文件不被篡改', '文件'],
-  ['/etc/audit', '保护日志和审计配置文件不被篡改', '目录'],
-  ['/etc/pam.d', '保护登录认证配置文件不被篡改', '目录'],
-  ['/etc/ld.so.preload', '保护动态库配置文件不被篡改', '文件'],
-  ['/etc/ssh', '保护SSH配置文件不被篡改', '目录'],
-  ['/etc/profile', '保护Bash配置文件不被篡改', '文件'],
-  ['/etc/profile.d', '保护Bash配置文件不被篡改', '目录'],
-  ['/etc/bash.bashrc', '保护Bash配置文件不被篡改', '文件'],
-  ['/etc/bashrc', '保护Bash配置文件不被篡改', '文件'],
-  ['/root/.bashrc', '保护Bash配置文件不被篡改', '文件'],
-  ['/root/.bash_profile', '保护Bash配置文件不被篡改', '文件'],
-  ['/etc/dnf/dnf.conf', '保护软件更新配置文件不被篡改', '文件'],
-  ['/etc/yum', '保护软件更新配置文件不被篡改', '目录'],
-  ['/etc/yum.repos.d', '保护软件更新配置文件不被篡改', '目录'],
-  ['/etc/apt', '保护软件更新配置文件不被篡改', '目录'],
-  ['/etc/cron.deny', '保护定时任务配置文件不被篡改', '文件'],
-  ['/etc/crontab', '保护定时任务配置文件不被篡改', '文件'],
-  ['/etc/cron.d', '保护定时任务配置文件不被篡改', '目录'],
-  ['/etc/cron.daily', '保护定时任务配置文件不被篡改', '目录'],
-  ['/etc/cron.hourly', '保护定时任务配置文件不被篡改', '目录'],
-  ['/etc/cron.monthly', '保护定时任务配置文件不被篡改', '目录'],
-  ['/etc/cron.weekly', '保护定时任务配置文件不被篡改', '目录'],
-  ['/var/spool/cron', '保护定时任务配置文件不被篡改', '目录'],
-  ['/etc/anacrontab', '保护定时任务配置文件不被篡改', '文件'],
-  ['/etc/resolv.conf', '保护域名解析文件不被篡改', '文件'],
-  ['/run/resolvconf/resolv.conf', '保护域名解析文件不被篡改', '文件'],
-  ['/etc/host.conf', '保护域名解析文件不被篡改', '文件'],
-  ['/etc/hosts.allow', '保护访问配置文件不被篡改', '文件'],
-  ['/etc/hosts.deny', '保护访问配置文件不被篡改', '文件'],
-  ['/proc/kallsyms', '保护内存镜像和内核导出符号文件不被篡改', '文件'],
-];
+// (mock 内置规则数据已删除，改为从 ksec-bridge 加载)
 
+/** UI shape for file-protection custom rule. Converted to/from server's
+ * FileRule on load/save (mode "rwxd" ↔ r/w/x/d flags; fromSource[] ↔ comma trust). */
 type CustomFileRule = {
   path: string;
   trust: string;
@@ -198,83 +171,41 @@ type CustomFileRule = {
   x: boolean;
   d: boolean;
 };
-const INITIAL_CUSTOM_FILE_RULES: CustomFileRule[] = [
-  { path: '/var/lib/clawmanager/data', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
-  { path: '/var/lib/clawmanager/uploads', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: true },
-  { path: '/etc/clawmanager', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
-  { path: '/opt/clawmanager/config/*', trust: '/opt/clawmanager/server', r: true, w: true, x: false, d: false },
-  { path: '/var/lib/mysql/clawmanager', trust: '/usr/sbin/mysqld', r: true, w: true, x: false, d: false },
-  { path: '/var/log/clawmanager/*', trust: '/opt/clawmanager/server, /usr/sbin/rsyslogd', r: true, w: true, x: false, d: true },
-  { path: '/etc/nginx/nginx.conf', trust: '/usr/sbin/nginx', r: true, w: false, x: false, d: false },
-  { path: '/etc/ksecure/policies/*', trust: '/opt/ksecure/ksec', r: true, w: true, x: false, d: false },
-  { path: '/tmp/test-decoy', trust: '-', r: false, w: false, x: false, d: false },
-];
 
+function fileRuleFromServer(s: ServerFileRule): CustomFileRule {
+  const m = s.mode ?? '';
+  return {
+    path: s.objPath,
+    trust: (s.fromSource ?? []).map((f) => f.subPath).join(', ') || '-',
+    r: m.includes('r') || m.includes('all'),
+    w: m.includes('w') || m.includes('all'),
+    x: m.includes('x') || m.includes('all'),
+    d: m.includes('d') || m.includes('all'),
+  };
+}
+/** "rx" / "rwxd" / "all" → "读/执行" / "读/写/执行/删除" / "全部" 中文展示。 */
+function modeToChinese(mode: string | undefined): string {
+  if (!mode) return '-';
+  if (mode === 'all') return '全部';
+  const map: Record<string, string> = { r: '读', w: '写', x: '执行', d: '删除', c: '创建', m: '修改' };
+  const parts = Array.from(mode).map((c) => map[c] ?? c);
+  return parts.length > 0 ? parts.join(' / ') : mode;
+}
+
+function fileRuleToServer(u: CustomFileRule): ServerFileRule {
+  const mode = (['r', 'w', 'x', 'd'] as const).filter((k) => u[k]).join('');
+  const fromSource = u.trust && u.trust !== '-'
+    ? u.trust.split(/[,，]/).map((s) => s.trim()).filter(Boolean).map((subPath) => ({ subPath }))
+    : undefined;
+  return { objPath: u.path, mode: mode || undefined, fromSource };
+}
+
+/** UI process rule: tagged variant of server's processBlackList + processProtectList. */
 type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
-const INITIAL_PROC_RULES: ProcRule[] = [
-  { path: '/usr/sbin/auditd', type: '进程保护' },
-  { path: '/opt/clawmanager/server', type: '进程保护' },
-];
 
-const FILE_PROT_LOG: Array<[string, string, string, string, string, string]> = [
-  ['2026-05-19 14:48:22', 'root', '/tmp/x (pid 8721)', '/etc/passwd', '写入', '已阻断'],
-  ['2026-05-19 14:35:15', 'www-data', '/bin/rm (pid 4521)', '/var/log/auth.log', '删除', '已阻断'],
-  ['2026-05-19 14:18:33', 'root', '/bin/chmod (pid 3211)', '/etc/shadow', '修改权限', '已阻断'],
-  ['2026-05-19 13:52:11', 'sshd', '/usr/sbin/sshd (pid 1024)', '/etc/ssh/sshd_config', '读取', '放行'],
-  ['2026-05-19 12:24:48', 'admin', '/bin/echo (pid 7811)', '/tmp/payload.sh', '写入', '非受保护'],
-];
 
-// 勒索防护数据已迁移到 ksec-bridge（/api/host/policy/ransome + /api/host/logs/stream?module=ransome）
-
-// ===========================
-// 入侵检测
-// ===========================
-
-type IntrusionRule = { icon: string; cat: string; desc: string; enabled: boolean };
-const INITIAL_INTRUSION_RULES: IntrusionRule[] = [
-  { icon: '📡', cat: '反弹shell', desc: '检测进程的非法网络连接行为', enabled: true },
-  { icon: '🧠', cat: '无文件执行', desc: '检测使用 memfd_create 创建匿名内存文件并在其中执行代码的行为', enabled: true },
-  { icon: '🔼', cat: '本地提权', desc: '检测使用 setuid 改变用户权限的行为', enabled: true },
-  { icon: '🔼', cat: '本地提权', desc: '检测使用 chmod 设置 setuid 或 setgid 位权限的行为', enabled: true },
-  { icon: '🔼', cat: '本地提权', desc: '检测修改 sudoers 文件提升权限的行为', enabled: true },
-  { icon: '💉', cat: '进程注入', desc: '检测使用 ptrace 向进程注入代码的行为', enabled: true },
-  { icon: '💉', cat: '进程注入', desc: '检测篡改进程内存数据注入代码的行为', enabled: true },
-  { icon: '🔗', cat: '敏感文件泄漏', desc: '检测创建 /etc 或根目录下敏感文件硬链接的行为', enabled: true },
-  { icon: '🔗', cat: '敏感文件泄漏', desc: '检测创建 /etc 或根目录下敏感文件/目录软链接的行为', enabled: true },
-  { icon: '🦠', cat: 'rootkit攻击', desc: '检测 /dev 目录下创建文件的行为', enabled: true },
-  { icon: '🦠', cat: 'rootkit攻击', desc: '检测 /bin 等目录下创建文件的行为', enabled: true },
-  { icon: '🦠', cat: 'rootkit攻击', desc: '检测篡改 /etc/ld.so.preload 文件的行为', enabled: true },
-  { icon: '🧩', cat: '内核模块加载', desc: '检测使用 insmod 或 modprobe 加载内核模块的行为', enabled: true },
-  { icon: '🧹', cat: '痕迹擦除', desc: '检测清除系统审计日志的行为', enabled: true },
-  { icon: '⏰', cat: '计划任务篡改', desc: '检测创建或修改计划任务的行为', enabled: true },
-  { icon: '📂', cat: 'shm目录非法执行', desc: '检测 /dev/shm 目录下执行文件的行为', enabled: true },
-  { icon: '🛠️', cat: '可疑工具执行', desc: '检测主机/容器启动可疑网络工具的行为', enabled: true },
-];
-
-type LabeledItem = { value: string; desc: string };
-const INITIAL_WL_PROG: LabeledItem[] = [
-  { value: '/usr/bin/strace', desc: '调试工具' },
-  { value: '/usr/bin/gdb', desc: '调试器' },
-  { value: '/usr/bin/ansible-playbook', desc: '运维工具' },
-  { value: '/opt/clawmanager/upgrade-helper', desc: '内置升级辅助' },
-];
-const INITIAL_WL_FILE: LabeledItem[] = [
-  { value: '/var/lib/clawmanager/upgrade-pending', desc: '升级临时文件' },
-  { value: '/tmp/clawmanager-cache/*', desc: '缓存目录' },
-];
-const INITIAL_WL_IP: LabeledItem[] = [
-  { value: '10.0.0.0/8', desc: '内网 VPC' },
-  { value: '172.18.0.0/16', desc: 'K8s Pod 网段' },
-  { value: '203.0.113.42', desc: '运维跳板机' },
-];
-
-const INTRUSION_LOG: Array<[string, string, string, string, string]> = [
-  ['2026-05-19 14:42:11', 'SSH 暴力破解', '/usr/sbin/sshd (pid 9821)', 'sshd', '源 IP 45.142.x.x 在 1 分钟内 50 次失败登录'],
-  ['2026-05-19 14:18:03', '进程注入', '/usr/bin/curl (pid 9821)', 'www-data', 'curl 进程尝试 ptrace pid 1（init）'],
-  ['2026-05-19 13:22:45', '端口扫描', '/usr/bin/nmap (pid 7234)', 'admin', '检测到 217 端口连接/秒'],
-  ['2026-05-19 10:51:18', '本地提权', '/tmp/x (pid 6712)', 'www-data', '尝试修改 /etc/sudoers 提升权限'],
-  ['2026-05-19 09:33:22', '反弹shell', '/bin/bash (pid 5891)', 'root', '检测到 /dev/tcp/45.x.x.x/4444 反向 shell'],
-];
+// 数据迁移：勒索防护 + 主机防护 + 入侵检测均已接 ksec-bridge
+//   /api/host/policy/{ransome,file,invasion} + /api/host/logs/stream?module={ransome,file,invasion}
 
 // ===========================
 // 主页
@@ -283,20 +214,22 @@ const INTRUSION_LOG: Array<[string, string, string, string, string]> = [
 type MainTab = 'file' | 'ransome' | 'invasion';
 type FileSubTab = 'builtin' | 'fileprot' | 'procprot';
 type RansomeSubTab = 'decoy' | 'whitelist';
-type InvasionSubTab = 'rules' | 'wl-prog' | 'wl-file' | 'wl-ip';
+type InvasionSubTab = 'rules' | 'wl-prog';
 
 const HostHardeningPage: React.FC = () => {
   const [mainTab, setMainTab] = useState<MainTab>('file');
   const [toast, setToast] = useState<ToastState>(null);
   const fireToast = (message: string, kind: ToastKind = 'info') => setToast({ message, kind });
 
-  // 主机防护 state
-  const [fileMaster, setFileMaster] = useState(true);
-  const [defenseMode, setDefenseMode] = useState<'block' | 'monitor'>('monitor');
-  const [builtinEnabled, setBuiltinEnabled] = useState<boolean[]>(() => BUILTIN_FILE_RULES.map(() => true));
-  const [customFileRules, setCustomFileRules] = useState<CustomFileRule[]>(INITIAL_CUSTOM_FILE_RULES);
-  const [procRules, setProcRules] = useState<ProcRule[]>(INITIAL_PROC_RULES);
+  // === 主机防护 state（接 ksec-bridge）===
+  const [serverFilePolicy, setServerFilePolicy] = useState<FilePolicy | null>(null);
+  const [fileDraft, setFileDraft] = useState<FilePolicy | null>(null);
+  const [savingFile, setSavingFile] = useState(false);
+  const effectiveFilePolicy: FilePolicy = fileDraft ?? serverFilePolicy ?? DEFAULT_FILE_POLICY;
+  // Builtin (preFileList) rules — read-only view straight from server state.
+  const builtinRules = effectiveFilePolicy.preFileList.rules;
   const [fileSub, setFileSub] = useState<FileSubTab>('builtin');
+  const [fileLogs, setFileLogs] = useState<LogEntry[]>([]);
 
   // === 勒索防护 state（已接 ksec-bridge）===
   // serverPolicy: 后端最近一次返回的策略；policyDraft: 用户改动但还没保存
@@ -383,10 +316,11 @@ const HostHardeningPage: React.FC = () => {
     const isMasterFlip = policyDraft['switch-on'] !== serverPolicy?.['switch-on'];
     fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
     try {
-      await putRansomPolicy(policyDraft);
+      const res = await putRansomPolicy(policyDraft);
       setServerPolicy(policyDraft);
       setPolicyDraft(null);
-      fireToast('配置已保存', 'success');
+      if (res.warning) fireToast(res.warning, 'warning');
+      else fireToast('配置已保存', 'success');
     } catch (err) {
       fireToast(`保存失败：${(err as Error).message}`, 'warning');
     } finally {
@@ -394,13 +328,189 @@ const HostHardeningPage: React.FC = () => {
     }
   };
 
-  // 入侵检测 state
-  const [invasionMaster, setInvasionMaster] = useState(true);
-  const [intrusionRules, setIntrusionRules] = useState<IntrusionRule[]>(INITIAL_INTRUSION_RULES);
-  const [wlProg, setWlProg] = useState<LabeledItem[]>(INITIAL_WL_PROG);
-  const [wlFile, setWlFile] = useState<LabeledItem[]>(INITIAL_WL_FILE);
-  const [wlIP, setWlIP] = useState<LabeledItem[]>(INITIAL_WL_IP);
+  // === 主机防护：load + SSE + setters + save ===
+  useEffect(() => {
+    let cancelled = false;
+    getFilePolicy()
+      .then((p) => {
+        if (cancelled) return;
+        setServerFilePolicy(p);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) fireToast(`加载主机防护策略失败：${err.message}`, 'warning');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    getLogs('file', 50)
+      .then((rows) => {
+        if (mounted) setFileLogs(rows.reverse());
+      })
+      .catch(() => undefined);
+    const es = openLogStream('file');
+    es.onmessage = (e) => {
+      try {
+        const entry = JSON.parse(e.data) as LogEntry;
+        setFileLogs((prev) => [entry, ...prev].slice(0, 200));
+      } catch {
+        /* malformed */
+      }
+    };
+    return () => {
+      mounted = false;
+      es.close();
+    };
+  }, []);
+
+  const filePatch = (next: Partial<FilePolicy>): void => {
+    setFileDraft({ ...effectiveFilePolicy, ...next });
+  };
+  const fileMaster = effectiveFilePolicy['switch-on'];
+  const defenseMode: 'block' | 'monitor' = effectiveFilePolicy.action === 'Block' ? 'block' : 'monitor';
+  // Builtin (preFileList) rules are READ-ONLY: KSec has no per-rule switch, only
+  // the single preFileList.switch-on master. We never mutate the rules array, so
+  // saving never drops rules from ac.yaml.
+  const customFileRules: CustomFileRule[] = (effectiveFilePolicy.fileProtectList ?? []).map(fileRuleFromServer);
+  const procRules: ProcRule[] = [
+    ...(effectiveFilePolicy.processProtectList ?? []).map((p) => ({ path: p.path, type: '进程保护' as const })),
+    ...(effectiveFilePolicy.processBlackList ?? []).map((p) => ({ path: p.path, type: '进程黑名单' as const })),
+  ];
+
+  const setFileMaster = (v: boolean): void => filePatch({ 'switch-on': v });
+  const setDefenseMode = (v: 'block' | 'monitor'): void =>
+    filePatch({ action: v === 'block' ? 'Block' : 'Monitor' });
+  const togglePreFileMaster = (v: boolean): void => {
+    filePatch({
+      preFileList: { ...effectiveFilePolicy.preFileList, 'switch-on': v },
+    });
+  };
+  const addCustomFileRule = (rule: CustomFileRule): void => {
+    const next = [...customFileRules, rule];
+    filePatch({ fileProtectList: next.map(fileRuleToServer) });
+  };
+  const removeCustomFileRule = (i: number): void => {
+    const next = customFileRules.filter((_, idx) => idx !== i);
+    filePatch({ fileProtectList: next.map(fileRuleToServer) });
+  };
+  const addProcRule = (rule: ProcRule): void => {
+    if (rule.type === '进程保护') {
+      filePatch({
+        processProtectList: [...(effectiveFilePolicy.processProtectList ?? []), { path: rule.path }],
+      });
+    } else {
+      filePatch({
+        processBlackList: [...(effectiveFilePolicy.processBlackList ?? []), { path: rule.path }],
+      });
+    }
+  };
+  const removeProcRule = (i: number): void => {
+    const protectLen = (effectiveFilePolicy.processProtectList ?? []).length;
+    if (i < protectLen) {
+      filePatch({
+        processProtectList: (effectiveFilePolicy.processProtectList ?? []).filter((_, idx) => idx !== i),
+      });
+    } else {
+      filePatch({
+        processBlackList: (effectiveFilePolicy.processBlackList ?? []).filter((_, idx) => idx !== i - protectLen),
+      });
+    }
+  };
+
+  const saveFilePolicy = async (): Promise<void> => {
+    if (!fileDraft) return;
+    setSavingFile(true);
+    const isMasterFlip = fileDraft['switch-on'] !== serverFilePolicy?.['switch-on'];
+    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    try {
+      const res = await putFilePolicy(fileDraft);
+      setServerFilePolicy(fileDraft);
+      setFileDraft(null);
+      if (res.warning) fireToast(res.warning, 'warning');
+      else fireToast('主机防护已保存', 'success');
+    } catch (err) {
+      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+    } finally {
+      setSavingFile(false);
+    }
+  };
+
+  // === 入侵检测 state（接 ksec-bridge）===
+  const [serverInvasion, setServerInvasion] = useState<InvasionPolicy | null>(null);
+  const [invasionDraft, setInvasionDraft] = useState<InvasionPolicy | null>(null);
+  const [savingInvasion, setSavingInvasion] = useState(false);
+  const effectiveInvasion: InvasionPolicy = invasionDraft ?? serverInvasion ?? DEFAULT_INVASION_POLICY;
   const [invasionSub, setInvasionSub] = useState<InvasionSubTab>('rules');
+  const [invasionLogs, setInvasionLogs] = useState<LogEntry[]>([]);
+
+  // === 入侵检测：load + SSE + setters + save ===
+  useEffect(() => {
+    let cancelled = false;
+    getInvasionPolicy()
+      .then((p) => {
+        if (!cancelled) setServerInvasion(p);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) fireToast(`加载入侵检测策略失败：${err.message}`, 'warning');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    getLogs('invasion', 50)
+      .then((rows) => {
+        if (mounted) setInvasionLogs(rows.reverse());
+      })
+      .catch(() => undefined);
+    const es = openLogStream('invasion');
+    es.onmessage = (e) => {
+      try {
+        const entry = JSON.parse(e.data) as LogEntry;
+        setInvasionLogs((prev) => [entry, ...prev].slice(0, 200));
+      } catch {
+        /* malformed */
+      }
+    };
+    return () => {
+      mounted = false;
+      es.close();
+    };
+  }, []);
+
+  const invasionPatch = (next: Partial<InvasionPolicy>): void => {
+    setInvasionDraft({ ...effectiveInvasion, ...next });
+  };
+  const invasionMaster = effectiveInvasion['switch-on'];
+  const wlProg = effectiveInvasion.programWhitelist;
+  const invasionRulesRO = effectiveInvasion.rules;
+  const setInvasionMaster = (v: boolean): void => invasionPatch({ 'switch-on': v });
+  const setWlProg = (next: string[]): void => invasionPatch({ programWhitelist: next });
+
+  const saveInvasionPolicy = async (): Promise<void> => {
+    if (!invasionDraft) return;
+    setSavingInvasion(true);
+    const isMasterFlip = invasionDraft['switch-on'] !== serverInvasion?.['switch-on'];
+    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    try {
+      const res = await putInvasionPolicy(invasionDraft);
+      setServerInvasion(invasionDraft);
+      setInvasionDraft(null);
+      if (res.warning) fireToast(res.warning, 'warning');
+      else fireToast('入侵检测已保存', 'success');
+    } catch (err) {
+      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+    } finally {
+      setSavingInvasion(false);
+    }
+  };
 
   // Modal state
   type ModalState =
@@ -475,8 +585,16 @@ const HostHardeningPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs muted-strong">总开关</span>
-                <Toggle on={fileMaster} onChange={(v) => { setFileMaster(v); fireToast('主机防护已切换', 'info'); }} />
-                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
+                <Toggle on={fileMaster} onChange={(v) => { setFileMaster(v); }} />
+                <button
+                  className="btn-primary btn-sm"
+                  disabled={fileDraft === null || savingFile}
+                  onClick={() => { void saveFilePolicy(); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {savingFile && <Spinner />}
+                  {savingFile ? '保存中…' : '保存并应用'}
+                </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
@@ -504,7 +622,7 @@ const HostHardeningPage: React.FC = () => {
             {/* Sub-tabs */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${fileSub === 'builtin' ? ' tab-active' : ''}`} onClick={() => setFileSub('builtin')}>
-                内置规则 {builtinEnabled.filter(Boolean).length}/{BUILTIN_FILE_RULES.length}
+                内置规则 ({builtinRules.length})
               </button>
               <button className={`tab${fileSub === 'fileprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('fileprot')}>
                 文件防护 ({customFileRules.length})
@@ -516,8 +634,18 @@ const HostHardeningPage: React.FC = () => {
 
             {fileSub === 'builtin' && (
               <>
-                <div className="text-xs muted mb-3">
-                  {BUILTIN_FILE_RULES.length} 条出厂内置防护规则，覆盖 /etc/、/boot/、/var/log/audit/ 等关键路径。
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs muted">
+                    {builtinRules.length} 条出厂内置防护规则（来自 KSec ac.yaml 的 preFileList，只读）。
+                    由下方"预定义规则总开关"统一启停——KSec 不支持逐条开关。
+                  </span>
+                  <label className="flex items-center gap-2 text-xs muted-strong cursor-pointer">
+                    <span>预定义规则总开关</span>
+                    <Toggle
+                      on={effectiveFilePolicy.preFileList['switch-on']}
+                      onChange={togglePreFileMaster}
+                    />
+                  </label>
                 </div>
                 <div style={{ maxHeight: 520, overflowY: 'auto', border: '1px solid #eadfd8', borderRadius: 10 }}>
                   <table className="tbl" style={{ margin: 0 }}>
@@ -525,27 +653,20 @@ const HostHardeningPage: React.FC = () => {
                       <tr>
                         <th>保护对象</th>
                         <th>说明</th>
-                        <th style={{ width: 90 }}>类型</th>
-                        <th style={{ width: 90 }}>状态</th>
+                        <th style={{ width: 90 }}>权限</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {BUILTIN_FILE_RULES.map(([path, desc, type], i) => (
-                        <tr key={path}>
-                          <td><code className="text-sm font-mono text-[#171212]">{path}</code></td>
-                          <td><span className="text-xs muted">{desc}</span></td>
-                          <td><span className="badge badge-slate text-[10px]">{type}</span></td>
-                          <td>
-                            <Toggle
-                              on={builtinEnabled[i]}
-                              onChange={(v) => {
-                                const next = [...builtinEnabled];
-                                next[i] = v;
-                                setBuiltinEnabled(next);
-                                fireToast(`${path} 已切换`, 'info');
-                              }}
-                            />
-                          </td>
+                      {builtinRules.length === 0 && (
+                        <tr><td colSpan={3} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>
+                          KSec 未返回内置规则——确认 ac.yaml 已加载
+                        </td></tr>
+                      )}
+                      {builtinRules.map((rule) => (
+                        <tr key={rule.path}>
+                          <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
+                          <td><span className="text-xs muted">{rule.desc ?? '-'}</span></td>
+                          <td><span className="badge badge-slate text-[10px]">{modeToChinese(rule.mode)}</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -565,7 +686,7 @@ const HostHardeningPage: React.FC = () => {
                       setModal({
                         kind: 'file-rule',
                         onConfirm: (rule) => {
-                          setCustomFileRules([...customFileRules, rule]);
+                          addCustomFileRule(rule);
                           closeModal();
                           fireToast('已添加文件防护规则', 'success');
                         },
@@ -603,7 +724,7 @@ const HostHardeningPage: React.FC = () => {
                           <button
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
-                              setCustomFileRules(customFileRules.filter((_, idx) => idx !== i));
+                              removeCustomFileRule(i);
                               fireToast('已删除规则', 'success');
                             }}
                           >
@@ -629,7 +750,7 @@ const HostHardeningPage: React.FC = () => {
                       setModal({
                         kind: 'proc-rule',
                         onConfirm: (rule) => {
-                          setProcRules([...procRules, rule]);
+                          addProcRule(rule);
                           closeModal();
                           fireToast('已添加进程防护规则', 'success');
                         },
@@ -660,7 +781,7 @@ const HostHardeningPage: React.FC = () => {
                           <button
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
-                              setProcRules(procRules.filter((_, idx) => idx !== i));
+                              removeProcRule(i);
                               fireToast('已删除规则', 'success');
                             }}
                           >
@@ -683,7 +804,7 @@ const HostHardeningPage: React.FC = () => {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 140 }}>时间</th>
+                    <th style={{ width: 160 }}>时间</th>
                     <th style={{ width: 120 }}>进程用户</th>
                     <th>进程</th>
                     <th>保护对象</th>
@@ -692,15 +813,19 @@ const HostHardeningPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {FILE_PROT_LOG.map(([t, user, proc, obj, act, result], i) => {
-                    const tone = result === '已阻断' ? 'red' : result === '放行' ? 'green' : 'slate';
+                  {fileLogs.length === 0 && (
+                    <tr><td colSpan={6} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无主机防护日志</td></tr>
+                  )}
+                  {fileLogs.map((row, i) => {
+                    const result = row.action ?? '-';
+                    const tone = result === 'Block' ? 'red' : result === 'Audit' || result === 'Allow' ? 'green' : 'slate';
                     return (
                       <tr key={i}>
-                        <td><span className="text-xs muted-strong font-mono">{t}</span></td>
-                        <td><span className="text-xs">{user}</span></td>
-                        <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
-                        <td><code className="text-xs font-mono">{obj}</code></td>
-                        <td><span className="badge badge-slate text-[10px]">{act}</span></td>
+                        <td><span className="text-xs muted-strong font-mono">{row.time ?? '-'}</span></td>
+                        <td><span className="text-xs">{row.user ?? '-'}</span></td>
+                        <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
+                        <td><code className="text-xs font-mono">{row.path ?? '-'}</code></td>
+                        <td><span className="badge badge-slate text-[10px]">{row.operation ?? '-'}</span></td>
                         <td><span className={`badge badge-${tone}`}>{result}</span></td>
                       </tr>
                     );
@@ -922,35 +1047,45 @@ const HostHardeningPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs muted-strong">总开关</span>
-                <Toggle on={invasionMaster} onChange={(v) => { setInvasionMaster(v); fireToast('入侵检测已切换', 'info'); }} />
-                <button className="btn-primary btn-sm" onClick={() => fireToast('配置已保存', 'success')}>保存并应用</button>
+                <Toggle on={invasionMaster} onChange={(v) => { setInvasionMaster(v); }} />
+                <button
+                  className="btn-primary btn-sm"
+                  disabled={invasionDraft === null || savingInvasion}
+                  onClick={() => { void saveInvasionPolicy(); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {savingInvasion && <Spinner />}
+                  {savingInvasion ? '保存中…' : '保存并应用'}
+                </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
               基于 ATT&amp;CK 框架中的入侵模型，实时监控运行时基础事件并通过入侵引擎判决来识别入侵行为。
+              内置规则由 KSec ids.yaml 提供（只读），用户可维护程序白名单。
             </div>
 
-            {/* Sub-tabs */}
+            {/* Sub-tabs（文件白名单 / IP 白名单已下线 — 等 KSec 后续提供字段） */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${invasionSub === 'rules' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('rules')}>
-                检测规则 {intrusionRules.filter((r) => r.enabled).length}/{intrusionRules.length}
+                检测规则 ({invasionRulesRO.length})
               </button>
               <button className={`tab${invasionSub === 'wl-prog' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-prog')}>
-                白名单程序 ({wlProg.length})
-              </button>
-              <button className={`tab${invasionSub === 'wl-file' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-file')}>
-                白名单文件 ({wlFile.length})
-              </button>
-              <button className={`tab${invasionSub === 'wl-ip' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-ip')}>
-                白名单IP ({wlIP.length})
+                程序白名单 ({wlProg.length})
               </button>
             </div>
 
             {invasionSub === 'rules' && (
               <>
-                <div className="text-xs muted mb-3">17 项内置检测规则，按 ATT&amp;CK 战术分类。可逐项启用/禁用。</div>
+                <div className="text-xs muted mb-3">
+                  共 {invasionRulesRO.length} 项检测规则（来自 ids.yaml）。这部分由 KSec 引擎维护，UI 只读展示，无法在前端启停单条规则。
+                </div>
                 <div className="space-y-2" style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 6 }}>
-                  {intrusionRules.map((r, i) => (
+                  {invasionRulesRO.length === 0 && (
+                    <div className="text-xs muted" style={{ textAlign: 'center', padding: 24 }}>
+                      KSec 未返回检测规则——确认 ids.yaml 已加载或总开关已开
+                    </div>
+                  )}
+                  {invasionRulesRO.map((r, i) => (
                     <div
                       key={i}
                       style={{
@@ -963,20 +1098,11 @@ const HostHardeningPage: React.FC = () => {
                         background: 'white',
                       }}
                     >
-                      <span style={{ fontSize: 18, flexShrink: 0 }}>{r.icon}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="text-sm font-semibold text-[#171212]">{r.cat}</div>
-                        <div className="text-xs muted mt-0.5">{r.desc}</div>
+                        <div className="text-sm font-semibold text-[#171212]">{r.name}</div>
+                        {r.desc && <div className="text-xs muted mt-0.5">{r.desc}</div>}
                       </div>
-                      <Toggle
-                        on={r.enabled}
-                        onChange={(v) => {
-                          const next = [...intrusionRules];
-                          next[i] = { ...next[i], enabled: v };
-                          setIntrusionRules(next);
-                          fireToast(`${r.cat} 已切换`, 'info');
-                        }}
-                      />
+                      <span className="badge badge-slate text-[10px]">只读</span>
                     </div>
                   ))}
                 </div>
@@ -985,15 +1111,15 @@ const HostHardeningPage: React.FC = () => {
 
             {invasionSub === 'wl-prog' && (
               <WhitelistTable
-                desc="白名单程序在触发规则时不会被判定为入侵行为。"
-                items={wlProg}
+                desc="白名单程序在触发规则时不会被判定为入侵行为（持久化到 ids.yaml 的 whitelist_program_path）。"
+                items={wlProg.map((v) => ({ value: v, desc: '' }))}
                 onAdd={() =>
                   setModal({
                     kind: 'batch-path',
                     title: '添加白名单程序',
-                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 20 条程序路径',
+                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 200 条',
                     onConfirm: (lines) => {
-                      setWlProg([...wlProg, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
+                      setWlProg([...wlProg, ...lines].slice(0, 200));
                       closeModal();
                       fireToast('已添加白名单程序', 'success');
                     },
@@ -1007,80 +1133,38 @@ const HostHardeningPage: React.FC = () => {
               />
             )}
 
-            {invasionSub === 'wl-file' && (
-              <WhitelistTable
-                desc="白名单文件操作不会触发入侵告警。"
-                items={wlFile}
-                onAdd={() =>
-                  setModal({
-                    kind: 'batch-path',
-                    title: '添加白名单文件',
-                    placeholder: '支持输入单条/多条文件路径，每行填写一条，最多支持 20 条文件路径',
-                    onConfirm: (lines) => {
-                      setWlFile([...wlFile, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
-                      closeModal();
-                      fireToast('已添加白名单文件', 'success');
-                    },
-                  })
-                }
-                onDelete={(i) => {
-                  setWlFile(wlFile.filter((_, idx) => idx !== i));
-                  fireToast('已删除', 'success');
-                }}
-                col1="文件路径"
-              />
-            )}
-
-            {invasionSub === 'wl-ip' && (
-              <WhitelistTable
-                desc="来自白名单 IP 的访问不会被判定为入侵。"
-                items={wlIP}
-                onAdd={() =>
-                  setModal({
-                    kind: 'batch-path',
-                    title: '添加白名单IP',
-                    placeholder: '支持输入单条/多条IP地址，每行填写一条，最多支持 20 条IP地址',
-                    onConfirm: (lines) => {
-                      setWlIP([...wlIP, ...lines.map((v) => ({ value: v, desc: '' }))].slice(0, 20));
-                      closeModal();
-                      fireToast('已添加白名单IP', 'success');
-                    },
-                  })
-                }
-                onDelete={(i) => {
-                  setWlIP(wlIP.filter((_, idx) => idx !== i));
-                  fireToast('已删除', 'success');
-                }}
-                col1="IP / CIDR"
-              />
-            )}
-
-            {/* 入侵检测日志 */}
+            {/* 入侵检测日志 — SSE 实时推流，源 = /opt/KSec/log/idsres.log */}
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold text-[#171212] text-sm">入侵检测日志</h4>
-                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+                <span className="text-xs muted">实时推流，最近 200 条</span>
               </div>
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 140 }}>时间</th>
-                    <th style={{ width: 120 }}>类别</th>
+                    <th style={{ width: 160 }}>时间</th>
+                    <th style={{ width: 200 }}>规则</th>
                     <th>进程</th>
-                    <th style={{ width: 120 }}>进程用户</th>
-                    <th>描述</th>
+                    <th>详情</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {INTRUSION_LOG.map(([t, cat, proc, user, desc], i) => (
-                    <tr key={i}>
-                      <td><span className="text-xs muted-strong font-mono">{t}</span></td>
-                      <td><span className="badge badge-red text-[10px]">{cat}</span></td>
-                      <td><code className="text-xs font-mono text-[#171212]">{proc}</code></td>
-                      <td><span className="text-xs">{user}</span></td>
-                      <td><span className="text-xs muted">{desc}</span></td>
-                    </tr>
-                  ))}
+                  {invasionLogs.length === 0 && (
+                    <tr><td colSpan={4} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无入侵检测日志</td></tr>
+                  )}
+                  {invasionLogs.map((row, i) => {
+                    const of = row.output_fields ?? {};
+                    const cmdline = typeof of['proc.cmdline'] === 'string' ? (of['proc.cmdline'] as string) : '';
+                    const fdName = typeof of['fd.name'] === 'string' ? (of['fd.name'] as string) : '';
+                    return (
+                      <tr key={i}>
+                        <td><span className="text-xs muted-strong font-mono">{row.time ?? '-'}</span></td>
+                        <td><span className="badge badge-red text-[10px]">{row.rule ?? '-'}</span></td>
+                        <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
+                        <td><span className="text-xs muted">{cmdline || fdName || row.raw.slice(0, 80)}</span></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1101,6 +1185,7 @@ const HostHardeningPage: React.FC = () => {
 };
 
 // 抽出共用：白名单列表
+type LabeledItem = { value: string; desc: string };
 const WhitelistTable: React.FC<{
   desc: string;
   items: LabeledItem[];
