@@ -5,6 +5,7 @@ import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchBu
 import { secplaneService, type SecplaneRule } from '../../../../services/secplaneService';
 import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+import { FEATURES } from '../../../../config/features';
 
 const SCENARIO_DEFENSES = ['defense.memoryGuard', 'defense.loopGuard', 'defense.selfProtection'];
 
@@ -329,7 +330,7 @@ const AssetProtectionPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="panel">
+        {FEATURES.coreAssetsInventory && <div className="panel">
           <div className="mb-4">
             <div className="eyebrow">8 项资产 · 完整性监控明细</div>
             <h3 className="section-title-lg mt-1">受保护的智能体核心资产 · 记忆 / 技能 / 插件 / 凭据</h3>
@@ -358,10 +359,10 @@ const AssetProtectionPage: React.FC = () => {
               })}
             </tbody>
           </table>
-        </div>
+        </div>}
 
         <div className="grid grid-cols-2 gap-4">
-          <div className="panel">
+          {FEATURES.assetDriftMonitor && <div className="panel">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <div className="eyebrow">完整性周期校验 · 30 分钟自动</div>
@@ -385,9 +386,9 @@ const AssetProtectionPage: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
-          <div className="panel">
+          {FEATURES.memoryDriftAlerts && <div className="panel">
             <div className="mb-4">
               <div className="eyebrow">记忆完整性监控 · 4 级告警分级</div>
               <h3 className="section-title-lg mt-1">智能体记忆资产实时漂移告警</h3>
@@ -403,7 +404,7 @@ const AssetProtectionPage: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </AdminLayout>
