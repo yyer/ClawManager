@@ -21,6 +21,7 @@ import {
   type LogEntry,
   type RansomPolicy,
 } from '../../../../types/hostHardening';
+import { BUILTIN_PREFILE_TEMPLATE } from '../../../../data/builtinPreFileRules';
 
 // 宿主加固 (scenario L) — 对齐 specs/001-clawmanager-hardening/prototypes/scenario-l-host.html
 // 3 个 tab：主机防护 / 勒索防护 / 入侵检测
@@ -194,8 +195,17 @@ function modeToChinese(mode: string | undefined): string {
 
 function fileRuleToServer(u: CustomFileRule): ServerFileRule {
   const mode = (['r', 'w', 'x', 'd'] as const).filter((k) => u[k]).join('');
+  // Trust input is a textarea: split on newlines AND commas (CN 逗号 included),
+  // emit each path as its own `- subPath: ...` entry to match KSec's
+  // MatchSourceType { Path string `json:"subPath"` } schema.
+  // Without newline-splitting, multi-line input gets serialized as a YAML
+  // block scalar (|-), which KSec rejects with "cannot unmarshal array into string".
   const fromSource = u.trust && u.trust !== '-'
-    ? u.trust.split(/[,，]/).map((s) => s.trim()).filter(Boolean).map((subPath) => ({ subPath }))
+    ? u.trust
+        .split(/[\n,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((subPath) => ({ subPath }))
     : undefined;
   return { objPath: u.path, mode: mode || undefined, fromSource };
 }
@@ -226,8 +236,12 @@ const HostHardeningPage: React.FC = () => {
   const [fileDraft, setFileDraft] = useState<FilePolicy | null>(null);
   const [savingFile, setSavingFile] = useState(false);
   const effectiveFilePolicy: FilePolicy = fileDraft ?? serverFilePolicy ?? DEFAULT_FILE_POLICY;
-  // Builtin (preFileList) rules — read-only view straight from server state.
-  const builtinRules = effectiveFilePolicy.preFileList.rules;
+  // Builtin (preFileList) rules: render the **stable template** (38 rules);
+  // each row's Toggle = is this path currently included in
+  // effectiveFilePolicy.preFileList.rules?
+  // Off → save will drop the row from ac.yaml; On → save adds it back.
+  const builtinTemplate = BUILTIN_PREFILE_TEMPLATE;
+  const builtinEnabledPaths = new Set(effectiveFilePolicy.preFileList.rules.map((r) => r.path));
   const [fileSub, setFileSub] = useState<FileSubTab>('builtin');
   const [fileLogs, setFileLogs] = useState<LogEntry[]>([]);
 
@@ -388,6 +402,26 @@ const HostHardeningPage: React.FC = () => {
     filePatch({
       preFileList: { ...effectiveFilePolicy.preFileList, 'switch-on': v },
     });
+  };
+  /** Per-rule include/exclude. Looks up rule definition from the stable template,
+   * so disabled-then-re-enabled rules come back with original mode+desc. */
+  const toggleBuiltinRule = (path: string, on: boolean): void => {
+    const current = effectiveFilePolicy.preFileList.rules;
+    if (on) {
+      if (current.some((r) => r.path === path)) return; // already enabled
+      const def = builtinTemplate.find((r) => r.path === path);
+      if (!def) return; // not in template — shouldn't happen
+      filePatch({
+        preFileList: { ...effectiveFilePolicy.preFileList, rules: [...current, def] },
+      });
+    } else {
+      filePatch({
+        preFileList: {
+          ...effectiveFilePolicy.preFileList,
+          rules: current.filter((r) => r.path !== path),
+        },
+      });
+    }
   };
   const addCustomFileRule = (rule: CustomFileRule): void => {
     const next = [...customFileRules, rule];
@@ -622,7 +656,7 @@ const HostHardeningPage: React.FC = () => {
             {/* Sub-tabs */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${fileSub === 'builtin' ? ' tab-active' : ''}`} onClick={() => setFileSub('builtin')}>
-                内置规则 ({builtinRules.length})
+                内置规则 {builtinEnabledPaths.size}/{builtinTemplate.length}
               </button>
               <button className={`tab${fileSub === 'fileprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('fileprot')}>
                 文件防护 ({customFileRules.length})
@@ -636,8 +670,8 @@ const HostHardeningPage: React.FC = () => {
               <>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs muted">
-                    {builtinRules.length} 条出厂内置防护规则（来自 KSec ac.yaml 的 preFileList，只读）。
-                    由下方"预定义规则总开关"统一启停——KSec 不支持逐条开关。
+                    共 {builtinTemplate.length} 条出厂内置防护规则。可逐条启停——
+                    关闭的规则不会写入 ac.yaml，KSec 也不会下发。
                   </span>
                   <label className="flex items-center gap-2 text-xs muted-strong cursor-pointer">
                     <span>预定义规则总开关</span>
@@ -654,19 +688,21 @@ const HostHardeningPage: React.FC = () => {
                         <th>保护对象</th>
                         <th>说明</th>
                         <th style={{ width: 90 }}>权限</th>
+                        <th style={{ width: 90 }}>状态</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {builtinRules.length === 0 && (
-                        <tr><td colSpan={3} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>
-                          KSec 未返回内置规则——确认 ac.yaml 已加载
-                        </td></tr>
-                      )}
-                      {builtinRules.map((rule) => (
+                      {builtinTemplate.map((rule) => (
                         <tr key={rule.path}>
                           <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
                           <td><span className="text-xs muted">{rule.desc ?? '-'}</span></td>
                           <td><span className="badge badge-slate text-[10px]">{modeToChinese(rule.mode)}</span></td>
+                          <td>
+                            <Toggle
+                              on={builtinEnabledPaths.has(rule.path)}
+                              onChange={(v) => { toggleBuiltinRule(rule.path, v); }}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>

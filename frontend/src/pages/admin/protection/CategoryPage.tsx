@@ -57,8 +57,7 @@ const CAT_STATS: Record<string, { label: string; value: string; tone?: string; s
     { label: '过期策略', value: '24h', tone: 'tone-green', sub: 'agent token 默认 TTL' },
   ],
   'cat-6': [
-    { label: '场景数', value: '2', sub: '容器 / 宿主' },
-    { label: '受保护 Pod', value: '142', sub: '容器策略' },
+    { label: '场景数', value: '1', sub: '宿主' },
     { label: '内置防护规则', value: '54', sub: '37 主机 + 17 入侵' },
     { label: '24h 主机告警', value: '11', tone: 'tone-red', sub: '主机 5 · 勒索 3 · 入侵 3' },
   ],
@@ -105,7 +104,10 @@ const CategoryPage: React.FC<CategoryPageProps> = ({ catId }) => {
       </AdminLayout>
     );
   }
-  const scs = getScenariosByCategory(catId);
+  // cat-6: 隐藏「容器隔离」场景卡（保留路由，不在 overview 露出入口）
+  const scs = getScenariosByCategory(catId).filter(
+    (s) => !(catId === 'cat-6' && s.id === 'k'),
+  );
   const stats = CAT_STATS[catId] ?? [];
   const desc = CAT_DESC[catId] ?? '';
 
@@ -130,7 +132,10 @@ const CategoryPage: React.FC<CategoryPageProps> = ({ catId }) => {
             <CatTrustLiveStats />
           ) : (
             stats.length > 0 && (
-              <div className="grid grid-cols-4 gap-3">
+              <div
+                className="grid gap-3"
+                style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}
+              >
                 {stats.map((s, i) => (
                   <div key={i} className="stat-card">
                     <div className="stat-card-label">{s.label}</div>
