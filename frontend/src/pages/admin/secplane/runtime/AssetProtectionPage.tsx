@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { secplaneService, type SecplaneRule } from '../../../../services/secplaneService';
+import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+
+const SCENARIO_DEFENSES = ['defense.memoryGuard', 'defense.loopGuard', 'defense.selfProtection'];
 
 // 资产防篡改 (scenario f) — 对齐 KSecForAIDemo/scenario-f-asset.html
 // 接 backend：3 项 defense_toggle (memoryGuard/loopGuard/selfProtection) + dispatchAegisApply + alerts
@@ -73,7 +76,9 @@ const autoBadge = (a: 'realtime' | 'install' | 'manual') =>
     : { class: 'badge-red', label: '🔴 手动 / CI' };
 
 const AssetProtectionPage: React.FC = () => {
-  const { alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { rules, alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { instances, healthy } = useInstanceHealth();
+  const enabledDefenseCount = rules.filter((r) => SCENARIO_DEFENSES.includes(r.rule_id) && r.is_enabled).length;
   const [customMode, setCustomMode] = useState<Mode>('enforce');
   const [customRules, setCustomRules] = useState<Record<CustomKind, SecplaneRule[]>>({
     protected_path: [],
@@ -175,24 +180,24 @@ const AssetProtectionPage: React.FC = () => {
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
-              <div className="stat-card-label">受保护智能体资产</div>
-              <div className="stat-card-value">38</div>
-              <div className="stat-card-sub muted-strong">8 关键资产 + 30 内置路径</div>
+              <div className="stat-card-label">防御开关</div>
+              <div className={`stat-card-value ${enabledDefenseCount === SCENARIO_DEFENSES.length ? 'tone-green' : 'tone-orange'}`}>{enabledDefenseCount}/{SCENARIO_DEFENSES.length}</div>
+              <div className="stat-card-sub muted-strong">memoryGuard · loopGuard · selfProtection</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 拦截</div>
-              <div className="stat-card-value tone-red">33</div>
-              <div className="stat-card-sub muted-strong">ClawAegisEx 应用层全部命中</div>
+              <div className="stat-card-label">自定义资产</div>
+              <div className="stat-card-value">{customRules.protected_path.length + customRules.protected_skill.length + customRules.protected_plugin.length}</div>
+              <div className="stat-card-sub muted-strong">paths {customRules.protected_path.length} · skills {customRules.protected_skill.length} · plugins {customRules.protected_plugin.length}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">Hash 漂移</div>
-              <div className="stat-card-value tone-orange">3</div>
-              <div className="stat-card-sub muted-strong">secureclaw 需调查 · 最早 3h 前</div>
+              <div className="stat-card-label">近期告警</div>
+              <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
+              <div className="stat-card-sub muted-strong">最近 50 条 · aegis 来源</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">凭据告警</div>
-              <div className="stat-card-value tone-red">5</div>
-              <div className="stat-card-sub muted-strong">credential-monitor · 24h</div>
+              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-value">{instances.length}</div>
+              <div className="stat-card-sub muted-strong">{healthy.length} running</div>
             </div>
           </div>
         </div>

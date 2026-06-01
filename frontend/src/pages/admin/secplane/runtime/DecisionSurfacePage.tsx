@@ -2,7 +2,16 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
+import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+
+const SCENARIO_DEFENSES = [
+  'defense.commandBlock',
+  'defense.loopGuard',
+  'defense.encodingGuard',
+  'defense.scriptProvenanceGuard',
+  'defense.exfiltrationGuard',
+];
 
 // 决策面防护 (scenario c) — 对齐 KSecForAIDemo/scenario-c-decision.html
 // 接 backend：5 项 defense_toggle (commandBlock/loopGuard/encodingGuard/scriptProvenanceGuard/exfiltrationGuard)
@@ -101,7 +110,9 @@ const MODALS: Record<string, ModalData> = {
 };
 
 const DecisionSurfacePage: React.FC = () => {
-  const { alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { rules, alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { instances, healthy } = useInstanceHealth();
+  const enabledDefenseCount = rules.filter((r) => SCENARIO_DEFENSES.includes(r.rule_id) && r.is_enabled).length;
   const [modalKey, setModalKey] = useState<string | null>(null);
   const modal = modalKey ? MODALS[modalKey] : null;
 
@@ -124,27 +135,24 @@ const DecisionSurfacePage: React.FC = () => {
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
-              <div className="stat-card-label">24h 工具调用</div>
-              <div className="stat-card-value">38,247</div>
-              <div className="stat-card-sub muted-strong">放行 98.7%</div>
+              <div className="stat-card-label">防御开关</div>
+              <div className={`stat-card-value ${enabledDefenseCount === SCENARIO_DEFENSES.length ? 'tone-green' : 'tone-orange'}`}>{enabledDefenseCount}/{SCENARIO_DEFENSES.length}</div>
+              <div className="stat-card-sub muted-strong">5 类危险工具调用</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">直接阻断</div>
-              <div className="stat-card-value tone-red">412</div>
-              <div className="stat-card-sub muted-strong">命中危险模式</div>
+              <div className="stat-card-label">近期告警</div>
+              <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
+              <div className="stat-card-sub muted-strong">最近 50 条 · aegis 来源</div>
             </div>
-            <Link to="/admin/secplane/runtime/approval" className="stat-card" style={{ textDecoration: 'none' }}>
-              <div className="stat-card-label flex items-center gap-1.5">
-                转入审批
-                <span className="text-[9px] text-[#ea580c] bg-[rgba(234,88,12,0.1)] px-1.5 rounded-full font-semibold">跳转</span>
-              </div>
-              <div className="stat-card-value tone-orange">73</div>
-              <div className="stat-card-sub muted-strong">模糊意图 · 进入审批队列</div>
-            </Link>
             <div className="stat-card">
-              <div className="stat-card-label">危险模式库规则</div>
-              <div className="stat-card-value">186</div>
-              <div className="stat-card-sub muted-strong">5 类</div>
+              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-value">{instances.length}</div>
+              <div className="stat-card-sub muted-strong">{healthy.length} running</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-value" style={{ fontSize: '1rem' }}>install_skill</div>
+              <div className="stat-card-sub muted-strong">hot-reload via mtime</div>
             </div>
           </div>
         </div>

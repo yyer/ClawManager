@@ -2,7 +2,10 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
+import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+
+const SCENARIO_DEFENSES = ['defense.memoryGuard', 'defense.selfProtection'];
 
 // 状态面防护 (scenario b) — 对齐 KSecForAIDemo/scenario-b-state.html
 // 接 backend：defense.memoryGuard / defense.selfProtection toggles + 相关 alerts
@@ -46,7 +49,9 @@ const LOG_EVENTS: Array<[string, string, string, string, string, string, Tone]> 
 ];
 
 const StateSurfacePage: React.FC = () => {
-  const { alerts, dispatching, dispatchMsg, modeOf, setMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { rules, alerts, dispatching, dispatchMsg, modeOf, setMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { instances, healthy } = useInstanceHealth();
+  const enabledDefenseCount = rules.filter((r) => SCENARIO_DEFENSES.includes(r.rule_id) && r.is_enabled).length;
   // 显示给前端的 mode：以 memoryGuard 作为本场景的代表（用户切换会同步 memoryGuard + selfProtection 双开关）
   const mode = modeOf('defense.memoryGuard', 'enforce');
   const handleModeChange = (next: Mode) => {
@@ -72,24 +77,24 @@ const StateSurfacePage: React.FC = () => {
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
-              <div className="stat-card-label">受保护记忆文件</div>
-              <div className="stat-card-value">1,247</div>
-              <div className="stat-card-sub muted-strong">142 实例</div>
+              <div className="stat-card-label">防御开关</div>
+              <div className={`stat-card-value ${enabledDefenseCount === SCENARIO_DEFENSES.length ? 'tone-green' : 'tone-orange'}`}>{enabledDefenseCount}/{SCENARIO_DEFENSES.length}</div>
+              <div className="stat-card-sub muted-strong">memoryGuard · selfProtection</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 写入拦截</div>
-              <div className="stat-card-value tone-red">38</div>
-              <div className="stat-card-sub muted-strong">23 大小超限</div>
+              <div className="stat-card-label">近期告警</div>
+              <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
+              <div className="stat-card-sub muted-strong">最近 50 条 · aegis 来源</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">记忆完整性告警</div>
-              <div className="stat-card-value tone-red">5</div>
-              <div className="stat-card-sub muted-strong">2 严重 · 1 高 · 待处理</div>
+              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-value">{instances.length}</div>
+              <div className="stat-card-sub muted-strong">{healthy.length} running</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">实例隔离</div>
-              <div className="stat-card-value tone-green">100%</div>
-              <div className="stat-card-sub muted-strong">PVC + namespace</div>
+              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-value" style={{ fontSize: '1rem' }}>install_skill</div>
+              <div className="stat-card-sub muted-strong">hot-reload via mtime</div>
             </div>
           </div>
         </div>

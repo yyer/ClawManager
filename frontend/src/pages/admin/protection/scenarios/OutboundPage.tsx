@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
+import { useInstanceHealth } from '../../secplane/runtime/useInstanceHealth';
 import { useSurfaceBackend } from '../../secplane/runtime/useSurfaceBackend';
 import {
   secplaneService,
@@ -15,6 +16,7 @@ const ALERT_PREFIXES = ['defense.requireHttps', 'defense.exfiltrationGuard', 'de
 
 const OutboundPage: React.FC = () => {
   const { alerts, dispatching, dispatchMsg, modeOf, setMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { instances, healthy } = useInstanceHealth();
   const httpsMode = modeOf('defense.requireHttps', 'enforce');
   const httpsHits = alerts.filter((a) => a.rule_id?.startsWith('defense.requireHttps')).length;
   const trustMode = modeOf('defense.outboundTrust', 'enforce');
@@ -143,23 +145,23 @@ const OutboundPage: React.FC = () => {
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
               <div className="stat-card-label">白名单条目</div>
-              <div className="stat-card-value">142</div>
-              <div className="stat-card-sub muted-strong">5 类通道</div>
+              <div className="stat-card-value">{trusted.length}</div>
+              <div className="stat-card-sub muted-strong">secplane_outbound_trusted 表</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 拦截</div>
-              <div className="stat-card-value tone-red">38</div>
-              <div className="stat-card-sub muted-strong">非白名单 + IOC</div>
+              <div className="stat-card-label">近期告警</div>
+              <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
+              <div className="stat-card-sub muted-strong">requireHttps · exfiltrationGuard · outboundTrust</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">证书池</div>
-              <div className="stat-card-value">28</div>
-              <div className="stat-card-sub muted-strong">3 即将过期</div>
+              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-value">{instances.length}</div>
+              <div className="stat-card-sub muted-strong">{healthy.length} running</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">命中白名单率</div>
-              <div className="stat-card-value tone-green">98.2%</div>
-              <div className="stat-card-sub muted-strong">合规目标 100%</div>
+              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-value" style={{ fontSize: '1rem' }}>install_skill</div>
+              <div className="stat-card-sub muted-strong">hot-reload via mtime</div>
             </div>
           </div>
         </div>

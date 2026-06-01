@@ -77,28 +77,6 @@ const ApprovalPage: React.FC = () => {
               决策对齐引擎 触发的高风险操作审批工作流。反误导设计：默认拒绝、强制摘要、复选确认、24h 行为统计可视化。
             </p>
           </div>
-          <div className="grid grid-cols-4 gap-3 mt-5">
-            <div className="stat-card">
-              <div className="stat-card-label">待审批</div>
-              <div className="stat-card-value tone-orange">3</div>
-              <div className="stat-card-sub muted-strong">最早 04:32 等待</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">24h 处理</div>
-              <div className="stat-card-value">48</div>
-              <div className="stat-card-sub muted-strong">拒绝 22 · 通过 26</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">SLA 命中率</div>
-              <div className="stat-card-value tone-green">97.5%</div>
-              <div className="stat-card-sub muted-strong">目标 ≥ 95%</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">平均决策时长</div>
-              <div className="stat-card-value">2:18</div>
-              <div className="stat-card-sub muted-strong">目标 ≤ 3 分钟</div>
-            </div>
-          </div>
         </div>
 
         <div className="panel">

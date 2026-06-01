@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
+import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
 
 // 输出面防护 (scenario d) — 对齐 KSecForAIDemo/scenario-d-output.html
@@ -79,6 +80,7 @@ const catBadge = (c: Category) => (c === '凭据' || c === 'PCI' ? 'badge-red' :
 
 const OutputSurfacePage: React.FC = () => {
   const { alerts, dispatching, dispatchMsg, modeOf, setMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
+  const { instances, healthy } = useInstanceHealth();
   const enabled = modeOf('defense.outputRedaction', 'enforce') !== 'off';
   const toggleEnabled = () => setMode('defense.outputRedaction', enabled ? 'off' : 'enforce');
   const [modalKey, setModalKey] = useState<string | null>(null);
@@ -104,24 +106,24 @@ const OutputSurfacePage: React.FC = () => {
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
-              <div className="stat-card-label">24h 脱敏次数</div>
-              <div className="stat-card-value">2,609</div>
-              <div className="stat-card-sub muted-strong">凭据类占 70%</div>
+              <div className="stat-card-label">脱敏开关</div>
+              <div className={`stat-card-value ${enabled ? 'tone-green' : 'tone-orange'}`}>{enabled ? '已启用' : '已关闭'}</div>
+              <div className="stat-card-sub muted-strong">outputRedaction · before_message_write</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">明文凭据告警</div>
-              <div className="stat-card-value tone-red">12</div>
-              <div className="stat-card-sub muted-strong">by secureclaw · 文件监听</div>
+              <div className="stat-card-label">近期告警</div>
+              <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
+              <div className="stat-card-sub muted-strong">最近 50 条 · aegis 来源</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">隐私规则</div>
-              <div className="stat-card-value">9</div>
-              <div className="stat-card-sub muted-strong">4 数据分类</div>
+              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-value">{instances.length}</div>
+              <div className="stat-card-sub muted-strong">{healthy.length} running</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">漏脱敏告警</div>
-              <div className="stat-card-value tone-green">0</div>
-              <div className="stat-card-sub muted-strong">近 7d 无漏报</div>
+              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-value" style={{ fontSize: '1rem' }}>install_skill</div>
+              <div className="stat-card-sub muted-strong">hot-reload via mtime</div>
             </div>
           </div>
         </div>
