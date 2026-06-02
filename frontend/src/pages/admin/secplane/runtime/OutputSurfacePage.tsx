@@ -15,16 +15,16 @@ type Tone = 'red' | 'orange' | 'amber' | 'blue' | 'purple' | 'green' | 'slate';
 
 type Category = '凭据' | 'PII' | 'PCI' | '网络';
 
-const PRIVACY_RULES: Array<[string, string, Category, string, Tone, string, number, string]> = [
-  ['api-key', 'API Key', '凭据', 'OpenAI / Anthropic / AWS / GCP API 密钥', 'red', '严重', 1197, 'sk-***  /  sk-ant-***'],
-  ['jwt', 'JWT Token', '凭据', 'JSON Web Token (3 段 base64)', 'red', '严重', 421, 'eyJ***.***.***'],
-  ['aws-secret', 'AWS Secret', '凭据', 'aws_access_key_id / aws_secret_access_key', 'red', '严重', 187, 'AKIA***'],
-  ['ssh-key', 'SSH Key', '凭据', '私钥头部 / passphrase', 'red', '严重', 12, '-----BEGIN ***-----'],
-  ['id-card', '身份证号', 'PII', '中国大陆 18 位身份证（含校验位）', 'red', '严重', 8, '310***********X'],
-  ['email', 'Email', 'PII', '邮箱地址（含用户名 / 域名）', 'orange', '高', 312, '***@***.com'],
-  ['phone', 'Phone', 'PII', '中国 / 国际手机号', 'orange', '高', 164, '138****5678'],
-  ['credit-card', 'Credit Card', 'PCI', 'Visa / Master / Amex / 银联卡号（Luhn 校验）', 'red', '严重', 23, '****-****-****-1234'],
-  ['ip-addr', 'IP 地址', '网络', '内网 IP / 公网 IP / IPv6', 'amber', '中', 285, '10.***.***.***'],
+const PRIVACY_RULES: Array<[string, string, Category, string, Tone, string, string]> = [
+  ['api-key',     'API Key',     '凭据',  'OpenAI / Anthropic / AWS / GCP API 密钥',     'red',    '严重', 'sk-***  /  sk-ant-***'],
+  ['jwt',         'JWT Token',   '凭据',  'JSON Web Token (3 段 base64)',                 'red',    '严重', 'eyJ***.***.***'],
+  ['aws-secret',  'AWS Secret',  '凭据',  'aws_access_key_id / aws_secret_access_key',    'red',    '严重', 'AKIA***'],
+  ['ssh-key',     'SSH Key',     '凭据',  '私钥头部 / passphrase',                         'red',    '严重', '-----BEGIN ***-----'],
+  ['id-card',     '身份证号',     'PII',  '中国大陆 18 位身份证（含校验位）',                'red',    '严重', '310***********X'],
+  ['email',       'Email',       'PII',   '邮箱地址（含用户名 / 域名）',                    'orange', '高',   '***@***.com'],
+  ['phone',       'Phone',       'PII',   '中国 / 国际手机号',                              'orange', '高',   '138****5678'],
+  ['credit-card', 'Credit Card', 'PCI',   'Visa / Master / Amex / 银联卡号（Luhn 校验）',   'red',    '严重', '****-****-****-1234'],
+  ['ip-addr',     'IP 地址',      '网络',  '内网 IP / 公网 IP / IPv6',                      'amber',  '中',   '10.***.***.***'],
 ];
 
 const CRED_ALERTS: Array<[string, string, string, Tone, string]> = [
@@ -35,48 +35,6 @@ const CRED_ALERTS: Array<[string, string, string, Tone, string]> = [
   ['openclaw-staging-7', 'skills/qa-bot/keys.txt:1', 'JWT', 'red', '严重'],
 ];
 
-const REDACTIONS: Array<[string, string, string, string, Tone]> = [
-  ['刚刚', 'prod-east-12', 'API Key', 'sk-proj-aBcDeF... → sk-***', 'red'],
-  ['1m', 'finance-svc', 'AWS Secret', 'AKIAIO5FOQ... → AKIA***', 'red'],
-  ['2m', 'ops-bot-3', 'Email', 'john.doe@corp.com → ***@***.com', 'orange'],
-  ['4m', 'dev-test-1', 'JWT', 'eyJhbGciOi... → eyJ***.***.***', 'red'],
-  ['6m', 'mcp-router', 'SSH Key', '-----BEGIN RSA PRI... → REDACTED', 'red'],
-  ['9m', 'staging-7', 'Phone', '13812345678 → 138****5678', 'orange'],
-];
-
-interface RuleSample { flag: string; name: string; regex: string[]; examples: string[]; mask?: string }
-type ModalData = { title: string; subtitle: string; samples: RuleSample[] };
-
-const MODALS: Record<string, ModalData> = {
-  'api-key': {
-    title: 'API Key · 凭据脱敏规则', subtitle: 'outputRedactionEnabled · 24h 脱敏 1197', samples: [
-      { flag: 'openai', name: 'OpenAI / Anthropic Key', regex: ['/sk-(proj-|ant-)?[A-Za-z0-9_-]{32,}/'], examples: ['sk-proj-aBcDeFgH...', 'sk-ant-api03-xxxx'], mask: 'sk-***' },
-      { flag: 'gcp', name: 'GCP Service Key', regex: ['/AIza[0-9A-Za-z_-]{35}/'], examples: ['AIzaSyDxxxxxxxx...'], mask: 'AIza***' },
-    ],
-  },
-  'jwt': {
-    title: 'JWT · 凭据脱敏规则', subtitle: 'outputRedactionEnabled · 24h 脱敏 421', samples: [
-      { flag: 'jwt-standard', name: 'JSON Web Token', regex: ['/eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+/'], examples: ['eyJhbGciOiJIUzI1NiI...XXX.YYY'], mask: 'eyJ***.***.***' },
-    ],
-  },
-  'phone': {
-    title: 'Phone · PII 脱敏规则', subtitle: 'outputRedactionEnabled · 24h 脱敏 164', samples: [
-      { flag: 'cn-mobile', name: '中国手机号', regex: ['/\\b1[3-9]\\d{9}\\b/'], examples: ['13812345678', '15998765432'], mask: '138****5678' },
-      { flag: 'international', name: '国际电话（E.164）', regex: ['/\\+\\d{1,3}[\\s-]?\\d{4,14}\\b/'], examples: ['+1-415-555-0123'], mask: '+1-***-***-0123' },
-    ],
-  },
-  'credit-card': {
-    title: 'Credit Card · PCI 脱敏规则', subtitle: 'outputRedactionEnabled · 24h 脱敏 23 · 含 Luhn 校验', samples: [
-      { flag: 'visa-master-amex', name: 'Visa / Mastercard / Amex', regex: ['/\\b(4\\d{3}|5[1-5]\\d{2}|3[47]\\d{2})[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b/'], examples: ['4532015112830366', '5500-0000-0000-0004'], mask: '****-****-****-1234' },
-    ],
-  },
-  'ip-addr': {
-    title: 'IP 地址 · 网络脱敏规则', subtitle: 'outputRedactionEnabled · 24h 脱敏 285', samples: [
-      { flag: 'ipv4-private', name: 'IPv4 私有 / 内网', regex: ['/\\b(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)\\d+\\.\\d+\\b/'], examples: ['10.0.0.5', '192.168.1.100'], mask: '10.***.***.***' },
-    ],
-  },
-};
-
 const catBadge = (c: Category) => (c === '凭据' || c === 'PCI' ? 'badge-red' : c === 'PII' ? 'badge-orange' : 'badge-slate');
 
 const OutputSurfacePage: React.FC = () => {
@@ -84,9 +42,18 @@ const OutputSurfacePage: React.FC = () => {
   const { instances, healthy } = useInstanceHealth();
   const enabled = modeOf('defense.outputRedaction', 'enforce') !== 'off';
   const toggleEnabled = () => setMode('defense.outputRedaction', enabled ? 'off' : 'enforce');
-  const [modalKey, setModalKey] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Set<number>>(new Set());
-  const modal = modalKey ? MODALS[modalKey] : null;
+
+  const exportJsonl = () => {
+    const text = alerts.map((a) => JSON.stringify(a)).join('\n');
+    const blob = new Blob([text], { type: 'application/jsonl' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `output-surface-alerts-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jsonl`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <AdminLayout title="安全防护">
@@ -150,7 +117,7 @@ const OutputSurfacePage: React.FC = () => {
             </div>
           </div>
           <div className="space-y-2.5">
-            {PRIVACY_RULES.map(([key, name, category, desc, tone, sev, hits, mask]) => (
+            {PRIVACY_RULES.map(([key, name, category, desc, tone, sev, mask]) => (
               <div key={key} className="flex items-center gap-4 p-4 rounded-2xl border border-[#eadfd8] bg-white">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -162,15 +129,6 @@ const OutputSurfacePage: React.FC = () => {
                   <code className="block text-[10px] muted-strong bg-[#fdf6f1] px-2 py-1 rounded font-mono truncate" style={{ maxWidth: 420 }}>
                     脱敏示例：{mask}
                   </code>
-                </div>
-                <div className="text-right shrink-0 flex flex-col items-end gap-1.5" style={{ minWidth: 80 }}>
-                  <div>
-                    <div className={`text-lg font-bold tone-${tone} leading-none`}>{hits}</div>
-                    <div className="text-xs muted-strong mt-0.5">24h 脱敏</div>
-                  </div>
-                  <button className="text-[11px] text-[#2563eb] font-medium" onClick={() => setModalKey(key)}>
-                    查看规则 →
-                  </button>
                 </div>
               </div>
             ))}
@@ -231,85 +189,51 @@ const OutputSurfacePage: React.FC = () => {
               <div className="eyebrow">实时脱敏事件流</div>
               <h3 className="section-title-lg mt-1">智能体输出脱敏日志</h3>
             </div>
-            <button className="btn-secondary btn-sm">导出 JSONL</button>
+            <button
+              className="btn-secondary btn-sm"
+              onClick={exportJsonl}
+              disabled={alerts.length === 0}
+            >
+              导出 JSONL
+            </button>
           </div>
           <table className="tbl">
             <thead>
               <tr>
                 <th style={{ width: 80 }}>时间</th>
                 <th>实例</th>
-                <th>类型</th>
-                <th>原文 → 脱敏后</th>
+                <th>规则</th>
+                <th>原文 / 证据</th>
                 <th style={{ width: 80 }}>动作</th>
               </tr>
             </thead>
             <tbody>
-              {alerts.length > 0
-                ? alerts.slice(0, 10).map((a) => (
-                    <tr key={a.id}>
-                      <td><span className="muted-strong text-xs">{a.ts?.replace('T', ' ').slice(11, 19)}</span></td>
-                      <td><span className="font-mono text-xs">{a.agent_id ?? '—'}</span></td>
-                      <td><span className="badge badge-red">{a.rule_name ?? a.rule_id ?? '—'}</span></td>
-                      <td><code className="text-xs text-[#171212] truncate inline-block" style={{ maxWidth: 340 }}>{a.evidence ?? '—'}</code></td>
-                      <td><span className="badge badge-red">{a.action}</span></td>
-                    </tr>
-                  ))
-                : REDACTIONS.map(([t, inst, type, demo, tone], i) => (
-                    <tr key={i}>
-                      <td><span className="muted-strong text-xs">{t}</span></td>
-                      <td><span className="font-mono text-xs">openclaw-{inst}</span></td>
-                      <td><span className={`badge badge-${tone}`}>{type}</span></td>
-                      <td><code className="text-xs text-[#171212] truncate inline-block" style={{ maxWidth: 340 }}>{demo}</code></td>
-                      <td><span className={`badge badge-${tone}`}>脱敏</span></td>
-                    </tr>
-                  ))}
+              {alerts.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-xs muted" style={{ textAlign: 'center', padding: 20 }}>
+                    暂无脱敏事件
+                  </td>
+                </tr>
+              )}
+              {alerts.slice(0, 50).map((a) => (
+                <tr key={a.id}>
+                  <td><span className="muted-strong text-xs">{a.ts?.replace('T', ' ').slice(11, 19)}</span></td>
+                  <td><span className="font-mono text-xs">{a.agent_id ?? '—'}</span></td>
+                  <td><span className="badge badge-red">{a.rule_name ?? a.rule_id ?? '—'}</span></td>
+                  <td><code className="text-xs text-[#171212] truncate inline-block" style={{ maxWidth: 340 }}>{a.evidence ?? '—'}</code></td>
+                  <td><span className={`badge badge-${a.action === 'block' ? 'red' : a.action === 'redact' ? 'orange' : 'slate'}`}>{a.action}</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
+          {alerts.length > 0 && (
+            <div className="text-xs muted mt-3 text-center">
+              共 {alerts.length} 条 · 表中最多展示 50 行
+            </div>
+          )}
         </div>
       </div>
 
-      {modal && (
-        <div className="secp-modal-root" style={{ display: 'flex' }}>
-          <div className="secp-modal-backdrop" onClick={() => setModalKey(null)} />
-          <div className="secp-modal-content">
-            <div className="secp-modal-header">
-              <div>
-                <h3 className="secp-modal-title">{modal.title}</h3>
-                <p className="muted-strong text-xs mt-1">{modal.subtitle}</p>
-              </div>
-              <button className="icon-btn" onClick={() => setModalKey(null)}>×</button>
-            </div>
-            <div className="secp-modal-body">
-              {modal.samples.map((s, idx) => (
-                <div key={s.flag} className={idx === modal.samples.length - 1 ? '' : 'mb-5'}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs font-bold text-[#171212]">{s.flag}</code>
-                      <span className="text-sm text-[#171212]">{s.name}</span>
-                    </div>
-                    {s.mask && <code className="text-[11px] bg-[#fdf6f1] text-[#7a4a30] px-2 py-1 rounded">脱敏 → {s.mask}</code>}
-                  </div>
-                  <div className="muted-strong text-[11px] mb-1">代表正则（节选 {s.regex.length} 条）</div>
-                  <div className="space-y-1 mb-3">
-                    {s.regex.map((r, j) => (
-                      <code key={j} className="block text-[11px] bg-[#fdf6f1] text-[#7a4a30] px-2 py-1.5 rounded break-all">{r}</code>
-                    ))}
-                  </div>
-                  <div className="muted-strong text-[11px] mb-1">命中示例</div>
-                  <div className="space-y-1">
-                    {s.examples.map((e, j) => (
-                      <div key={j} className="text-xs muted italic px-2 py-1 border-l-2 border-[#eadfd8] break-all">&ldquo;{e}&rdquo;</div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="secp-modal-footer">
-              <button className="btn-secondary btn-sm" onClick={() => setModalKey(null)}>关闭</button>
-            </div>
-          </div>
-        </div>
-      )}
     </AdminLayout>
   );
 };

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import { FEATURES } from '../../../../config/features';
 
 // 人因审批 (scenario g) — 对齐 KSecForAIDemo/scenario-g-approval.html
 
@@ -79,7 +80,18 @@ const ApprovalPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="panel">
+        {!FEATURES.approvalCenter && (
+          <div className="panel">
+            <div className="text-center py-12">
+              <div className="text-base font-semibold text-[#171212] mb-2">功能开发中</div>
+              <div className="text-sm muted">
+                审批队列 / 工作流后端尚未就绪。开通后此处将展示待审批高风险操作、SLA 倒计时、智能体身份与风险评分。
+              </div>
+            </div>
+          </div>
+        )}
+
+        {FEATURES.approvalCenter && <div className="panel">
           <div className="tabs">
             {TABS.map((t, i) => (
               <button key={i} className={`tab${i === tab ? ' tab-active' : ''}`} onClick={() => setTab(i)}>
@@ -154,9 +166,9 @@ const ApprovalPage: React.FC = () => {
               </div>
             ))}
           </div>
-        </div>
+        </div>}
 
-        <div className="panel-warm">
+        {FEATURES.approvalCenter && <div className="panel-warm">
           <div className="eyebrow mb-3">反误导设计原则</div>
           <h3 className="section-title-lg mb-4">5 项强制约束</h3>
           <div className="grid grid-cols-5 gap-3 text-sm">
@@ -172,7 +184,7 @@ const ApprovalPage: React.FC = () => {
               </div>
             ))}
           </div>
-        </div>
+        </div>}
       </div>
     </AdminLayout>
   );

@@ -24,6 +24,10 @@ export interface FeatureFlags {
   // State Surface scenario — "记忆完整性监控" panel.
   // INTEGRITY_EVENTS hard-coded + alert banner 数字硬编码; 无 secureclaw 校验后端.
   memoryIntegrityCheck: boolean;
+
+  // Approval scenario (G) — 人因审批中心 entire page body.
+  // CASES + TABS + 拒绝/允许 buttons all mock; no approval queue / workflow backend.
+  approvalCenter: boolean;
 }
 
 export const FEATURES: FeatureFlags = {
@@ -32,4 +36,5 @@ export const FEATURES: FeatureFlags = {
   memoryDriftAlerts: false,
   coreAssetsInventory: false,
   memoryIntegrityCheck: false,
+  approvalCenter: false,
 };

@@ -170,6 +170,18 @@ const SecurityProtectionPage: React.FC = () => {
   };
   const killActive = killSwitch?.enabled === 1;
 
+  const exportReport = () => {
+    if (allAlerts.length === 0) return;
+    const text = allAlerts.map((a) => JSON.stringify(a)).join('\n');
+    const blob = new Blob([text], { type: 'application/jsonl' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `secplane-alerts-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jsonl`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <AdminLayout>
       <div className="cm-content space-y-6">
@@ -214,7 +226,12 @@ const SecurityProtectionPage: React.FC = () => {
             </div>
             <div className="flex flex-col gap-2 shrink-0">
               <LiveAegisConfigButton />
-              <button className="btn-secondary">
+              <button
+                className="btn-secondary"
+                onClick={exportReport}
+                disabled={allAlerts.length === 0}
+                title={allAlerts.length === 0 ? '暂无告警可导出' : `导出最近 ${allAlerts.length} 条告警为 JSONL`}
+              >
                 <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>

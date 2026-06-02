@@ -201,7 +201,7 @@ const OutboundPage: React.FC = () => {
               建议配合 L3 K8s NetworkPolicy 兜底。
             </div>
             <div className="p-4 rounded-2xl border border-[#eadfd8] bg-[#fffaf7] text-right">
-              <div className="text-[10px] muted-strong tracking-wider">24h 命中</div>
+              <div className="text-[10px] muted-strong tracking-wider">近期命中</div>
               <div className={`text-2xl font-bold mt-1 tone-${httpsHits > 0 ? 'red' : 'green'}`}>{httpsHits}</div>
               <div className="text-xs muted mt-0.5">enforce/observe 累计</div>
             </div>
@@ -230,7 +230,7 @@ const OutboundPage: React.FC = () => {
               </div>
               <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
               {dispatchMsg && <span className="text-xs muted ml-1">{dispatchMsg}</span>}
-              <span className={`text-xs font-bold tone-${trustHits > 0 ? 'red' : 'green'}`}>24h 拦截 {trustHits}</span>
+              <span className={`text-xs font-bold tone-${trustHits > 0 ? 'red' : 'green'}`}>近期拦截 {trustHits}</span>
             </div>
           </div>
 
