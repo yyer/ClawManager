@@ -1106,13 +1106,18 @@ const HostHardeningPage: React.FC = () => {
                     </tr>
                   )}
                   {liveLogs.map((entry, i) => {
-                    const act = entry.action ?? '-';
+                    // 勒索防护日志的 action 只有 BLOCK / KILL 两种：
+                    //   KILL  → 进程已被终止 → 是 (红)
+                    //   BLOCK → 仅拦截未终止 → 否 (橙)
+                    const a = (entry.action ?? '').toUpperCase();
+                    const killed = a === 'KILL';
+                    const label = a === 'KILL' ? '是' : a === 'BLOCK' ? '否' : (entry.action ?? '-');
                     return (
                       <tr key={i}>
                         <td><span className="text-xs muted-strong font-mono">{entry.time ?? '-'}</span></td>
                         <td><code className="text-xs font-mono text-[#171212]">{entry.process ?? entry.path ?? entry.raw}</code></td>
                         <td><span className="text-xs">{entry.user ?? '-'}</span></td>
-                        <td><span className={`badge badge-${act === '已终止' ? 'red' : 'orange'}`}>{act}</span></td>
+                        <td><span className={`badge badge-${killed ? 'red' : 'orange'}`}>{label}</span></td>
                       </tr>
                     );
                   })}
