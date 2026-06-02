@@ -1242,3 +1242,168 @@ body {
   color: white;
   flex-shrink: 0;
 }
+
+/* =====================================================================
+ * KSecure 纵深防御模型 banner + 7 大风险面 全景视图（网格/环形/层级）
+ * KSecForAIDemo/index.html 复刻
+ * ===================================================================== */
+
+.ksecure-banner {
+  background: linear-gradient(135deg, #1a0505 0%, #3d1010 50%, #1a0505 100%);
+  border-radius: 24px;
+  padding: 28px 36px;
+  color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+.ksecure-banner-left { position: relative; z-index: 1; }
+.ksecure-banner-title {
+  font-size: 1.125rem; font-weight: 700; color: #fff;
+  display: flex; align-items: center; gap: 10px;
+}
+.ksecure-banner-title svg { width: 22px; height: 22px; flex-shrink: 0; }
+.ksecure-banner-sub {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 6px;
+}
+.ksecure-banner-stats {
+  display: flex; gap: 28px; margin-top: 18px;
+  position: relative; z-index: 1;
+}
+.ksecure-stat { text-align: center; }
+.ksecure-stat-num {
+  font-size: 1.75rem; font-weight: 800; color: #fff; line-height: 1;
+}
+.ksecure-stat-label {
+  font-size: 0.6875rem; color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px;
+}
+.ksecure-banner-path {
+  position: absolute; right: 36px; top: 50%;
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0; z-index: 1;
+}
+.ksecure-path-step {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.75rem; color: rgba(255, 255, 255, 0.7);
+}
+.ksecure-path-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.ksecure-path-arrow {
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255, 255, 255, 0.3); font-size: 0.75rem;
+}
+
+/* 风险面 / 层级图例 */
+.layer-legend {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.layer-dot {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.75rem; font-weight: 600;
+  color: var(--text-muted, #6f6661);
+}
+.layer-dot-inner { width: 10px; height: 10px; border-radius: 50%; }
+
+/* 视图切换 tab */
+.sec-tab {
+  padding: 8px 16px; border-radius: 12px;
+  font-size: 0.8125rem; font-weight: 600;
+  color: var(--text-muted, #6f6661);
+  cursor: pointer; transition: all 0.15s;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+}
+.sec-tab:hover {
+  color: #171212;
+  background: rgba(247, 236, 230, 0.5);
+}
+.sec-tab.active {
+  color: #dc2626;
+  background: rgba(255, 241, 235, 0.95);
+  border-color: rgba(243, 199, 183, 0.8);
+}
+
+/* 7 大风险面 卡片（grid view）*/
+.cat-card-new {
+  border-radius: 20px;
+  border: 1px solid var(--border-warm, #eadfd8);
+  padding: 20px;
+  transition: all 0.22s;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.cat-card-new:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 50px -30px rgba(72, 44, 24, 0.4);
+}
+.cat-card-new.disabled { opacity: 0.55; cursor: not-allowed; }
+.cat-card-new.disabled:hover { transform: none; box-shadow: none; }
+
+/* 场景气泡 */
+.scenario-bubble {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 0.75rem; font-weight: 500;
+  color: #171212;
+  transition: all 0.15s;
+}
+.scenario-bubble:hover {
+  background: #fff;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+/* 层级标签 */
+.layer-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 6px;
+  font-size: 0.625rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.layer-tag-runtime { background: rgba(239, 68, 68, 0.1); color: #b42318; border: 1px solid rgba(239, 68, 68, 0.2); }
+.layer-tag-host    { background: rgba(29, 78, 216, 0.08); color: #1d4ed8; border: 1px solid rgba(29, 78, 216, 0.2); }
+.layer-tag-audit   { background: rgba(107, 33, 168, 0.08); color: #6b21a8; border: 1px solid rgba(107, 33, 168, 0.2); }
+.layer-tag-control { background: rgba(180, 83, 9, 0.08); color: #b45309; border: 1px solid rgba(180, 83, 9, 0.2); }
+
+/* 模块图标容器 */
+.mod-icon {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 分区隔线（层级视图）*/
+.zone-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; }
+.zone-divider-line {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-warm, #eadfd8), transparent);
+}
+.zone-divider-label {
+  font-size: 0.6875rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.15em;
+  color: var(--text-muted, #6f6661);
+  white-space: nowrap;
+}
+
+/* 较小 panel（层级视图卡片）*/
+.panel-tight {
+  background: #fff;
+  border: 1px solid var(--border-warm, #eadfd8);
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 24px 60px -42px rgba(72, 44, 24, 0.35);
+}
+

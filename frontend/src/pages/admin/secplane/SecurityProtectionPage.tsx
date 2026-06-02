@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../components/AdminLayout';
-import { CATEGORIES, getScenariosByCategory } from '../protection/_data';
+import { CATEGORIES } from '../protection/_data';
 import LiveAegisConfigButton from '../../../components/protection/LiveAegisConfigButton';
 import { secplaneService, type SecplaneAlert, type KillSwitchState } from '../../../services/secplaneService';
 
@@ -68,9 +68,167 @@ const relTime = (iso: string) => {
   return iso.slice(0, 16).replace('T', ' ');
 };
 
+// 7 大风险面 - 每个 cat-id 的视觉数据（渐变 / 图标 / 攻击路径备注 / 层级标签）
+// 注意：HTML 模板里把环境隔离与安全增强归"主机层"用蓝色，但 _data.ts 里这条用了 #0f766e；
+// 我们保留 _data 配色，仅在视觉数据里补 HTML 的渐变和层标签。
+type Layer = 'runtime' | 'host' | 'audit' | 'control' | 'planned';
+interface ModuleVisual {
+  num: string;          // 圈数字 ①②③④⑥⑦⑧
+  layer: Layer;
+  cardBorder: string;
+  cardBg: string;
+  iconGradient: string;
+  iconShadow: string;
+  iconPath: string;
+  arrowColor: string;
+  footerNote: string;
+  layerLabel: string;
+  layerTagClass: string;
+  badgeClass: string;   // n 场景 badge 的颜色
+}
+const MODULE_VISUAL: Record<string, ModuleVisual> = {
+  'cat-1': { num: '①', layer: 'runtime', cardBorder: '#f4b6b3', cardBg: 'linear-gradient(135deg,#fff,#fdeded)', iconGradient: 'linear-gradient(135deg,#ef4444,#991b1b)', iconShadow: '0 8px 20px -8px rgba(239,68,68,0.5)', iconPath: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', arrowColor: '#ef4444', footerNote: '运行时主链路', layerLabel: '运行时层', layerTagClass: 'layer-tag-runtime', badgeClass: 'badge-red' },
+  'cat-6': { num: '⑥', layer: 'host', cardBorder: '#a8d9d2', cardBg: 'linear-gradient(135deg,#fff,#e8f8f5)', iconGradient: 'linear-gradient(135deg,#0f766e,#115e59)', iconShadow: '0 8px 20px -8px rgba(15,118,110,0.4)', iconPath: 'M3 11v11h18V11M7 11V7a5 5 0 0110 0v4', arrowColor: '#0f766e', footerNote: '主机层兜底防护', layerLabel: '主机层', layerTagClass: 'layer-tag-host', badgeClass: 'badge-blue' },
+  'cat-4': { num: '②', layer: 'audit', cardBorder: '#d9c7f5', cardBg: 'linear-gradient(135deg,#fff,#f3edff)', iconGradient: 'linear-gradient(135deg,#7c3aed,#6b21a8)', iconShadow: '0 8px 20px -8px rgba(107,33,168,0.4)', iconPath: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', arrowColor: '#6b21a8', footerNote: '组件供应链可信', layerLabel: '审计层', layerTagClass: 'layer-tag-audit', badgeClass: 'badge-purple' },
+  'cat-3': { num: '④', layer: 'planned', cardBorder: '#c8bfb8', cardBg: 'linear-gradient(135deg,#fff,#f9f7f5)', iconGradient: 'linear-gradient(135deg,#94a3b8,#64748b)', iconShadow: '0 8px 20px -8px rgba(100,116,139,0.4)', iconPath: 'M13 10V3L4 14h7v7l9-11h-7z', arrowColor: '#94a3b8', footerNote: '后续版本开放', layerLabel: '规划中', layerTagClass: 'badge badge-orange', badgeClass: 'badge-slate' },
+  'cat-2': { num: '③', layer: 'control', cardBorder: '#b8d8f4', cardBg: 'linear-gradient(135deg,#fff,#e8f3fd)', iconGradient: 'linear-gradient(135deg,#2563eb,#1d4ed8)', iconShadow: '0 8px 20px -8px rgba(37,99,235,0.4)', iconPath: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z', arrowColor: '#1d4ed8', footerNote: '控制层入口管控', layerLabel: '控制层', layerTagClass: 'layer-tag-control', badgeClass: 'badge-blue' },
+  'cat-7': { num: '⑦', layer: 'control', cardBorder: '#eadfd8', cardBg: 'linear-gradient(135deg,#fff,#fdf6f1)', iconGradient: 'linear-gradient(135deg,#92400e,#78350f)', iconShadow: '0 8px 20px -8px rgba(146,64,14,0.4)', iconPath: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', arrowColor: '#78350f', footerNote: '与监管治理协同', layerLabel: '控制层', layerTagClass: 'layer-tag-control', badgeClass: 'badge-orange' },
+  'cat-5': { num: '⑧', layer: 'control', cardBorder: '#f4cba0', cardBg: 'linear-gradient(135deg,#fff,#fff3e1)', iconGradient: 'linear-gradient(135deg,#d97706,#b45309)', iconShadow: '0 8px 20px -8px rgba(217,119,6,0.4)', iconPath: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01', arrowColor: '#b45309', footerNote: '与策略模板协同', layerLabel: '控制层', layerTagClass: 'layer-tag-control', badgeClass: 'badge-orange' },
+};
+// 场景气泡（HTML 模板有部分文案 SCENARIOS 不覆盖：cat-4 加 SDS Skill 扫描、cat-3 规划中 3 项）
+const BUBBLE_LABELS: Record<string, string[]> = {
+  'cat-1': ['输入面防护', '状态面防护', '决策面防护', '输出面防护', '资产防篡改', '人因审批'],
+  'cat-6': ['宿主加固', '容器隔离'],
+  'cat-4': ['SKILL 技能扫描'],
+  'cat-3': ['资源配额', '速率限制', '通信加密'],
+  'cat-2': ['出站治理'],
+  'cat-7': ['策略治理'],
+  'cat-5': ['应急熔断', '全链路审计'],
+};
+// 网格视图 4 行布局（每行 2 列）
+const GRID_ROWS: Array<[string, string]> = [
+  ['cat-1', 'cat-6'],
+  ['cat-4', 'cat-3'],
+  ['cat-2', 'cat-7'],
+  ['cat-5', '__placeholder__'],
+];
+
+// 环形视图里部分 cat 名字太长展示要缩短
+const RING_SHORT_LABEL: Record<string, string> = {
+  'cat-6': '环境隔离',
+  'cat-3': '协同通信',
+};
+
+// 环形视图卡片 - 绝对定位
+interface RingCardProps {
+  catId: string;
+  style: React.CSSProperties;
+  bubbles: string[];
+  bubbleOpacity?: number;
+}
+const RingCard: React.FC<RingCardProps> = ({ catId, style, bubbles, bubbleOpacity }) => {
+  const vis = MODULE_VISUAL[catId];
+  const cat = CATEGORIES.find((c) => c.id === catId);
+  if (!cat || !vis) return null;
+  const planned = vis.layer === 'planned';
+  const label = RING_SHORT_LABEL[catId] ?? cat.label;
+  return (
+    <div style={{ position: 'absolute', background: '#fff', borderRadius: 16, border: `1px solid ${vis.cardBorder}`, padding: '10px 12px', boxShadow: '0 8px 24px -12px rgba(0,0,0,0.2)', ...style }}>
+      <div className="flex items-center gap-2 mb-1">
+        <div style={{ width: 28, height: 28, borderRadius: 8, background: vis.iconGradient, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d={vis.iconPath} />
+          </svg>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#171212' }}>{label}</div>
+          <div style={{ fontSize: '0.6rem', color: planned ? '#94a3b8' : vis.arrowColor, fontWeight: 600 }}>{vis.layerLabel}</div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {bubbles.map((b) => (
+          <span key={b} className="scenario-bubble" style={{ fontSize: '0.6rem', padding: '2px 6px', ...(bubbleOpacity ? { opacity: bubbleOpacity } : {}) }}>{b}</span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// 层级视图卡片 - panel-tight + 左 4px 色条
+const LayerCard: React.FC<{ catId: string; sceneSubtitle?: string }> = ({ catId, sceneSubtitle }) => {
+  const cat = CATEGORIES.find((c) => c.id === catId);
+  const vis = MODULE_VISUAL[catId];
+  if (!cat || !vis) return null;
+  const planned = vis.layer === 'planned';
+  const sceneCount = BUBBLE_LABELS[catId]?.length ?? 0;
+  const inner = (
+    <div className="panel-tight flex items-start gap-3" style={{ borderLeft: `4px solid ${vis.arrowColor}`, cursor: planned ? 'not-allowed' : 'pointer', opacity: planned ? 0.75 : 1 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: vis.iconGradient, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d={vis.iconPath} />
+        </svg>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#171212' }}>{cat.label}</div>
+          {planned ? (
+            <span className="badge badge-slate" style={{ fontSize: '0.5625rem', padding: '2px 6px' }}>规划中</span>
+          ) : (
+            <>
+              <span className={`layer-tag ${vis.layerTagClass}`}>{vis.layerLabel}</span>
+              <span className={`badge ${vis.badgeClass}`} style={{ fontSize: '0.5625rem', padding: '2px 6px' }}>{sceneCount} 场景</span>
+            </>
+          )}
+        </div>
+        <div className="text-xs muted mb-2">{sceneSubtitle ?? (planned ? '多智能体通信安全' : `${sceneCount} 场景`)}</div>
+        <div className="flex flex-wrap gap-2">
+          {(BUBBLE_LABELS[catId] ?? []).map((b) => (
+            <span key={b} className="scenario-bubble" style={planned ? { opacity: 0.5 } : undefined}>{b}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{ color: planned ? '#94a3b8' : vis.arrowColor, fontWeight: 600, fontSize: '0.8125rem' }}>{planned ? '规划 →' : '查看 →'}</div>
+    </div>
+  );
+  if (planned) {
+    return inner;
+  }
+  return <Link to={cat.path} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{inner}</Link>;
+};
+
+// 层级视图分组（zone divider + n 列卡片）
+const LAYER_SUBTITLE: Record<string, string> = {
+  'cat-1': '覆盖输入面 / 状态面 / 决策面 / 输出面 / 资产防篡改 / 人因审批',
+  'cat-6': '基础设施兜底防护',
+  'cat-4': '供应链安全 · SKILL 技能扫描',
+  'cat-3': '多智能体通信安全',
+};
+const LayerSection: React.FC<{ title: string; dotColor: string; rows: Array<string[]> }> = ({ title, dotColor, rows }) => (
+  <div>
+    <div className="zone-divider">
+      <div className="zone-divider-line" />
+      <div className="zone-divider-label">
+        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: dotColor, marginRight: 6 }} />
+        {title}
+      </div>
+      <div className="zone-divider-line" />
+    </div>
+    {rows.map((row, i) => {
+      const colsClass = row.length === 1 ? 'grid-cols-1' : row.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
+      return (
+        <div key={i} className={`grid ${colsClass} gap-3`}>
+          {row.map((catId) => (
+            <LayerCard key={catId} catId={catId} sceneSubtitle={LAYER_SUBTITLE[catId]} />
+          ))}
+        </div>
+      );
+    })}
+  </div>
+);
+
 const SecurityProtectionPage: React.FC = () => {
-  // 类目卡按截图顺序：去掉 overview + events
-  const catCards = CATEGORIES.filter((c) => c.id !== 'overview' && c.id !== 'events');
+  // 7 大风险面 全景视图切换
+  const [viewMode, setViewMode] = useState<'grid' | 'ring' | 'layer'>('ring');
 
   // 真实告警流：listAlerts → 一次取 500 条，最近 10 条用于事件聚合表，
   // 全量用于 hero 4 张统计卡的 24h / 今日 计算。每 30s 刷新。
@@ -278,74 +436,191 @@ const SecurityProtectionPage: React.FC = () => {
           </div>
         </div>
 
-        {/* 7 类别卡片网格 */}
-        <div className="flex items-baseline justify-between mb-2">
-          <div>
-            <div className="eyebrow">风险面与防护场景</div>
-            <h3 className="section-title-lg mt-1">智能体的 7 大风险面 · 13 个防护场景全景</h3>
+        {/* KSecure 纵深防御模型 总览 banner */}
+        <div className="ksecure-banner">
+          <div className="ksecure-banner-left">
+            <div className="ksecure-banner-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              KSecure 纵深防御模型
+            </div>
+            <div className="ksecure-banner-sub">攻击路径：从外到内 · 四层纵深防御</div>
+            <div className="ksecure-banner-stats">
+              <div className="ksecure-stat"><div className="ksecure-stat-num">7</div><div className="ksecure-stat-label">风险面</div></div>
+              <div className="ksecure-stat"><div className="ksecure-stat-num">13</div><div className="ksecure-stat-label">防护场景</div></div>
+              <div className="ksecure-stat"><div className="ksecure-stat-num">4</div><div className="ksecure-stat-label">防护层级</div></div>
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-xs muted">
-            防护层：
-            <span className="badge badge-red">运行时层</span>
-            <span className="badge badge-blue">主机层</span>
-            <span className="badge badge-purple">审计</span>
-            <span className="badge badge-orange">控制层</span>
+          <div className="ksecure-banner-path">
+            <div className="ksecure-path-step"><div className="ksecure-path-dot" style={{ background: '#ef4444' }} /><span>运行时层 · 6场景</span></div>
+            <div className="ksecure-path-arrow">↓</div>
+            <div className="ksecure-path-step"><div className="ksecure-path-dot" style={{ background: '#6b21a8' }} /><span>数据层 · 1场景</span></div>
+            <div className="ksecure-path-arrow">↓</div>
+            <div className="ksecure-path-step"><div className="ksecure-path-dot" style={{ background: '#1d4ed8' }} /><span>身份+隔离 · 3场景</span></div>
+            <div className="ksecure-path-arrow">↔</div>
+            <div className="ksecure-path-step"><div className="ksecure-path-dot" style={{ background: '#b45309' }} /><span>治理+策略 · 3场景</span></div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          {catCards.map((cat) => {
-            const catScenarios = getScenariosByCategory(cat.id);
-            const disabled = !!cat.disabled;
-            const inner = disabled ? (
-              <div className="text-xs muted leading-5">
-                多智能体接入与代理间通信安全治理，将在后续版本开放；资源配额与速率限制由平台 AI 网关 统一承担。
+        {/* 7 大风险面 全景 · 3 视图（网格 / 环形 / 层级）*/}
+        <div className="panel" style={{ padding: 24 }}>
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <div className="eyebrow">风险面与防护场景</div>
+              <h3 className="section-title-lg mt-1">智能体的 7 大风险面 · 13 个防护场景全景</h3>
+            </div>
+            <div className="layer-legend">
+              <div className="layer-dot"><div className="layer-dot-inner" style={{ background: '#ef4444' }} /><span>运行时层</span></div>
+              <div className="layer-dot"><div className="layer-dot-inner" style={{ background: '#1d4ed8' }} /><span>主机层</span></div>
+              <div className="layer-dot"><div className="layer-dot-inner" style={{ background: '#6b21a8' }} /><span>审计层</span></div>
+              <div className="layer-dot"><div className="layer-dot-inner" style={{ background: '#b45309' }} /><span>控制层</span></div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mb-5">
+            <button type="button" className={`sec-tab ${viewMode === 'grid' ? 'active' : ''}`} onClick={() => setViewMode('grid')}>网格视图</button>
+            <button type="button" className={`sec-tab ${viewMode === 'ring' ? 'active' : ''}`} onClick={() => setViewMode('ring')}>环形视图</button>
+            <button type="button" className={`sec-tab ${viewMode === 'layer' ? 'active' : ''}`} onClick={() => setViewMode('layer')}>层级视图</button>
+          </div>
+
+          {viewMode === 'grid' && (
+            <div>
+              {GRID_ROWS.map((row, ri) => (
+                <div key={ri} className="grid grid-cols-2 gap-4 mb-4">
+                  {row.map((catId) => {
+                    if (catId === '__placeholder__') {
+                      return (
+                        <div key="placeholder" style={{ borderRadius: 20, border: '1px dashed #e2ddd8', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120, color: '#c8bfb8', fontSize: '0.8125rem' }}>
+                          <span>更多防护场景规划中</span>
+                        </div>
+                      );
+                    }
+                    const cat = CATEGORIES.find((c) => c.id === catId);
+                    const vis = MODULE_VISUAL[catId];
+                    if (!cat || !vis) return null;
+                    const disabled = !!cat.disabled;
+                    const subtitle = disabled
+                      ? '多智能体接入与代理间通信安全治理'
+                      : `${BUBBLE_LABELS[catId]?.length ?? 0} 个防护场景`;
+                    const card = (
+                      <>
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="mod-icon" style={{ background: vis.iconGradient, boxShadow: vis.iconShadow }}>
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d={vis.iconPath} />
+                            </svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <div className="text-base font-bold text-[#171212]">{cat.label}</div>
+                              {disabled ? (
+                                <span className="badge badge-orange">规划中</span>
+                              ) : (
+                                <span className={`layer-tag ${vis.layerTagClass}`}>
+                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: vis.arrowColor, display: 'inline-block' }} />
+                                  {vis.layerLabel}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs muted">{subtitle}</div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {(BUBBLE_LABELS[catId] ?? []).map((b) => (
+                            <span key={b} className="scenario-bubble" style={disabled ? { opacity: 0.4 } : undefined}>{b}</span>
+                          ))}
+                        </div>
+                        <div className="divider" style={{ margin: '12px 0' }} />
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="muted-strong">{vis.footerNote}</span>
+                          <span style={{ color: vis.arrowColor, fontWeight: 600 }}>{disabled ? '规划中 →' : '查看 →'}</span>
+                        </div>
+                      </>
+                    );
+                    const cardStyle = { borderColor: vis.cardBorder, background: vis.cardBg };
+                    if (disabled) {
+                      return (
+                        <div key={catId} className="cat-card-new disabled" style={cardStyle}>{card}</div>
+                      );
+                    }
+                    return (
+                      <Link key={catId} to={cat.path} className="cat-card-new" style={cardStyle}>{card}</Link>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {viewMode === 'ring' && (
+            <div className="flex flex-col items-center">
+              <div className="flex gap-5 mb-6 flex-wrap justify-center">
+                <div className="flex items-center gap-2 text-xs"><div style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444' }} />运行时层</div>
+                <div className="flex items-center gap-2 text-xs"><div style={{ width: 10, height: 10, borderRadius: '50%', background: '#1d4ed8' }} />主机层</div>
+                <div className="flex items-center gap-2 text-xs"><div style={{ width: 10, height: 10, borderRadius: '50%', background: '#6b21a8' }} />审计层</div>
+                <div className="flex items-center gap-2 text-xs"><div style={{ width: 10, height: 10, borderRadius: '50%', background: '#b45309' }} />控制层</div>
               </div>
-            ) : (
-              <>
-                <div className="space-y-1.5 mb-3">
-                  {catScenarios.map((s) => (
-                    <div key={s.id} className="flex items-center gap-2 text-xs">
-                      <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: cat.color }} />
-                      <span className="text-[#171212] font-medium flex-1 truncate">{s.label}</span>
-                      <span className="muted text-[10px]">查看 →</span>
-                    </div>
-                  ))}
+              <div className="relative flex items-center justify-center" style={{ width: 560, height: 560 }}>
+                <div style={{ position: 'absolute', width: 540, height: 540, top: '50%', left: '50%', transform: 'translate(-50%,-50%)', borderRadius: '50%', border: '2px solid #ef4444', opacity: 0.25 }} />
+                <div style={{ position: 'absolute', width: 390, height: 390, top: '50%', left: '50%', transform: 'translate(-50%,-50%)', borderRadius: '50%', border: '2px solid #1d4ed8', opacity: 0.25 }} />
+                <div style={{ position: 'absolute', width: 260, height: 260, top: '50%', left: '50%', transform: 'translate(-50%,-50%)', borderRadius: '50%', border: '2px solid #6b21a8', opacity: 0.25 }} />
+                <div style={{ position: 'absolute', width: 140, height: 140, top: '50%', left: '50%', transform: 'translate(-50%,-50%)', borderRadius: '50%', border: '2px solid #b45309', opacity: 0.25 }} />
+
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 100, height: 100, borderRadius: '50%', background: 'linear-gradient(135deg,#ef6b4a,#dc2626)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 12px 32px -12px rgba(220,38,38,0.5)', zIndex: 2 }}>
+                  <div style={{ fontSize: '2.25rem', fontWeight: 800, lineHeight: 1 }}>7</div>
+                  <div style={{ fontSize: '0.5625rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.9 }}>风险面</div>
                 </div>
-                <div className="divider" />
-                <div className="flex items-center justify-between text-xs">
-                  <span className="muted-strong">点击进入类别详情</span>
-                  <span style={{ color: cat.color, fontWeight: 600 }}>查看 →</span>
+
+                {/* ① 运行时层：上方 */}
+                <RingCard catId="cat-1" style={{ top: 8, left: '50%', transform: 'translateX(-50%)', width: 180 }} bubbles={['输入', '状态', '决策', '输出', '资产', '人因']} />
+                {/* ⑥ 主机层：右下 */}
+                <RingCard catId="cat-6" style={{ bottom: 70, right: 38, width: 170 }} bubbles={['宿主', '容器']} />
+                {/* ④ 主机层 规划中：右 */}
+                <RingCard catId="cat-3" style={{ top: '50%', right: 18, transform: 'translateY(-50%)', width: 150, opacity: 0.7 }} bubbles={['配额', '限速', '加密']} bubbleOpacity={0.5} />
+                {/* ② 审计层：左 */}
+                <RingCard catId="cat-4" style={{ top: '50%', left: 18, transform: 'translateY(-50%)', width: 165 }} bubbles={['SKILL 技能扫描']} />
+                {/* ③ 控制层：左上 */}
+                <RingCard catId="cat-2" style={{ top: 115, left: 48, width: 155 }} bubbles={['出站']} />
+                {/* ⑦ 控制层：右上 */}
+                <RingCard catId="cat-7" style={{ top: 115, right: 48, width: 155 }} bubbles={['策略']} />
+                {/* ⑧ 控制层：底部 */}
+                <RingCard catId="cat-5" style={{ bottom: 115, left: '50%', transform: 'translateX(-50%)', width: 165 }} bubbles={['熔断', '审计']} />
+              </div>
+
+              <div className="flex flex-col gap-2 mt-4" style={{ width: 560 }}>
+                <div className="flex items-center gap-3 p-3 rounded-xl" style={{ border: '1px solid #f4b6b3', background: '#fdeded' }}>
+                  <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#b42318' }}>运行时层</div>
+                  <div style={{ fontSize: '0.75rem', color: '#6f6661' }}>— 智能体运行时安全（6 场景）| 输入/状态/决策/输出/资产/人因审批</div>
                 </div>
-              </>
-            );
-            const cardClass = `cat-overview-card${disabled ? ' cat-overview-card-disabled' : ''}`;
-            const header = (
-              <div className="flex items-start gap-3 mb-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="text-lg font-bold text-[#171212]">{cat.label}</div>
-                    {disabled ? (
-                      <span className="badge badge-slate">本期未开放</span>
-                    ) : (
-                      <span className="badge badge-red">{cat.count} 个场景</span>
-                    )}
-                  </div>
+                <div className="flex items-center gap-3 p-3 rounded-xl" style={{ border: '1px solid #b8d4f4', background: '#e8f3fd' }}>
+                  <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#1d4ed8', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#1d4ed8' }}>主机层</div>
+                  <div style={{ fontSize: '0.75rem', color: '#6f6661' }}>— 环境隔离（2 场景）+ 协同通信（规划中）| 宿主加固/容器隔离/资源管控</div>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-xl" style={{ border: '1px solid #d9c7f5', background: '#f3edff' }}>
+                  <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#6b21a8', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#6b21a8' }}>审计层</div>
+                  <div style={{ fontSize: '0.75rem', color: '#6f6661' }}>— 数据与组件可信（1 场景）| SKILL 技能扫描</div>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-xl" style={{ border: '1px solid #f4cba0', background: '#fff3e1' }}>
+                  <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#b45309', flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#b45309' }}>控制层</div>
+                  <div style={{ fontSize: '0.75rem', color: '#6f6661' }}>— 身份权限 + 安全策略 + 监管治理（4 场景）| 出站/策略/熔断/审计</div>
                 </div>
               </div>
-            );
-            return disabled ? (
-              <a key={cat.id} className={cardClass}>
-                {header}
-                {inner}
-              </a>
-            ) : (
-              <Link key={cat.id} to={cat.path} className={cardClass}>
-                {header}
-                {inner}
-              </Link>
-            );
-          })}
+            </div>
+          )}
+
+          {viewMode === 'layer' && (
+            <div className="space-y-5">
+              <LayerSection title="运行时层" dotColor="#ef4444" rows={[['cat-1']]} />
+              <LayerSection title="主机层" dotColor="#1d4ed8" rows={[['cat-6', 'cat-3']]} />
+              <LayerSection title="审计层" dotColor="#6b21a8" rows={[['cat-4']]} />
+              <LayerSection title="控制层" dotColor="#b45309" rows={[['cat-2', 'cat-7', 'cat-5']]} />
+            </div>
+          )}
         </div>
 
         {/* 跨产品事件流 */}
