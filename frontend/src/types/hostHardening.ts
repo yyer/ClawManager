@@ -82,18 +82,26 @@ export const DEFAULT_FILE_POLICY: FilePolicy = {
 
 /**
  * Intrusion-detection policy — mirrors bridge `InvasionPolicy`.
- * Only `programWhitelist` is user-editable; `rules` is read-only.
+ * 与 KSecGUI/components/Invasion.vue 对齐：
+ *   - 'switch-on'            → KSec.yaml.intrusion_detection 主开关
+ *   - whitelistProgram/File/IP → ids.yaml 中 3 个 list 块（whitelist_program_path 等）
+ *   - enabledRuleNames        → ids.yaml 中存在的 `- rule: <name>` 名称集合
+ *                              （前端 INVASION_RULES_TEMPLATE 据此勾选每条 Toggle）
  */
 export interface InvasionPolicy {
   'switch-on': boolean;
-  programWhitelist: string[];
-  rules: Array<{ name: string; desc?: string }>;
+  whitelistProgram: string[];
+  whitelistFile: string[];
+  whitelistIP: string[];
+  enabledRuleNames: string[];
 }
 
 export const DEFAULT_INVASION_POLICY: InvasionPolicy = {
   'switch-on': false,
-  programWhitelist: [],
-  rules: [],
+  whitelistProgram: [],
+  whitelistFile: [],
+  whitelistIP: [],
+  enabledRuleNames: [],
 };
 
 export interface LogEntry {

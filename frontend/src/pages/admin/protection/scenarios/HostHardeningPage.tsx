@@ -6,6 +6,7 @@ import {
   getInvasionPolicy,
   getLogs,
   getRansomPolicy,
+  getStatus,
   openLogStream,
   putFilePolicy,
   putInvasionPolicy,
@@ -15,6 +16,7 @@ import {
   DEFAULT_FILE_POLICY,
   DEFAULT_INVASION_POLICY,
   DEFAULT_RANSOM_POLICY,
+  type AgentStatus,
   type FilePolicy,
   type FileRule as ServerFileRule,
   type InvasionPolicy,
@@ -22,6 +24,8 @@ import {
   type RansomPolicy,
 } from '../../../../types/hostHardening';
 import { BUILTIN_PREFILE_TEMPLATE } from '../../../../data/builtinPreFileRules';
+import { INVASION_RULES_META, INVASION_PRISTINE_BODY } from '../../../../data/invasionPolicy';
+import { enrichInvasionLog, type InvasionLogRow } from '../../../../data/invasionLogMap';
 
 // 宿主加固 (scenario L) — 对齐 specs/001-clawmanager-hardening/prototypes/scenario-l-host.html
 // 3 个 tab：主机防护 / 勒索防护 / 入侵检测
@@ -262,6 +266,47 @@ function fileRuleToServer(u: CustomFileRule): ServerFileRule {
 /** UI process rule: tagged variant of server's processBlackList + processProtectList. */
 type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
 
+/**
+ * Falco 兼容的入侵检测白名单字段校验，与 KSecGUI/utils/check.js 对齐：
+ *  - 路径（程序 / 文件）：绝对路径，段内只接受 [a-zA-Z0-9._-]
+ *  - IP：dotted-quad IPv4 字面量（不接受 CIDR；Falco 的 fd.cip 不识别 /N，
+ *        否则 Falco 加载 ids.yaml 时报 "unrecognized IPv4 address"）
+ */
+const IDS_PATH_RE = /^([/]|([/][a-zA-Z0-9._-]{1,255})+)$/;
+const IDS_IPV4_RE = /^(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])$/;
+
+function validateInvasionEntries(
+  lines: string[],
+  kind: 'path' | 'ip',
+): { ok: string[]; bad: string[] } {
+  const re = kind === 'ip' ? IDS_IPV4_RE : IDS_PATH_RE;
+  const ok: string[] = [];
+  const bad: string[] = [];
+  for (const raw of lines) {
+    const s = raw.trim();
+    if (!s) continue;
+    if (s.length > 255) bad.push(s);
+    else if (!re.test(s)) bad.push(s);
+    else ok.push(s);
+  }
+  return { ok, bad };
+}
+
+/**
+ * 合并新行进白名单（与 KSecGUI Invasion.vue handleConfirm 一致）：
+ * - 新行按出现顺序去重
+ * - 旧值中已被新行包含的剔除，让新行排在最上面
+ * - 超过 max 截断，返回 dropped 数量供 UI 提示
+ */
+function mergeUnique(prev: string[], lines: string[], max: number): { merged: string[]; dropped: number } {
+  const fresh = Array.from(new Set(lines.map((s) => s.trim()).filter(Boolean)));
+  const freshSet = new Set(fresh);
+  const oldKept = prev.filter((v) => !freshSet.has(v));
+  const combined = [...fresh, ...oldKept];
+  const dropped = Math.max(0, combined.length - max);
+  return { merged: combined.slice(0, max), dropped };
+}
+
 
 // 数据迁移：勒索防护 + 主机防护 + 入侵检测均已接 ksec-bridge
 //   /api/host/policy/{ransome,file,invasion} + /api/host/logs/stream?module={ransome,file,invasion}
@@ -273,12 +318,36 @@ type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
 type MainTab = 'file' | 'ransome' | 'invasion';
 type FileSubTab = 'builtin' | 'fileprot' | 'procprot';
 type RansomeSubTab = 'decoy' | 'whitelist';
-type InvasionSubTab = 'rules' | 'wl-prog';
+type InvasionSubTab = 'rules' | 'wl-prog' | 'wl-file' | 'wl-ip';
 
 const HostHardeningPage: React.FC = () => {
   const [mainTab, setMainTab] = useState<MainTab>('file');
   const [toast, setToast] = useState<ToastState>(null);
   const fireToast = (message: string, kind: ToastKind = 'info') => setToast({ message, kind });
+
+  // bridge /agent/v1/status —— 驱动 hero 第 1 张卡（加固代理状态）
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [agentStatusErr, setAgentStatusErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchStatus = (): void => {
+      getStatus()
+        .then((s) => {
+          if (cancelled) return;
+          setAgentStatus(s);
+          setAgentStatusErr(null);
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setAgentStatusErr(err.message);
+        });
+    };
+    fetchStatus();
+    const id = setInterval(fetchStatus, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // === 主机防护 state（接 ksec-bridge）===
   const [serverFilePolicy, setServerFilePolicy] = useState<FilePolicy | null>(null);
@@ -529,6 +598,15 @@ const HostHardeningPage: React.FC = () => {
   const effectiveInvasion: InvasionPolicy = invasionDraft ?? serverInvasion ?? DEFAULT_INVASION_POLICY;
   const [invasionSub, setInvasionSub] = useState<InvasionSubTab>('rules');
   const [invasionLogs, setInvasionLogs] = useState<LogEntry[]>([]);
+  const [invasionExpanded, setInvasionExpanded] = useState<Set<string>>(new Set());
+  const toggleInvasionExpand = (key: string): void => {
+    setInvasionExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // === 入侵检测：load + SSE + setters + save ===
   useEffect(() => {
@@ -572,10 +650,49 @@ const HostHardeningPage: React.FC = () => {
     setInvasionDraft({ ...effectiveInvasion, ...next });
   };
   const invasionMaster = effectiveInvasion['switch-on'];
-  const wlProg = effectiveInvasion.programWhitelist;
-  const invasionRulesRO = effectiveInvasion.rules;
+  const wlProg = effectiveInvasion.whitelistProgram;
+  const wlFile = effectiveInvasion.whitelistFile;
+  const wlIP = effectiveInvasion.whitelistIP;
+  const enabledRuleNames = new Set(effectiveInvasion.enabledRuleNames);
+  const invasionRules = INVASION_RULES_META; // 17 条展示元数据
+  const enabledRulesCount = invasionRules.filter((r) => enabledRuleNames.has(r.ruleName)).length;
+
   const setInvasionMaster = (v: boolean): void => invasionPatch({ 'switch-on': v });
-  const setWlProg = (next: string[]): void => invasionPatch({ programWhitelist: next });
+  const toggleInvasionRule = (ruleName: string, on: boolean): void => {
+    const next = on
+      ? [...effectiveInvasion.enabledRuleNames, ruleName]
+      : effectiveInvasion.enabledRuleNames.filter((n) => n !== ruleName);
+    invasionPatch({ enabledRuleNames: Array.from(new Set(next)) });
+  };
+  const setWlProg = (next: string[]): void => invasionPatch({ whitelistProgram: next });
+  const setWlFile = (next: string[]): void => invasionPatch({ whitelistFile: next });
+  const setWlIP = (next: string[]): void => invasionPatch({ whitelistIP: next });
+
+  /**
+   * 构造完整 Falco YAML body —— ids-template.yaml 是 KSec 工作版镜像：
+   *
+   *   [3 个用户 whitelist 块]
+   *   + INVASION_PRISTINE_BODY 中所有非 rule 块（macro / 其他 list，原样保留）
+   *   + INVASION_PRISTINE_BODY 中按 enabledRuleNames 过滤后的 rule 块（原样保留）
+   *
+   * ids-template.yaml 已经是经 KSec 开发员验证、Falco 能正常 load 的版本——
+   * container.* 字段早已从模板里删干净，前端不再做任何字段净化。
+   */
+  const buildInvasionYmlBody = (pol: InvasionPolicy): unknown[] => {
+    const whitelistBlocks = [
+      { list: 'whitelist_program_path', items: pol.whitelistProgram },
+      { list: 'whitelist_file_path', items: pol.whitelistFile },
+      { list: 'whitelist_ip_address', items: pol.whitelistIP },
+    ];
+    const enabled = new Set(pol.enabledRuleNames);
+    const rest = INVASION_PRISTINE_BODY.filter((b) => {
+      if (b && typeof b === 'object' && 'rule' in b && typeof (b as { rule: unknown }).rule === 'string') {
+        return enabled.has((b as { rule: string }).rule);
+      }
+      return true; // macro / 其他 list 一律保留（出厂顺序）
+    });
+    return [...whitelistBlocks, ...rest];
+  };
 
   const saveInvasionPolicy = async (): Promise<void> => {
     if (!invasionDraft) return;
@@ -583,7 +700,8 @@ const HostHardeningPage: React.FC = () => {
     const isMasterFlip = invasionDraft['switch-on'] !== serverInvasion?.['switch-on'];
     fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
     try {
-      const res = await putInvasionPolicy(invasionDraft);
+      const ymlBody = buildInvasionYmlBody(invasionDraft);
+      const res = await putInvasionPolicy({ 'switch-on': invasionDraft['switch-on'], ymlBody });
       setServerInvasion(invasionDraft);
       setInvasionDraft(null);
       if (res.warning) fireToast(res.warning, 'warning');
@@ -594,6 +712,68 @@ const HostHardeningPage: React.FC = () => {
       setSavingInvasion(false);
     }
   };
+
+  // === Hero stat cards 派生 ===
+  const last24h = (logs: LogEntry[]): LogEntry[] => {
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    return logs.filter((l) => {
+      if (!l.time) return true; // time 缺失时保守保留
+      const t = Date.parse(l.time);
+      return Number.isNaN(t) ? true : t >= cutoff;
+    });
+  };
+
+  const fileLogs24 = last24h(fileLogs);
+  // KSec fileprotect.getActionForLog: kill → 进程拦截; 其他都算文件拦截
+  const fileKill = fileLogs24.filter((l) => l.operation === 'kill').length;
+  const fileFile = fileLogs24.length - fileKill;
+
+  const ransomLogs24 = last24h(liveLogs);
+  const ransomKill = ransomLogs24.filter((l) => (l.action ?? '').toUpperCase() === 'KILL').length;
+  const ransomBlock = ransomLogs24.length - ransomKill;
+
+  const invasionLogs24 = last24h(invasionLogs);
+  // 用 ruleName → type 映射对入侵告警归类（INVASION_TEMPLATE.rules 已含 type）
+  const ruleNameToType = new Map(invasionRules.map((r) => [r.ruleName, r.type]));
+  const invasionByType = new Map<string, number>();
+  for (const log of invasionLogs24) {
+    if (typeof log.rule === 'string') {
+      const t = ruleNameToType.get(log.rule) ?? '其他';
+      invasionByType.set(t, (invasionByType.get(t) ?? 0) + 1);
+    }
+  }
+  const invasionTopTypes = [...invasionByType.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([t, n]) => `${t} ${n}`)
+    .join(' · ');
+
+  // 第 1 张卡：加固代理 (bridge) 状态
+  const agentStatusView = ((): { value: string; tone: 'green' | 'orange' | 'red'; sub: string } => {
+    if (agentStatusErr) {
+      return { value: '离线', tone: 'red', sub: `bridge 不可达：${agentStatusErr.slice(0, 28)}` };
+    }
+    if (!agentStatus) {
+      return { value: '加载中', tone: 'orange', sub: '查询 ksec-bridge…' };
+    }
+    if (agentStatus.ready) {
+      return {
+        value: '就绪',
+        tone: 'green',
+        sub: agentStatus.ksecDaemonRunning ? 'KSec 守护进程运行中' : 'bridge 已就绪',
+      };
+    }
+    const issues: string[] = [];
+    if (!agentStatus.ksecDaemonRunning) issues.push('KSec 未运行');
+    if (!agentStatus.ksecBinOK) issues.push('KSec 二进制缺失');
+    if (!agentStatus.policyDirOK) issues.push('策略目录异常');
+    if (!agentStatus.logDirOK) issues.push('日志目录异常');
+    return {
+      value: '未就绪',
+      tone: 'orange',
+      sub: issues.length > 0 ? issues.join(' · ') : '部分组件未就绪',
+    };
+  })();
 
   // Modal state
   type ModalState =
@@ -628,23 +808,29 @@ const HostHardeningPage: React.FC = () => {
           <div className="grid grid-cols-4 gap-3">
             <div className="stat-card">
               <div className="stat-card-label">加固代理状态</div>
-              <div className="stat-card-value tone-green">就绪</div>
-              <div className="stat-card-sub muted-strong">连接正常 · 策略已下发</div>
+              <div className={`stat-card-value tone-${agentStatusView.tone}`}>{agentStatusView.value}</div>
+              <div className="stat-card-sub muted-strong">{agentStatusView.sub}</div>
             </div>
             <div className="stat-card">
               <div className="stat-card-label">24h 主机防护告警</div>
-              <div className="stat-card-value tone-red">5</div>
-              <div className="stat-card-sub muted-strong">文件拦截 4 · 进程拦截 1</div>
+              <div className={`stat-card-value tone-${fileLogs24.length > 0 ? 'red' : 'green'}`}>{fileLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {fileLogs24.length === 0 ? '近 24h 无拦截记录' : `文件拦截 ${fileFile} · 进程拦截 ${fileKill}`}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-card-label">24h 勒索防护告警</div>
-              <div className="stat-card-value tone-red">3</div>
-              <div className="stat-card-sub muted-strong">诱饵触发 + 终止进程</div>
+              <div className={`stat-card-value tone-${ransomLogs24.length > 0 ? 'red' : 'green'}`}>{ransomLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {ransomLogs24.length === 0 ? '近 24h 无拦截记录' : `阻断 ${ransomBlock} · 终止 ${ransomKill}`}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-card-label">24h 入侵检测告警</div>
-              <div className="stat-card-value tone-red">3</div>
-              <div className="stat-card-sub muted-strong">本地提权 2 · 反弹shell 1</div>
+              <div className={`stat-card-value tone-${invasionLogs24.length > 0 ? 'red' : 'green'}`}>{invasionLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {invasionLogs24.length === 0 ? '近 24h 无入侵告警' : (invasionTopTypes || `共 ${invasionLogs24.length} 起`)}
+              </div>
             </div>
           </div>
         </div>
@@ -719,8 +905,7 @@ const HostHardeningPage: React.FC = () => {
               <>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs muted">
-                    共 {builtinTemplate.length} 条出厂内置防护规则。可逐条启停——
-                    关闭的规则不会写入 ac.yaml，KSec 也不会下发。
+                    共 {builtinTemplate.length} 条出厂内置防护规则。可逐条启停。
                   </span>
                   <label className="flex items-center gap-2 text-xs muted-strong cursor-pointer">
                     <span>预定义规则总开关</span>
@@ -1107,11 +1292,11 @@ const HostHardeningPage: React.FC = () => {
                   )}
                   {liveLogs.map((entry, i) => {
                     // 勒索防护日志的 action 只有 BLOCK / KILL 两种：
-                    //   KILL  → 进程已被终止 → 是 (红)
-                    //   BLOCK → 仅拦截未终止 → 否 (橙)
+                    //   KILL  → 进程已被终止 → 终止 (红)
+                    //   BLOCK → 仅拦截未终止 → 阻断 (橙)
                     const a = (entry.action ?? '').toUpperCase();
                     const killed = a === 'KILL';
-                    const label = a === 'KILL' ? '是' : a === 'BLOCK' ? '否' : (entry.action ?? '-');
+                    const label = a === 'KILL' ? '终止' : a === 'BLOCK' ? '阻断' : (entry.action ?? '-');
                     return (
                       <tr key={i}>
                         <td><span className="text-xs muted-strong font-mono">{entry.time ?? '-'}</span></td>
@@ -1151,33 +1336,34 @@ const HostHardeningPage: React.FC = () => {
             </div>
             <div className="text-xs muted mb-4">
               基于 ATT&amp;CK 框架中的入侵模型，实时监控运行时基础事件并通过入侵引擎判决来识别入侵行为。
-              内置规则由 KSec ids.yaml 提供（只读），用户可维护程序白名单。
+              逐条启停 17 项内置规则，并维护程序 / 文件 / IP 三类白名单。
             </div>
 
-            {/* Sub-tabs（文件白名单 / IP 白名单已下线 — 等 KSec 后续提供字段） */}
+            {/* Sub-tabs — 与 KSecGUI Invasion.vue 对齐 */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${invasionSub === 'rules' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('rules')}>
-                检测规则 ({invasionRulesRO.length})
+                检测规则 {enabledRulesCount}/{invasionRules.length}
               </button>
               <button className={`tab${invasionSub === 'wl-prog' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-prog')}>
-                程序白名单 ({wlProg.length})
+                白名单程序 ({wlProg.length})
+              </button>
+              <button className={`tab${invasionSub === 'wl-file' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-file')}>
+                白名单文件 ({wlFile.length})
+              </button>
+              <button className={`tab${invasionSub === 'wl-ip' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-ip')}>
+                白名单IP ({wlIP.length})
               </button>
             </div>
 
             {invasionSub === 'rules' && (
               <>
                 <div className="text-xs muted mb-3">
-                  共 {invasionRulesRO.length} 项检测规则（来自 ids.yaml）。这部分由 KSec 引擎维护，UI 只读展示，无法在前端启停单条规则。
+                  共 {invasionRules.length} 项内置检测规则，按 ATT&amp;CK 战术分类。可逐项启用/禁用。
                 </div>
                 <div className="space-y-2" style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 6 }}>
-                  {invasionRulesRO.length === 0 && (
-                    <div className="text-xs muted" style={{ textAlign: 'center', padding: 24 }}>
-                      KSec 未返回检测规则——确认 ids.yaml 已加载或总开关已开
-                    </div>
-                  )}
-                  {invasionRulesRO.map((r, i) => (
+                  {invasionRules.map((r) => (
                     <div
-                      key={i}
+                      key={r.ruleName}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -1189,10 +1375,16 @@ const HostHardeningPage: React.FC = () => {
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="text-sm font-semibold text-[#171212]">{r.name}</div>
-                        {r.desc && <div className="text-xs muted mt-0.5">{r.desc}</div>}
+                        <div className="flex items-center gap-2">
+                          <span className="badge badge-slate text-[10px]">{r.type}</span>
+                          <span className="text-sm font-semibold text-[#171212]">{r.name}</span>
+                        </div>
+                        <div className="text-xs muted mt-1">{r.desc}</div>
                       </div>
-                      <span className="badge badge-slate text-[10px]">只读</span>
+                      <Toggle
+                        on={enabledRuleNames.has(r.ruleName)}
+                        onChange={(v) => { toggleInvasionRule(r.ruleName, v); }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1201,15 +1393,22 @@ const HostHardeningPage: React.FC = () => {
 
             {invasionSub === 'wl-prog' && (
               <WhitelistTable
-                desc="白名单程序在触发规则时不会被判定为入侵行为（持久化到 ids.yaml 的 whitelist_program_path）。"
+                desc="白名单程序在触发规则时不会被判定为入侵行为，最多 20 条。"
                 items={wlProg.map((v) => ({ value: v, desc: '' }))}
                 onAdd={() =>
                   setModal({
                     kind: 'batch-path',
                     title: '添加白名单程序',
-                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 200 条',
+                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 20 条',
                     onConfirm: (lines) => {
-                      setWlProg([...wlProg, ...lines].slice(0, 200));
+                      const { ok, bad } = validateInvasionEntries(lines, 'path');
+                      if (bad.length > 0) {
+                        fireToast(`格式错误已忽略：${bad.slice(0, 3).join('、')}${bad.length > 3 ? '…' : ''}`, 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlProg, ok, 20);
+                      if (next.dropped > 0) fireToast(`超过 20 条上限，丢弃 ${next.dropped} 条`, 'warning');
+                      setWlProg(next.merged);
                       closeModal();
                       fireToast('已添加白名单程序', 'success');
                     },
@@ -1223,7 +1422,70 @@ const HostHardeningPage: React.FC = () => {
               />
             )}
 
-            {/* 入侵检测日志 — SSE 实时推流，源 = /opt/KSec/log/idsres.log */}
+            {invasionSub === 'wl-file' && (
+              <WhitelistTable
+                desc="白名单文件操作不会触发入侵告警，最多 20 条。"
+                items={wlFile.map((v) => ({ value: v, desc: '' }))}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单文件',
+                    placeholder: '支持输入单条/多条文件路径，每行填写一条，最多支持 20 条',
+                    onConfirm: (lines) => {
+                      const { ok, bad } = validateInvasionEntries(lines, 'path');
+                      if (bad.length > 0) {
+                        fireToast(`格式错误已忽略：${bad.slice(0, 3).join('、')}${bad.length > 3 ? '…' : ''}`, 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlFile, ok, 20);
+                      if (next.dropped > 0) fireToast(`超过 20 条上限，丢弃 ${next.dropped} 条`, 'warning');
+                      setWlFile(next.merged);
+                      closeModal();
+                      fireToast('已添加白名单文件', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlFile(wlFile.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="文件路径"
+              />
+            )}
+
+            {invasionSub === 'wl-ip' && (
+              <WhitelistTable
+                desc="来自白名单 IP 的访问不会被判定为入侵，最多 20 条。Falco 仅支持单 IPv4 字面量，不支持 CIDR。"
+                items={wlIP.map((v) => ({ value: v, desc: '' }))}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单 IP',
+                    placeholder: '每行一条 IPv4 字面量（如 10.0.0.5），最多 20 条；不支持 CIDR',
+                    onConfirm: (lines) => {
+                      const { ok, bad } = validateInvasionEntries(lines, 'ip');
+                      if (bad.length > 0) {
+                        fireToast(`非法 IP 已忽略：${bad.slice(0, 3).join('、')}${bad.length > 3 ? '…' : ''}（仅接受单 IPv4，不支持 CIDR）`, 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlIP, ok, 20);
+                      if (next.dropped > 0) fireToast(`超过 20 条上限，丢弃 ${next.dropped} 条`, 'warning');
+                      setWlIP(next.merged);
+                      closeModal();
+                      fireToast('已添加白名单 IP', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlIP(wlIP.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="IPv4 地址"
+              />
+            )}
+
+            {/* 入侵检测日志 — SSE 实时推流，源 = /opt/KSec/log/intrusion_detection.log
+                展示方式参考 KSecGUI/components/InvasionLog.vue */}
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold text-[#171212] text-sm">入侵检测日志</h4>
@@ -1233,28 +1495,71 @@ const HostHardeningPage: React.FC = () => {
                 <thead>
                   <tr>
                     <th style={{ width: 160 }}>时间</th>
-                    <th style={{ width: 200 }}>规则</th>
-                    <th>进程</th>
-                    <th>详情</th>
+                    <th style={{ width: 130 }}>类别</th>
+                    <th style={{ width: 200 }}>进程</th>
+                    <th style={{ width: 100 }}>进程用户</th>
+                    <th>描述</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {invasionLogs.length === 0 && (
-                    <tr><td colSpan={4} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无入侵检测日志</td></tr>
-                  )}
-                  {invasionLogs.map((row, i) => {
-                    const of = row.output_fields ?? {};
-                    const cmdline = typeof of['proc.cmdline'] === 'string' ? (of['proc.cmdline'] as string) : '';
-                    const fdName = typeof of['fd.name'] === 'string' ? (of['fd.name'] as string) : '';
-                    return (
-                      <tr key={i}>
-                        <td><span className="text-xs muted-strong font-mono">{row.time ?? '-'}</span></td>
-                        <td><span className="badge badge-red text-[10px]">{row.rule ?? '-'}</span></td>
-                        <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
-                        <td><span className="text-xs muted">{cmdline || fdName || row.raw.slice(0, 80)}</span></td>
-                      </tr>
-                    );
-                  })}
+                  {(() => {
+                    const rows: InvasionLogRow[] = invasionLogs
+                      .map((entry, idx) => enrichInvasionLog(entry as unknown as { time?: string; rule?: string; output_fields?: Record<string, unknown> }, idx))
+                      .filter((r): r is InvasionLogRow => r !== null);
+                    if (rows.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={5} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>
+                            暂无入侵检测日志
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return rows.flatMap((row) => {
+                      const isOpen = invasionExpanded.has(row.key);
+                      return [
+                        <tr key={row.key}>
+                          <td><span className="text-xs muted-strong font-mono">{row.time}</span></td>
+                          <td><span className="badge badge-red text-[10px]">{row.ruleType}</span></td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => toggleInvasionExpand(row.key)}
+                              title={row.source}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 0,
+                                cursor: 'pointer',
+                                color: '#0070e0',
+                                fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace',
+                                fontSize: 12,
+                                maxWidth: 180,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.source}</span>
+                              <span aria-hidden style={{ fontSize: 9 }}>{isOpen ? '▲' : '▼'}</span>
+                            </button>
+                          </td>
+                          <td><span className="text-xs">{row.user}</span></td>
+                          <td><span className="text-xs">{row.desc}</span></td>
+                        </tr>,
+                        isOpen ? (
+                          <tr key={`${row.key}-chain`}>
+                            <td colSpan={5} style={{ background: '#fafafa' }}>
+                              <span className="text-xs muted" title={row.processChain}>{row.processChain}</span>
+                            </td>
+                          </tr>
+                        ) : null,
+                      ];
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

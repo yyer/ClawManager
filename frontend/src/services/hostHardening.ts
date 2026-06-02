@@ -65,12 +65,20 @@ export async function getInvasionPolicy(): Promise<InvasionPolicy> {
   return jsonOrThrow(await fetch(`${base}/policy/invasion`));
 }
 
-export async function putInvasionPolicy(pol: InvasionPolicy): Promise<PutResult> {
+/**
+ * PUT /policy/invasion — 与 KSecGUI Invasion.vue setPolicy() 对齐：
+ * 前端用 invasionPolicy.ts 模板 + 当前 state 构造完整 Falco YAML body 后发送，
+ * 后端 yaml.dump 整文件落盘到 /opt/KSec/policy/ids.yaml。
+ */
+export async function putInvasionPolicy(payload: {
+  'switch-on': boolean;
+  ymlBody: unknown[];
+}): Promise<PutResult> {
   return jsonOrThrow<PutResult>(
     await fetch(`${base}/policy/invasion`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pol),
+      body: JSON.stringify(payload),
     }),
   );
 }
