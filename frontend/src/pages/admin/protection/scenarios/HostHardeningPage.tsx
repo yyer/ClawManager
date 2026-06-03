@@ -1336,7 +1336,7 @@ const HostHardeningPage: React.FC = () => {
             </div>
             <div className="text-xs muted mb-4">
               基于 ATT&amp;CK 框架中的入侵模型，实时监控运行时基础事件并通过入侵引擎判决来识别入侵行为。
-              逐条启停 17 项内置规则，并维护程序 / 文件 / IP 三类白名单。
+              逐条启停 17 项内置规则，并维护程序白名单。
             </div>
 
             {/* Sub-tabs — 与 KSecGUI Invasion.vue 对齐 */}
@@ -1347,12 +1347,7 @@ const HostHardeningPage: React.FC = () => {
               <button className={`tab${invasionSub === 'wl-prog' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-prog')}>
                 白名单程序 ({wlProg.length})
               </button>
-              <button className={`tab${invasionSub === 'wl-file' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-file')}>
-                白名单文件 ({wlFile.length})
-              </button>
-              <button className={`tab${invasionSub === 'wl-ip' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-ip')}>
-                白名单IP ({wlIP.length})
-              </button>
+              {/* 白名单文件 / 白名单IP 暂时下线（路由 + 保存逻辑保留，将来恢复只需删本注释） */}
             </div>
 
             {invasionSub === 'rules' && (
@@ -1489,7 +1484,7 @@ const HostHardeningPage: React.FC = () => {
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold text-[#171212] text-sm">入侵检测日志</h4>
-                <span className="text-xs muted">实时推流，最近 200 条</span>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
               </div>
               <table className="tbl">
                 <thead>
