@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
 import {
+  getBaselinePolicy,
+  getBaselineStatus,
   getFilePolicy,
   getInvasionPolicy,
   getLogs,
@@ -11,12 +13,18 @@ import {
   putFilePolicy,
   putInvasionPolicy,
   putRansomPolicy,
+  repairBaseline,
+  resetBaseline,
+  rollbackBaseline,
+  scanBaseline,
 } from '../../../../services/hostHardening';
 import {
   DEFAULT_FILE_POLICY,
   DEFAULT_INVASION_POLICY,
   DEFAULT_RANSOM_POLICY,
   type AgentStatus,
+  type BaselineCategory,
+  type BaselineReport,
   type FilePolicy,
   type FileRule as ServerFileRule,
   type InvasionPolicy,
@@ -315,7 +323,54 @@ function mergeUnique(prev: string[], lines: string[], max: number): { merged: st
 // 主页
 // ===========================
 
-type MainTab = 'file' | 'ransome' | 'invasion';
+type MainTab = 'file' | 'ransome' | 'invasion' | 'baseline';
+
+// ===== 合规检测 / CIS baseline（与 KSecGUI/components/Compliance.vue 对齐） =====
+// 注：KSec 实际扫的 ID 集合由 bridge 读 /opt/KSec/compliance/template/basic 得到，
+// 前端不再硬编码白名单。getBaselinePolicy() 返回的就已经是过滤后的 29 条（Ubuntu 适配）。
+
+/** UI 侧状态机；KSecGUI 同名（roolbacking 是上游拼写笔误，沿用以便对照） */
+type BaselineUiStatus =
+  | 'home'
+  | 'scanning'
+  | 'scanned'
+  | 'repairing'
+  | 'repaired'
+  | 'roolbacking'
+  | 'rollbacked';
+
+/** repair / rollback 结果的中文显示 */
+function baselineResultLabel(
+  result: string,
+  phase: 'scanned' | 'repaired' | 'rollbacked',
+): { text: string; color: string } {
+  // 「未检测」在不同 phase 下展示不同：
+  //   - scanned    : 未检测（用户没勾这个大类）
+  //   - repaired   : 安全（修复完成阶段把未触及/原本就合规的项视为安全）
+  //   - rollbacked : -（回滚阶段未触及的项不展示状态文本）
+  if (result === 'uncheck') {
+    if (phase === 'repaired') return { text: '安全', color: '#00c63c' };
+    if (phase === 'rollbacked') return { text: '-', color: '#6b7280' };
+    return { text: '未检测', color: '#989cb2' };
+  }
+  if (phase === 'scanned') {
+    if (result === 'success' || result === 'security') return { text: '安全', color: '#00c63c' };
+    return { text: '有风险', color: '#ff830c' };
+  }
+  if (phase === 'repaired') {
+    if (result === 'security') return { text: '安全', color: '#00c63c' };
+    if (result === 'success') return { text: '已修复', color: '#0da3df' };
+    if (result === 'fail') return { text: '修复失败', color: '#ff830c' };
+    if (result === '不支持') return { text: '需手动修复', color: '#6b7280' };
+    return { text: result, color: '#6b7280' };
+  }
+  // rollbacked
+  if (result === 'security') return { text: '-', color: '#6b7280' };
+  if (result === 'success') return { text: '已回滚', color: '#0da3df' };
+  if (result === 'fail') return { text: '回滚失败', color: '#ff830c' };
+  if (result === '不支持') return { text: '不支持', color: '#6b7280' };
+  return { text: result, color: '#6b7280' };
+}
 type FileSubTab = 'builtin' | 'fileprot' | 'procprot';
 type RansomeSubTab = 'decoy' | 'whitelist';
 type InvasionSubTab = 'rules' | 'wl-prog' | 'wl-file' | 'wl-ip';
@@ -608,6 +663,114 @@ const HostHardeningPage: React.FC = () => {
     });
   };
 
+  // === 合规检测 state（接 ksec-bridge baseline 路由）===
+  const [baselineStatus, setBaselineStatus] = useState<BaselineUiStatus>('home');
+  const [baselineCats, setBaselineCats] = useState<BaselineCategory[]>([]);
+  const [baselineReport, setBaselineReport] = useState<BaselineReport | null>(null);
+  const [baselineScannedIds, setBaselineScannedIds] = useState<Set<string>>(new Set());
+  /** home 状态下勾选的大类（type 名集合）。其他状态下无意义。 */
+  const [baselineChecked, setBaselineChecked] = useState<Set<string>>(new Set());
+  const [baselineExpanded, setBaselineExpanded] = useState<Set<string>>(new Set());
+  const toggleBaselineExpand = (catType: string): void => {
+    setBaselineExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(catType)) next.delete(catType);
+      else next.add(catType);
+      return next;
+    });
+  };
+  const toggleBaselineChecked = (catType: string): void => {
+    setBaselineChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(catType)) next.delete(catType);
+      else next.add(catType);
+      return next;
+    });
+  };
+
+  /** 初次加载策略 + 状态。Tab 切到 baseline 时也再拉一次，保持新鲜。
+   *  bridge 已按 `/opt/KSec/compliance/template/basic` 过滤好 29 条，前端零硬编码。 */
+  const refreshBaseline = async (): Promise<void> => {
+    try {
+      const [cats, st] = await Promise.all([getBaselinePolicy(), getBaselineStatus()]);
+      setBaselineCats(cats);
+      // 首次默认勾全部大类（KSecGUI 行为）
+      setBaselineChecked((prev) => (prev.size === 0 ? new Set(cats.map((c) => c.type)) : prev));
+      setBaselineStatus(st.status);
+      setBaselineReport(st.report ?? null);
+      setBaselineScannedIds(new Set(st.scannedItemIds ?? []));
+    } catch (err) {
+      fireToast(`加载合规策略失败：${(err as Error).message}`, 'warning');
+    }
+  };
+
+  useEffect(() => {
+    void refreshBaseline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (mainTab === 'baseline') void refreshBaseline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
+
+  /** 当前各 detail 的 id → BaselineDetail 索引（O(1) lookup） */
+  const baselineDetailMap = new Map(
+    (baselineReport?.details ?? []).map((d) => [d.id, d]),
+  );
+
+  // ====== 合规检测动作 ======
+  const runBaselineScan = async (): Promise<void> => {
+    const ids: string[] = [];
+    for (const c of baselineCats) {
+      if (!baselineChecked.has(c.type)) continue;
+      for (const it of c.items) ids.push(it.id);
+    }
+    if (ids.length === 0) {
+      fireToast('请至少勾选一个大类后再检测', 'warning');
+      return;
+    }
+    setBaselineStatus('scanning');
+    try {
+      await scanBaseline(ids);
+      await refreshBaseline();
+      fireToast('合规检测完成', 'success');
+    } catch (err) {
+      fireToast(`合规检测失败：${(err as Error).message}`, 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineRepair = async (): Promise<void> => {
+    setBaselineStatus('repairing');
+    try {
+      await repairBaseline();
+      await refreshBaseline();
+      fireToast('风险项修复完成', 'success');
+    } catch (err) {
+      fireToast(`风险项修复失败：${(err as Error).message}`, 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineRollback = async (): Promise<void> => {
+    setBaselineStatus('roolbacking');
+    try {
+      await rollbackBaseline();
+      await refreshBaseline();
+      fireToast('修复项回滚成功', 'success');
+    } catch (err) {
+      fireToast(`修复项回滚失败：${(err as Error).message}`, 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineReset = async (): Promise<void> => {
+    try {
+      await resetBaseline();
+      await refreshBaseline();
+    } catch (err) {
+      fireToast(`重置失败：${(err as Error).message}`, 'warning');
+    }
+  };
+
   // === 入侵检测：load + SSE + setters + save ===
   useEffect(() => {
     let cancelled = false;
@@ -841,6 +1004,7 @@ const HostHardeningPage: React.FC = () => {
             <button className={`tab${mainTab === 'file' ? ' tab-active' : ''}`} onClick={() => setMainTab('file')}>主机防护</button>
             <button className={`tab${mainTab === 'ransome' ? ' tab-active' : ''}`} onClick={() => setMainTab('ransome')}>勒索防护</button>
             <button className={`tab${mainTab === 'invasion' ? ' tab-active' : ''}`} onClick={() => setMainTab('invasion')}>入侵检测</button>
+            <button className={`tab${mainTab === 'baseline' ? ' tab-active' : ''}`} onClick={() => setMainTab('baseline')}>合规检测</button>
           </div>
         </div>
 
@@ -1560,6 +1724,227 @@ const HostHardeningPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* ===== 合规检测 / CIS 基线（mock 矩阵；待接 KSec baseline 模块）===== */}
+        {mainTab === 'baseline' && (() => {
+          const isInProgress = baselineStatus === 'scanning' || baselineStatus === 'repairing' || baselineStatus === 'roolbacking';
+          const phase: 'scanned' | 'repaired' | 'rollbacked' | null =
+            baselineStatus === 'scanned' ? 'scanned' :
+            baselineStatus === 'repaired' ? 'repaired' :
+            baselineStatus === 'rollbacked' ? 'rollbacked' : null;
+          const ov = baselineReport?.overview ?? {};
+          return (
+            <div className="panel">
+              {/* Hero: 头部状态卡 */}
+              <div
+                className="flex items-start justify-between mb-4"
+                style={{ padding: 16, background: '#fdf6f1', border: '1px solid #eadfd8', borderRadius: 10 }}
+              >
+                <div className="flex-1">
+                  <div className="eyebrow">合规检测 · CIS 基线</div>
+                  {baselineStatus === 'home' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">合规性检测</h3>
+                      <div className="text-xs muted mt-1">
+                        通过对操作系统的配置进行检测和修复，提高系统的安全性和合规性。
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'scanned' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">
+                        合规性检测完成，发现
+                        <span style={{ color: Number(ov['不通过项']) === 0 ? '#00c63c' : '#ff830c', fontWeight: 700, margin: '0 4px' }}>
+                          {ov['不通过项'] ?? 0}
+                        </span>
+                        项风险
+                      </h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['检测时间'] && <span className="font-mono muted-strong mr-3">{ov['检测时间']}</span>}
+                        最近一次检测 <span style={{ color: '#0070e0', fontWeight: 700 }}>{ov['总检测项'] ?? 0}</span> 项
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'repaired' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">风险项已修复完成</h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['修复时间'] && <span className="font-mono muted-strong mr-3">{ov['修复时间']}</span>}
+                        修复成功 <span style={{ color: '#0070e0', fontWeight: 700 }}>{ov['成功项'] ?? 0}</span> 项
+                        ，失败 <span style={{ color: Number(ov['失败项']) === 0 ? '#00c63c' : '#ff830c', fontWeight: 700 }}>{ov['失败项'] ?? 0}</span> 项
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'rollbacked' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">修复项回滚完成</h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['回滚时间'] && <span className="font-mono muted-strong mr-3">{ov['回滚时间']}</span>}
+                        回滚成功 <span style={{ color: '#0070e0', fontWeight: 700 }}>{ov['成功项'] ?? 0}</span> 项
+                        ，失败 <span style={{ color: Number(ov['失败项']) === 0 ? '#00c63c' : '#ff830c', fontWeight: 700 }}>{ov['失败项'] ?? 0}</span> 项
+                      </div>
+                    </>
+                  )}
+                  {isInProgress && (
+                    <>
+                      <h3 className="section-title-lg mt-1 flex items-center gap-2">
+                        <Spinner size={16} />
+                        {baselineStatus === 'scanning' && '正在合规检测中…'}
+                        {baselineStatus === 'repairing' && '风险项正在修复中…'}
+                        {baselineStatus === 'roolbacking' && '修复项正在回滚中…'}
+                      </h3>
+                      <div className="text-xs muted mt-1">KSec 后端执行中，可能需要 10-60 秒</div>
+                    </>
+                  )}
+                </div>
+                {!isInProgress && (
+                  <div className="flex items-center gap-2">
+                    {baselineStatus === 'home' && (
+                      <button
+                        className="btn-primary btn-sm"
+                        disabled={baselineChecked.size === 0}
+                        onClick={() => void runBaselineScan()}
+                      >立即检测</button>
+                    )}
+                    {baselineStatus === 'scanned' && (
+                      <>
+                        <button className="btn-secondary btn-sm" onClick={() => void runBaselineReset()}>重新检测</button>
+                        <button className="btn-primary btn-sm" onClick={() => void runBaselineRepair()}>立即修复</button>
+                      </>
+                    )}
+                    {baselineStatus === 'repaired' && (
+                      <>
+                        <button className="btn-secondary btn-sm" onClick={() => void runBaselineRollback()}>回滚修复</button>
+                        <button className="btn-primary btn-sm" onClick={() => void runBaselineReset()}>重新检测</button>
+                      </>
+                    )}
+                    {baselineStatus === 'rollbacked' && (
+                      <button className="btn-primary btn-sm" onClick={() => void runBaselineReset()}>重新检测</button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 5 大类列表 */}
+              {baselineCats.length === 0 && (
+                <div className="text-xs muted text-center" style={{ padding: 32 }}>
+                  KSec 未返回基线策略——确认 /opt/KSec/policy/baseline.yaml 已加载
+                </div>
+              )}
+              <div className="space-y-3">
+                {baselineCats.map((cat) => {
+                  const catScanned = cat.items.some((it) => baselineScannedIds.has(it.id));
+                  let successNum = 0;
+                  let failNum = 0;
+                  if (phase && catScanned) {
+                    for (const it of cat.items) {
+                      const d = baselineDetailMap.get(it.id);
+                      if (!d) continue;
+                      if (d.result === 'success') successNum++;
+                      else if (d.result === 'fail' || d.result === '不支持') failNum++;
+                    }
+                  }
+                  const isOpen = baselineExpanded.has(cat.type);
+                  return (
+                    <div key={cat.type} style={{ border: '1px solid #eadfd8', borderRadius: 10, background: 'white' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 12,
+                          padding: '12px 16px',
+                        }}
+                      >
+                        {baselineStatus === 'home' && (
+                          <input
+                            type="checkbox"
+                            checked={baselineChecked.has(cat.type)}
+                            onChange={() => toggleBaselineChecked(cat.type)}
+                            style={{ accentColor: '#dc2626' }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="text-sm font-semibold text-[#171212]">{cat.type}</div>
+                          <div className="text-xs muted mt-0.5">{cat.description}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleBaselineExpand(cat.type)}
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            fontSize: 12, color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 6,
+                          }}
+                        >
+                          {baselineStatus === 'home' && <span>{cat.items.length} 项</span>}
+                          {phase && catScanned && (
+                            <span>
+                              {phase === 'scanned' ? (
+                                <>{cat.items.length} 项，风险 <span style={{ color: failNum === 0 ? '#00c63c' : '#ff830c', fontWeight: 700 }}>{failNum}</span> 项</>
+                              ) : (
+                                <>成功 <span style={{ color: '#0070e0', fontWeight: 700 }}>{successNum}</span> 项{failNum > 0 && <>，失败 <span style={{ color: '#ff830c', fontWeight: 700 }}>{failNum}</span> 项</>}</>
+                              )}
+                            </span>
+                          )}
+                          {phase && !catScanned && (
+                            <span>{cat.items.length} 项，<span style={{ color: '#989cb2' }}>未检测</span></span>
+                          )}
+                          <span aria-hidden style={{ fontSize: 10 }}>{isOpen ? '▲' : '▼'}</span>
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div style={{ borderTop: '1px solid #eadfd8' }}>
+                          <table className="tbl" style={{ margin: 0 }}>
+                            <thead style={{ background: '#fdfaf7' }}>
+                              <tr>
+                                <th>检测项</th>
+                                {!phase && <th style={{ width: 180 }}>基线值</th>}
+                                {phase === 'scanned' && (<><th style={{ width: 150 }}>基线值</th><th style={{ width: 150 }}>实际值</th><th style={{ width: 100 }}>检测结果</th></>)}
+                                {phase === 'repaired' && (<><th style={{ width: 150 }}>修复前</th><th style={{ width: 150 }}>修复后</th><th style={{ width: 100 }}>修复结果</th></>)}
+                                {phase === 'rollbacked' && (<><th style={{ width: 150 }}>回滚前</th><th style={{ width: 150 }}>回滚后</th><th style={{ width: 100 }}>回滚结果</th></>)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cat.items.map((it) => {
+                                const d = phase ? baselineDetailMap.get(it.id) : undefined;
+                                const before = d?.before ?? '-';
+                                const after = d?.after ?? '-';
+                                const result = catScanned ? (d?.result ?? (phase === 'scanned' ? 'security' : 'uncheck')) : 'uncheck';
+                                const label = phase ? baselineResultLabel(result, phase) : null;
+                                const valStr = String(it.value === true ? 'true' : it.value);
+                                return (
+                                  <tr key={it.id}>
+                                    <td>
+                                      <div className="text-sm text-[#171212]">{it.name}</div>
+                                      {it.desp && <div className="text-xs muted" style={{ marginTop: 2 }}>{it.desp}</div>}
+                                    </td>
+                                    {!phase && (
+                                      <td>
+                                        <span title={it.remark ?? ''} style={{ borderBottom: it.remark ? '1px dashed #999' : 'none' }}>
+                                          {valStr === '-1' && it.remark ? `${valStr} ⓘ` : valStr}
+                                        </span>
+                                      </td>
+                                    )}
+                                    {phase && (
+                                      <>
+                                        <td><code className="text-xs font-mono">{before === ',' || !before ? '-' : before}</code></td>
+                                        <td><code className="text-xs font-mono">{after === ',' || !after ? '-' : after}</code></td>
+                                        <td><span style={{ color: label?.color }} className="text-xs">{label?.text ?? '-'}</span></td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ===== Modals ===== */}
         {modal?.kind === 'batch-path' && (

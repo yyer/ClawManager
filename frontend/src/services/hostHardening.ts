@@ -1,5 +1,7 @@
 import type {
   AgentStatus,
+  BaselineCategory,
+  BaselineStatus,
   FilePolicy,
   InvasionPolicy,
   LogEntry,
@@ -94,4 +96,43 @@ export async function getLogs(module: string, limit = 50): Promise<LogEntry[]> {
 /** Open an EventSource on `/api/host/logs/stream`. Caller must `close()` on unmount. */
 export function openLogStream(module: string): EventSource {
   return new EventSource(`${base}/logs/stream?module=${encodeURIComponent(module)}`);
+}
+
+// ===== 合规检测 (CIS baseline) =====
+
+export async function getBaselinePolicy(): Promise<BaselineCategory[]> {
+  return jsonOrThrow(await fetch(`${base}/policy/baseline`));
+}
+
+export async function getBaselineStatus(): Promise<BaselineStatus> {
+  return jsonOrThrow(await fetch(`${base}/baseline/status`));
+}
+
+export async function scanBaseline(itemIds: string[]): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemIds }),
+    }),
+  );
+}
+
+export async function repairBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/repair`, { method: 'POST' }),
+  );
+}
+
+export async function rollbackBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/rollback`, { method: 'POST' }),
+  );
+}
+
+/** 把状态机重置回 'home'（清空 /opt/KSec/compliance/log），用于"重新检测" */
+export async function resetBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/reset`, { method: 'POST' }),
+  );
 }
