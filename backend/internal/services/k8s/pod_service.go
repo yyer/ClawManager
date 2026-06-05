@@ -37,6 +37,53 @@ func NewPodService() *PodService {
 	}
 }
 
+// podPostStartScript is the postStart hook body that bridges secplane's
+// install_skill dispatch to the in-pod plugin loader.
+//
+// install_skill drops the policy-derived plugin zip in
+// /config/.openclaw/workspace/skills/<name>/, but OpenClaw only loads plugins
+// from /config/.openclaw/extensions/. Without a bridge, dispatch silently
+// succeeds but the plugin never runs. /var/run is tmpfs, so the hook re-runs
+// on every pod start — this is the source of truth, not the image.
+//
+// The hook spawns a background poll loop (every 5s) that mirrors any
+// workspace skill newer than its extensions/ counterpart, then kills
+// openclaw-agent so s6-supervise respawns it and picks up the new plugin.
+// setsid -f double-forks the daemon so kubelet's postStart exec termination
+// doesn't take it down.
+const podPostStartScript = `
+set +e
+mkdir -p /config/.openclaw/extensions 2>/dev/null
+cat > /usr/local/bin/openclaw-skill-sync.sh <<'SYNC_EOF'
+#!/bin/sh
+exec >> /var/log/skill-sync.log 2>&1
+echo "[$(date)] skill-sync daemon starting"
+while true; do
+  changed=0
+  for src in /config/.openclaw/workspace/skills/*/; do
+    [ -d "$src" ] || continue
+    name=$(basename "$src")
+    dst=/config/.openclaw/extensions/$name
+    if [ ! -d "$dst" ] || [ "$src" -nt "$dst" ]; then
+      echo "[$(date)] sync $name: workspace -> extensions"
+      rm -rf "$dst" 2>/dev/null
+      cp -r "$src" /config/.openclaw/extensions/ 2>/dev/null && changed=1
+    fi
+  done
+  if [ "$changed" = "1" ]; then
+    echo "[$(date)] killing openclaw-agent to trigger full reload"
+    pkill -KILL -f openclaw-agent 2>/dev/null
+    pkill -KILL -f openclaw-gateway 2>/dev/null
+    pkill -KILL -f "^openclaw$" 2>/dev/null
+  fi
+  sleep 5
+done
+SYNC_EOF
+chmod +x /usr/local/bin/openclaw-skill-sync.sh
+setsid -f /usr/local/bin/openclaw-skill-sync.sh </dev/null >/dev/null 2>&1
+exit 0
+`
+
 // GetClient returns the k8s client
 func (s *PodService) GetClient() *Client {
 	return s.client
@@ -210,7 +257,14 @@ func (s *PodService) CreatePod(ctx context.Context, config PodConfig) (*corev1.P
 						FailureThreshold:    3,
 					},
 					SecurityContext: buildContainerSecurityContext(config.SecurityMode),
-					Resources:       resources,
+					Lifecycle: &corev1.Lifecycle{
+						PostStart: &corev1.LifecycleHandler{
+							Exec: &corev1.ExecAction{
+								Command: []string{"sh", "-c", podPostStartScript},
+							},
+						},
+					},
+					Resources: resources,
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "data",

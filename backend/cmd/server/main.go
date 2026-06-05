@@ -15,6 +15,7 @@ import (
 	"clawreef/internal/handlers"
 	"clawreef/internal/middleware"
 	"clawreef/internal/repository"
+	"clawreef/internal/secplane"
 	"clawreef/internal/services"
 	"clawreef/internal/services/k8s"
 
@@ -134,6 +135,12 @@ func main() {
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
 	wsHandler := handlers.NewWebSocketHandler(wsHub)
+
+	// Initialize secplane (security protection platform) module. Keeps all of
+	// its routes, services and tables behind a single facade so the rest of
+	// the codebase stays unaware of its internals.
+	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
+	secplaneModule.StartBackgroundWorkers(context.Background())
 
 	// Start sync service to keep instance status in sync with K8s
 	syncService := services.NewSyncService(instanceRepo, instanceRuntimeStatusService)
@@ -384,6 +391,9 @@ func main() {
 		// These routes proxy requests to the actual instance pods
 		api.Any("/instances/:id/proxy", instanceHandler.ProxyInstance)
 		api.Any("/instances/:id/proxy/*path", instanceHandler.ProxyInstance)
+
+		// Security Protection Platform (secplane) routes. Self-contained.
+		secplaneModule.Register(api, userRepo)
 
 		// WebSocket routes
 		ws := api.Group("/ws")
