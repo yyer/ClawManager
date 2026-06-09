@@ -16,6 +16,11 @@ type InstanceRuntimeConfig struct {
 	Env       map[string]string
 }
 
+const (
+	kasmClipboardSendDisabled   = "-SendCutText 0"
+	kasmClipboardAcceptDisabled = "-AcceptCutText 0"
+)
+
 func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *string) InstanceRuntimeConfig {
 	if registry != nil && strings.TrimSpace(*registry) != "" && (tag == nil || strings.TrimSpace(*tag) == "") {
 		return InstanceRuntimeConfig{
@@ -47,18 +52,17 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 		config.Image = "lscr.io/linuxserver/webtop:ubuntu-xfce"
 		config.Port = 3001
 		config.MountPath = "/config"
-		config.Env = map[string]string{
-			"TITLE":     "ClawManager Desktop",
-			"SUBFOLDER": "/",
-		}
+		config.Env = defaultWebtopDesktopEnv("ClawManager Desktop")
 	case "webtop":
 		config.Image = "lscr.io/linuxserver/webtop:ubuntu-xfce"
 		config.Port = 3001
 		config.MountPath = "/config"
-		config.Env = map[string]string{
-			"TITLE":     "ClawManager Webtop",
-			"SUBFOLDER": "/",
-		}
+		config.Env = defaultWebtopDesktopEnv("ClawManager Webtop")
+	case "hermes":
+		config.Image = defaultSystemImageSettings["hermes"]
+		config.Port = 3001
+		config.MountPath = "/config"
+		config.Env = defaultWebtopDesktopEnv("Hermes Runtime")
 	case "openclaw":
 		config.MountPath = "/config"
 		if (registry == nil || strings.TrimSpace(*registry) == "") && (tag == nil || strings.TrimSpace(*tag) == "") {
@@ -66,20 +70,10 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 		} else {
 			config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "openclaw-desktop", defaultTag)
 		}
+		config.Env = defaultWebtopDesktopEnv("ClawManager Desktop")
 		// Override the lsio base image's DEFAULT_RES (15360x8640 = 16K × 8K).
-		// At 24bpp that allocates ~380 MB of framebuffer in Xvfb alone, on top
-		// of the cost of selkies streaming a stupendous resolution; combined
-		// with the 1-core / 3GiB cgroup defaults it puts every openclaw pod
-		// permanently against its memory ceiling and ~70% CPU throttled.
-		// SELKIES_MANUAL_WIDTH/HEIGHT is the knob both svc-xorg and svc-de
-		// honor in lsio's base; can be overridden per-instance via ExtraEnv
-		// in instance.Env later if we ever expose a UI knob.
-		config.Env = map[string]string{
-			"TITLE":                  "ClawManager Desktop",
-			"SUBFOLDER":              "/",
-			"SELKIES_MANUAL_WIDTH":   "1024",
-			"SELKIES_MANUAL_HEIGHT":  "768",
-		}
+		config.Env["SELKIES_MANUAL_WIDTH"] = "1024"
+		config.Env["SELKIES_MANUAL_HEIGHT"] = "768"
 	case "debian":
 		config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "debian-desktop", defaultTag)
 	case "centos":
@@ -92,7 +86,7 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 
 func defaultPortForInstanceType(instanceType string) int32 {
 	switch instanceType {
-	case "ubuntu", "webtop":
+	case "ubuntu", "webtop", "hermes":
 		return 3001
 	default:
 		return 3001
@@ -103,6 +97,8 @@ func defaultMountPathForInstanceType(instanceType string) string {
 	switch instanceType {
 	case "ubuntu", "webtop", "openclaw":
 		return "/config"
+	case "hermes":
+		return "/config"
 	default:
 		return "/home/user/data"
 	}
@@ -111,19 +107,25 @@ func defaultMountPathForInstanceType(instanceType string) string {
 func defaultEnvForInstanceType(instanceType string) map[string]string {
 	switch instanceType {
 	case "openclaw":
-		return map[string]string{
-			"TITLE":                  "ClawManager Desktop",
-			"SUBFOLDER":              "/",
-			"SELKIES_MANUAL_WIDTH":   "1024",
-			"SELKIES_MANUAL_HEIGHT":  "768",
-		}
+		env := defaultWebtopDesktopEnv("ClawManager Desktop")
+		env["SELKIES_MANUAL_WIDTH"] = "1024"
+		env["SELKIES_MANUAL_HEIGHT"] = "768"
+		return env
 	case "ubuntu", "webtop":
-		return map[string]string{
-			"TITLE":     "ClawManager Desktop",
-			"SUBFOLDER": "/",
-		}
+		return defaultWebtopDesktopEnv("ClawManager Desktop")
+	case "hermes":
+		return defaultWebtopDesktopEnv("Hermes Runtime")
 	default:
 		return map[string]string{}
+	}
+}
+
+func defaultWebtopDesktopEnv(title string) map[string]string {
+	return map[string]string{
+		"TITLE":                    title,
+		"SUBFOLDER":                "/",
+		"KASM_SVC_SEND_CUT_TEXT":   kasmClipboardSendDisabled,
+		"KASM_SVC_ACCEPT_CUT_TEXT": kasmClipboardAcceptDisabled,
 	}
 }
 
@@ -152,11 +154,18 @@ func withInstanceProxyEnv(instanceType string, instanceID int, env map[string]st
 
 func usesWebtopImage(instanceType string) bool {
 	switch instanceType {
-	case "ubuntu", "webtop", "openclaw":
+	case "ubuntu", "webtop", "hermes", "openclaw":
 		return true
 	default:
 		return false
 	}
+}
+
+// defaultImagePullPolicy returns the image pull policy to use for instance
+// pods. Managed runtime instances always use IfNotPresent so local caches can
+// be reused without forcing a remote registry pull during create/start flows.
+func defaultImagePullPolicy() string {
+	return "IfNotPresent"
 }
 
 func defaultEgressProxyURL() (string, bool) {

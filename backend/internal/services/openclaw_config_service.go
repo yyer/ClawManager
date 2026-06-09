@@ -34,6 +34,20 @@ const (
 	OpenClawLogPoliciesEnv           = "CLAWMANAGER_OPENCLAW_LOG_POLICIES_JSON"
 	OpenClawAgentsEnv                = "CLAWMANAGER_OPENCLAW_AGENTS_JSON"
 	OpenClawScheduledTasksEnv        = "CLAWMANAGER_OPENCLAW_SCHEDULED_TASKS_JSON"
+	HermesBootstrapManifestEnv       = "CLAWMANAGER_HERMES_BOOTSTRAP_MANIFEST_JSON"
+	HermesChannelsEnv                = "CLAWMANAGER_HERMES_CHANNELS_JSON"
+	HermesSkillsEnv                  = "CLAWMANAGER_HERMES_SKILLS_JSON"
+	HermesSessionTemplatesEnv        = "CLAWMANAGER_HERMES_SESSION_TEMPLATES_JSON"
+	HermesLogPoliciesEnv             = "CLAWMANAGER_HERMES_LOG_POLICIES_JSON"
+	HermesAgentsEnv                  = "CLAWMANAGER_HERMES_AGENTS_JSON"
+	HermesScheduledTasksEnv          = "CLAWMANAGER_HERMES_SCHEDULED_TASKS_JSON"
+	RuntimeBootstrapManifestEnv      = "CLAWMANAGER_RUNTIME_BOOTSTRAP_MANIFEST_JSON"
+	RuntimeChannelsEnv               = "CLAWMANAGER_RUNTIME_CHANNELS_JSON"
+	RuntimeSkillsEnv                 = "CLAWMANAGER_RUNTIME_SKILLS_JSON"
+	RuntimeSessionTemplatesEnv       = "CLAWMANAGER_RUNTIME_SESSION_TEMPLATES_JSON"
+	RuntimeLogPoliciesEnv            = "CLAWMANAGER_RUNTIME_LOG_POLICIES_JSON"
+	RuntimeAgentsEnv                 = "CLAWMANAGER_RUNTIME_AGENTS_JSON"
+	RuntimeScheduledTasksEnv         = "CLAWMANAGER_RUNTIME_SCHEDULED_TASKS_JSON"
 	openClawBootstrapPayloadMaxBytes = 64 * 1024
 
 	openClawCompiledSnapshotStatus = "compiled"
@@ -71,6 +85,24 @@ var (
 		OpenClawConfigResourceTypeLogPolicy:       OpenClawLogPoliciesEnv,
 		OpenClawConfigResourceTypeAgent:           OpenClawAgentsEnv,
 		OpenClawConfigResourceTypeScheduledTask:   OpenClawScheduledTasksEnv,
+	}
+	hermesBootstrapEnvAliases = map[string]string{
+		OpenClawBootstrapManifestEnv: HermesBootstrapManifestEnv,
+		OpenClawChannelsEnv:          HermesChannelsEnv,
+		OpenClawSkillsEnv:            HermesSkillsEnv,
+		OpenClawSessionTemplatesEnv:  HermesSessionTemplatesEnv,
+		OpenClawLogPoliciesEnv:       HermesLogPoliciesEnv,
+		OpenClawAgentsEnv:            HermesAgentsEnv,
+		OpenClawScheduledTasksEnv:    HermesScheduledTasksEnv,
+	}
+	runtimeBootstrapEnvAliases = map[string]string{
+		OpenClawBootstrapManifestEnv: RuntimeBootstrapManifestEnv,
+		OpenClawChannelsEnv:          RuntimeChannelsEnv,
+		OpenClawSkillsEnv:            RuntimeSkillsEnv,
+		OpenClawSessionTemplatesEnv:  RuntimeSessionTemplatesEnv,
+		OpenClawLogPoliciesEnv:       RuntimeLogPoliciesEnv,
+		OpenClawAgentsEnv:            RuntimeAgentsEnv,
+		OpenClawScheduledTasksEnv:    RuntimeScheduledTasksEnv,
 	}
 	openClawResourceKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{1,99}$`)
 )
@@ -136,23 +168,47 @@ type OpenClawConfigBundleItemPayload struct {
 	Resource   *OpenClawConfigResourceSummary `json:"resource,omitempty"`
 }
 
+type OpenClawConfigBundleSkillSummary struct {
+	ID               int        `json:"id"`
+	UserID           int        `json:"user_id"`
+	SkillKey         string     `json:"skill_key"`
+	Name             string     `json:"name"`
+	Description      *string    `json:"description,omitempty"`
+	Status           string     `json:"status"`
+	SourceType       string     `json:"source_type"`
+	RiskLevel        string     `json:"risk_level"`
+	CurrentVersionID *int       `json:"current_version_id,omitempty"`
+	LastScannedAt    *time.Time `json:"last_scanned_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type OpenClawConfigBundleSkillPayload struct {
+	SkillID   int                               `json:"skill_id"`
+	SortOrder int                               `json:"sort_order"`
+	Required  bool                              `json:"required"`
+	Skill     *OpenClawConfigBundleSkillSummary `json:"skill,omitempty"`
+}
+
 type OpenClawConfigBundlePayload struct {
-	ID          int                               `json:"id"`
-	UserID      int                               `json:"user_id"`
-	Name        string                            `json:"name"`
-	Description *string                           `json:"description,omitempty"`
-	Enabled     bool                              `json:"enabled"`
-	Version     int                               `json:"version"`
-	Items       []OpenClawConfigBundleItemPayload `json:"items"`
-	CreatedAt   time.Time                         `json:"created_at"`
-	UpdatedAt   time.Time                         `json:"updated_at"`
+	ID          int                                `json:"id"`
+	UserID      int                                `json:"user_id"`
+	Name        string                             `json:"name"`
+	Description *string                            `json:"description,omitempty"`
+	Enabled     bool                               `json:"enabled"`
+	Version     int                                `json:"version"`
+	Items       []OpenClawConfigBundleItemPayload  `json:"items"`
+	SkillItems  []OpenClawConfigBundleSkillPayload `json:"skill_items"`
+	CreatedAt   time.Time                          `json:"created_at"`
+	UpdatedAt   time.Time                          `json:"updated_at"`
 }
 
 type UpsertOpenClawConfigBundleRequest struct {
-	Name        string                            `json:"name"`
-	Description *string                           `json:"description,omitempty"`
-	Enabled     bool                              `json:"enabled"`
-	Items       []OpenClawConfigBundleItemPayload `json:"items"`
+	Name        string                             `json:"name"`
+	Description *string                            `json:"description,omitempty"`
+	Enabled     bool                               `json:"enabled"`
+	Items       []OpenClawConfigBundleItemPayload  `json:"items"`
+	SkillItems  []OpenClawConfigBundleSkillPayload `json:"skill_items"`
 }
 
 type OpenClawConfigCompilePreview struct {
@@ -202,6 +258,7 @@ type OpenClawConfigService interface {
 	UpdateBundle(userID, id int, req UpsertOpenClawConfigBundleRequest) (*OpenClawConfigBundlePayload, error)
 	DeleteBundle(userID, id int) error
 	CloneBundle(userID, id int) (*OpenClawConfigBundlePayload, error)
+	ResolveBundleSkillIDs(userID int, plan *OpenClawConfigPlan) ([]int, error)
 
 	CompilePreview(userID int, plan OpenClawConfigPlan) (*OpenClawConfigCompilePreview, error)
 	CreateSnapshotForInstance(userID int, instance *models.Instance, plan *OpenClawConfigPlan) (*models.OpenClawInjectionSnapshot, error)
@@ -214,6 +271,7 @@ type OpenClawConfigService interface {
 
 type openClawConfigService struct {
 	repo          repository.OpenClawConfigRepository
+	skillRepo     repository.SkillRepository
 	secretService *k8s.SecretService
 }
 
@@ -236,9 +294,10 @@ type compiledOpenClawConfig struct {
 	totalPayloadSize int
 }
 
-func NewOpenClawConfigService(repo repository.OpenClawConfigRepository) OpenClawConfigService {
+func NewOpenClawConfigService(repo repository.OpenClawConfigRepository, skillRepo repository.SkillRepository) OpenClawConfigService {
 	return &openClawConfigService{
 		repo:          repo,
+		skillRepo:     skillRepo,
 		secretService: k8s.NewSecretService(),
 	}
 }
@@ -503,6 +562,9 @@ func (s *openClawConfigService) CreateBundle(userID int, req UpsertOpenClawConfi
 	if err := s.repo.ReplaceBundleItems(item.ID, normalizeBundleItems(req.Items)); err != nil {
 		return nil, err
 	}
+	if err := s.repo.ReplaceBundleSkills(item.ID, normalizeBundleSkills(req.SkillItems)); err != nil {
+		return nil, err
+	}
 
 	payload, err := s.bundlePayloadFromModel(*item)
 	if err != nil {
@@ -534,6 +596,9 @@ func (s *openClawConfigService) UpdateBundle(userID, id int, req UpsertOpenClawC
 		return nil, err
 	}
 	if err := s.repo.ReplaceBundleItems(item.ID, normalizeBundleItems(req.Items)); err != nil {
+		return nil, err
+	}
+	if err := s.repo.ReplaceBundleSkills(item.ID, normalizeBundleSkills(req.SkillItems)); err != nil {
 		return nil, err
 	}
 
@@ -568,6 +633,10 @@ func (s *openClawConfigService) CloneBundle(userID, id int) (*OpenClawConfigBund
 	if err != nil {
 		return nil, err
 	}
+	skills, err := s.repo.ListBundleSkills(id)
+	if err != nil {
+		return nil, err
+	}
 
 	clone := *item
 	clone.ID = 0
@@ -585,12 +654,58 @@ func (s *openClawConfigService) CloneBundle(userID, id int) (*OpenClawConfigBund
 	if err := s.repo.ReplaceBundleItems(clone.ID, items); err != nil {
 		return nil, err
 	}
+	for idx := range skills {
+		skills[idx].ID = 0
+		skills[idx].BundleID = clone.ID
+	}
+	if err := s.repo.ReplaceBundleSkills(clone.ID, skills); err != nil {
+		return nil, err
+	}
 
 	payload, err := s.bundlePayloadFromModel(clone)
 	if err != nil {
 		return nil, err
 	}
 	return &payload, nil
+}
+
+func (s *openClawConfigService) ResolveBundleSkillIDs(userID int, plan *OpenClawConfigPlan) ([]int, error) {
+	if plan == nil || plan.Mode != OpenClawConfigPlanModeBundle || plan.BundleID == nil || *plan.BundleID <= 0 {
+		return nil, nil
+	}
+
+	bundle, err := s.repo.GetBundleByID(*plan.BundleID)
+	if err != nil {
+		return nil, err
+	}
+	if bundle == nil || bundle.UserID != userID {
+		return nil, fmt.Errorf("openclaw config bundle not found")
+	}
+	if !bundle.Enabled {
+		return nil, fmt.Errorf("openclaw config bundle is disabled")
+	}
+
+	bundleSkills, err := s.repo.ListBundleSkills(bundle.ID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]int, 0, len(bundleSkills))
+	seen := map[int]struct{}{}
+	for _, item := range bundleSkills {
+		if _, exists := seen[item.SkillID]; exists {
+			continue
+		}
+		skill, err := s.getBundleSkill(userID, item.SkillID)
+		if err != nil {
+			return nil, err
+		}
+		if skill == nil {
+			return nil, fmt.Errorf("skill not found")
+		}
+		seen[item.SkillID] = struct{}{}
+		result = append(result, item.SkillID)
+	}
+	return result, nil
 }
 
 func (s *openClawConfigService) CompilePreview(userID int, plan OpenClawConfigPlan) (*OpenClawConfigCompilePreview, error) {
@@ -698,6 +813,7 @@ func (s *openClawConfigService) EnsureSnapshotSecret(ctx context.Context, userID
 	if err := json.Unmarshal([]byte(snapshot.RenderedEnvJSON), &envValues); err != nil {
 		return "", fmt.Errorf("openclaw injection snapshot env payload is invalid")
 	}
+	envValues = runtimeBootstrapEnvValues(instance.Type, envValues)
 
 	secretName := snapshot.SecretName
 	if secretName == nil || strings.TrimSpace(*secretName) == "" {
@@ -729,6 +845,62 @@ func (s *openClawConfigService) EnsureSnapshotSecret(ctx context.Context, userID
 	}
 
 	return *secretName, nil
+}
+
+func runtimeBootstrapEnvValues(instanceType string, envValues map[string]string) map[string]string {
+	result := map[string]string{}
+	for key, value := range envValues {
+		result[key] = value
+	}
+
+	if !strings.EqualFold(instanceType, "hermes") {
+		return result
+	}
+
+	addBootstrapEnvAliases(result, hermesBootstrapEnvAliases)
+	addBootstrapEnvAliases(result, runtimeBootstrapEnvAliases)
+	return result
+}
+
+func addBootstrapEnvAliases(envValues map[string]string, aliases map[string]string) {
+	for source, target := range aliases {
+		value, ok := envValues[source]
+		if !ok {
+			continue
+		}
+		if source == OpenClawBootstrapManifestEnv {
+			if aliasedManifest, err := aliasBootstrapManifestEnvNames(value, aliases); err == nil {
+				value = aliasedManifest
+			}
+		}
+		envValues[target] = value
+	}
+}
+
+func aliasBootstrapManifestEnvNames(raw string, aliases map[string]string) (string, error) {
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return "", err
+	}
+
+	payloads, ok := manifest["payloads"].([]interface{})
+	if !ok {
+		return marshalJSONString(manifest)
+	}
+	for _, item := range payloads {
+		payload, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		envName, ok := payload["env"].(string)
+		if !ok {
+			continue
+		}
+		if alias, exists := aliases[envName]; exists {
+			payload["env"] = alias
+		}
+	}
+	return marshalJSONString(manifest)
 }
 
 func (s *openClawConfigService) ListSnapshots(userID int, limit int) ([]OpenClawInjectionSnapshotPayload, error) {
@@ -772,8 +944,8 @@ func (s *openClawConfigService) validateBundleRequest(userID int, req UpsertOpen
 	if strings.TrimSpace(req.Name) == "" {
 		return fmt.Errorf("openclaw config bundle name is required")
 	}
-	if len(req.Items) == 0 {
-		return fmt.Errorf("openclaw config bundle must include at least one resource")
+	if len(req.Items) == 0 && len(req.SkillItems) == 0 {
+		return fmt.Errorf("openclaw config bundle must include at least one resource or skill")
 	}
 
 	seen := map[int]struct{}{}
@@ -794,7 +966,40 @@ func (s *openClawConfigService) validateBundleRequest(userID int, req UpsertOpen
 			return fmt.Errorf("openclaw config resource not found")
 		}
 	}
+
+	seenSkills := map[int]struct{}{}
+	for _, item := range req.SkillItems {
+		if item.SkillID <= 0 {
+			return fmt.Errorf("openclaw config bundle skill id is required")
+		}
+		if _, exists := seenSkills[item.SkillID]; exists {
+			return fmt.Errorf("openclaw config bundle contains duplicate skills")
+		}
+		seenSkills[item.SkillID] = struct{}{}
+
+		skill, err := s.getBundleSkill(userID, item.SkillID)
+		if err != nil {
+			return err
+		}
+		if skill == nil {
+			return fmt.Errorf("skill not found")
+		}
+	}
 	return nil
+}
+
+func (s *openClawConfigService) getBundleSkill(userID, skillID int) (*models.Skill, error) {
+	if s.skillRepo == nil {
+		return nil, fmt.Errorf("skill repository is not initialized")
+	}
+	skill, err := s.skillRepo.GetSkillByID(skillID)
+	if err != nil {
+		return nil, err
+	}
+	if skill == nil || skill.UserID != userID || !isUserManagedSkill(*skill) || !strings.EqualFold(skill.Status, "active") {
+		return nil, nil
+	}
+	return skill, nil
 }
 
 func normalizeBundleItems(items []OpenClawConfigBundleItemPayload) []models.OpenClawConfigBundleItem {
@@ -813,8 +1018,28 @@ func normalizeBundleItems(items []OpenClawConfigBundleItemPayload) []models.Open
 	return result
 }
 
+func normalizeBundleSkills(items []OpenClawConfigBundleSkillPayload) []models.OpenClawConfigBundleSkill {
+	result := make([]models.OpenClawConfigBundleSkill, 0, len(items))
+	for idx, item := range items {
+		sortOrder := item.SortOrder
+		if sortOrder == 0 {
+			sortOrder = idx + 1
+		}
+		result = append(result, models.OpenClawConfigBundleSkill{
+			SkillID:   item.SkillID,
+			SortOrder: sortOrder,
+			Required:  item.Required,
+		})
+	}
+	return result
+}
+
 func (s *openClawConfigService) bundlePayloadFromModel(item models.OpenClawConfigBundle) (OpenClawConfigBundlePayload, error) {
 	bundleItems, err := s.repo.ListBundleItems(item.ID)
+	if err != nil {
+		return OpenClawConfigBundlePayload{}, err
+	}
+	bundleSkills, err := s.repo.ListBundleSkills(item.ID)
 	if err != nil {
 		return OpenClawConfigBundlePayload{}, err
 	}
@@ -839,6 +1064,26 @@ func (s *openClawConfigService) bundlePayloadFromModel(item models.OpenClawConfi
 		})
 	}
 
+	payloadSkills := make([]OpenClawConfigBundleSkillPayload, 0, len(bundleSkills))
+	for _, bundleSkill := range bundleSkills {
+		var summary *OpenClawConfigBundleSkillSummary
+		skill, err := s.getBundleSkill(item.UserID, bundleSkill.SkillID)
+		if err != nil {
+			return OpenClawConfigBundlePayload{}, err
+		}
+		if skill != nil {
+			skillSummary := bundleSkillSummaryFromModel(*skill)
+			summary = &skillSummary
+		}
+
+		payloadSkills = append(payloadSkills, OpenClawConfigBundleSkillPayload{
+			SkillID:   bundleSkill.SkillID,
+			SortOrder: bundleSkill.SortOrder,
+			Required:  bundleSkill.Required,
+			Skill:     summary,
+		})
+	}
+
 	return OpenClawConfigBundlePayload{
 		ID:          item.ID,
 		UserID:      item.UserID,
@@ -847,6 +1092,7 @@ func (s *openClawConfigService) bundlePayloadFromModel(item models.OpenClawConfi
 		Enabled:     item.Enabled,
 		Version:     item.Version,
 		Items:       payloadItems,
+		SkillItems:  payloadSkills,
 		CreatedAt:   item.CreatedAt,
 		UpdatedAt:   item.UpdatedAt,
 	}, nil
@@ -992,7 +1238,11 @@ func (s *openClawConfigService) loadSelectedResources(userID int, plan OpenClawC
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(items) == 0 {
+		skills, err := s.repo.ListBundleSkills(bundle.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(items) == 0 && len(skills) == 0 {
 			return nil, nil, fmt.Errorf("openclaw config bundle is empty")
 		}
 
@@ -1107,6 +1357,23 @@ func resourceSummaryFromModel(item models.OpenClawConfigResource) OpenClawConfig
 		Name:         item.Name,
 		Enabled:      item.Enabled,
 		Version:      item.Version,
+	}
+}
+
+func bundleSkillSummaryFromModel(item models.Skill) OpenClawConfigBundleSkillSummary {
+	return OpenClawConfigBundleSkillSummary{
+		ID:               item.ID,
+		UserID:           item.UserID,
+		SkillKey:         item.SkillKey,
+		Name:             item.Name,
+		Description:      item.Description,
+		Status:           item.Status,
+		SourceType:       item.SourceType,
+		RiskLevel:        item.RiskLevel,
+		CurrentVersionID: item.CurrentVersionID,
+		LastScannedAt:    item.LastScannedAt,
+		CreatedAt:        item.CreatedAt,
+		UpdatedAt:        item.UpdatedAt,
 	}
 }
 
@@ -1259,7 +1526,13 @@ func appendCompiledOpenClawEnvPayload(payload interface{}, resource compiledOpen
 			return nil, fmt.Errorf("failed to parse openclaw channel config")
 		}
 
-		channelPayload[resource.model.ResourceKey] = normalizeOpenClawChannelConfigForEnv(resource.model.ResourceKey, configPayload)
+		channelKey := openClawChannelEnvKey(resource.model.ResourceKey, configPayload)
+		nextConfig := normalizeOpenClawChannelConfigForEnv(resource.model.ResourceKey, configPayload)
+		if existingConfig, ok := channelPayload[channelKey]; ok {
+			channelPayload[channelKey] = mergeOpenClawChannelEnvConfig(channelKey, resource.model.ResourceKey, existingConfig, nextConfig)
+		} else {
+			channelPayload[channelKey] = nextConfig
+		}
 		return channelPayload, nil
 	}
 
@@ -1282,7 +1555,7 @@ func appendCompiledOpenClawEnvPayload(payload interface{}, resource compiledOpen
 }
 
 func normalizeOpenClawChannelConfigForEnv(resourceKey string, configPayload interface{}) interface{} {
-	switch strings.ToLower(strings.TrimSpace(resourceKey)) {
+	switch detectOpenClawChannelProvider(resourceKey, configPayload) {
 	case "dingtalk-connector":
 		return normalizeDingTalkChannelConfigForEnv(configPayload)
 	case "feishu":
@@ -1291,26 +1564,187 @@ func normalizeOpenClawChannelConfigForEnv(resourceKey string, configPayload inte
 		return normalizeSlackChannelConfigForEnv(configPayload)
 	case "telegram":
 		return normalizeTelegramChannelConfigForEnv(configPayload)
+	case "wecom":
+		return normalizeWeComChannelConfigForEnv(configPayload)
 	}
 
 	return configPayload
 }
 
-func normalizeFeishuChannelConfigForEnv(configPayload interface{}) map[string]interface{} {
-	config, ok := configPayload.(map[string]interface{})
-	if !ok {
-		return map[string]interface{}{
-			"enabled": true,
-			"accounts": map[string]interface{}{
-				"main": map[string]interface{}{
-					"appId":     "",
-					"appSecret": "",
-				},
-			},
+func openClawChannelEnvKey(resourceKey string, configPayload interface{}) string {
+	provider := detectOpenClawChannelProvider(resourceKey, configPayload)
+	switch provider {
+	case "dingtalk-connector", "feishu", "slack", "telegram", "wecom":
+		return provider
+	}
+	return normalizeResourceKey(resourceKey)
+}
+
+func mergeOpenClawChannelEnvConfig(channelKey, resourceKey string, existing, next interface{}) interface{} {
+	if channelKey == "feishu" {
+		return mergeFeishuChannelEnvConfig(resourceKey, existing, next)
+	}
+	return next
+}
+
+func mergeFeishuChannelEnvConfig(resourceKey string, existing, next interface{}) interface{} {
+	existingMap, existingOk := existing.(map[string]interface{})
+	nextMap, nextOk := next.(map[string]interface{})
+	if !existingOk || !nextOk {
+		return next
+	}
+
+	merged := make(map[string]interface{}, len(existingMap)+len(nextMap))
+	for k, v := range existingMap {
+		merged[k] = v
+	}
+	for k, v := range nextMap {
+		if k != "accounts" && k != "defaultAccount" {
+			merged[k] = v
+		}
+	}
+	if _, ok := merged["defaultAccount"]; !ok {
+		if defaultAccount, ok := nextMap["defaultAccount"]; ok {
+			merged["defaultAccount"] = defaultAccount
 		}
 	}
 
+	mergedAccounts := map[string]interface{}{}
+	if existingAccounts, ok := existingMap["accounts"].(map[string]interface{}); ok {
+		for k, v := range existingAccounts {
+			mergedAccounts[k] = v
+		}
+	}
+	if nextAccounts, ok := nextMap["accounts"].(map[string]interface{}); ok {
+		for accountKey, account := range nextAccounts {
+			mergedAccountKey := accountKey
+			if accountKey == "main" {
+				key := normalizeResourceKey(resourceKey)
+				if _, exists := mergedAccounts["main"]; exists && key != "" && key != "feishu" {
+					mergedAccountKey = key
+				}
+			}
+			mergedAccounts[mergedAccountKey] = account
+		}
+	}
+	merged["accounts"] = mergedAccounts
+	return merged
+}
+
+func detectOpenClawChannelProvider(resourceKey string, configPayload interface{}) string {
+	key := strings.ToLower(strings.TrimSpace(resourceKey))
+	switch key {
+	case "dingtalk-connector", "feishu", "slack", "telegram", "wecom":
+		return key
+	}
+
+	config, ok := configPayload.(map[string]interface{})
+	if !ok {
+		return key
+	}
+	domain, _ := config["domain"].(string)
+	switch strings.ToLower(strings.TrimSpace(domain)) {
+	case "dingtalk", "dingding", "dingtalk-connector":
+		return "dingtalk-connector"
+	case "feishu", "lark":
+		return "feishu"
+	case "wecom", "wechat-work", "work-wechat", "enterprise-wechat", "qywx":
+		return "wecom"
+	}
+	if accounts, ok := config["accounts"].(map[string]interface{}); ok && len(accounts) > 0 {
+		return "feishu"
+	}
+	if _, hasClientID := config["clientId"].(string); hasClientID {
+		if _, hasClientSecret := config["clientSecret"].(string); hasClientSecret {
+			return "dingtalk-connector"
+		}
+	}
+	if _, hasBotID := config["botId"].(string); hasBotID {
+		if _, hasSecret := config["secret"].(string); hasSecret {
+			return "wecom"
+		}
+	}
+
+	return key
+}
+
+// mergeOpenClawChannelConfigForStorage combines the allowlist-normalized config
+// with the original parsed payload so storage retains keys the env-render path
+// does not surface (e.g. webhook, custom capabilities, additional feishu
+// accounts). Normalized keys always override the original; unknown keys pass
+// through untouched. For feishu the accounts map is merged member-wise so
+// accounts other than main, and sibling fields inside main, both survive.
+func mergeOpenClawChannelConfigForStorage(resourceKey string, original, normalized interface{}) interface{} {
+	normalizedMap, normalizedOk := normalized.(map[string]interface{})
+	originalMap, originalOk := original.(map[string]interface{})
+	if !normalizedOk {
+		return normalized
+	}
+	if !originalOk {
+		return normalizedMap
+	}
+
+	merged := make(map[string]interface{}, len(originalMap)+len(normalizedMap))
+	for k, v := range originalMap {
+		merged[k] = v
+	}
+	for k, v := range normalizedMap {
+		merged[k] = v
+	}
+
+	if detectOpenClawChannelProvider(resourceKey, original) == "feishu" {
+		originalAccounts, _ := originalMap["accounts"].(map[string]interface{})
+		normalizedAccounts, _ := normalizedMap["accounts"].(map[string]interface{})
+		if originalAccounts != nil || normalizedAccounts != nil {
+			mergedAccounts := make(map[string]interface{})
+			for k, v := range originalAccounts {
+				mergedAccounts[k] = v
+			}
+			if normalizedMain, ok := normalizedAccounts["main"].(map[string]interface{}); ok {
+				mergedMain := make(map[string]interface{})
+				if existingMain, ok := originalAccounts["main"].(map[string]interface{}); ok {
+					for k, v := range existingMain {
+						mergedMain[k] = v
+					}
+				}
+				for k, v := range normalizedMain {
+					mergedMain[k] = v
+				}
+				mergedAccounts["main"] = mergedMain
+			}
+			merged["accounts"] = mergedAccounts
+		}
+	}
+
+	return merged
+}
+
+func normalizeFeishuChannelConfigForEnv(configPayload interface{}) map[string]interface{} {
+	config, ok := configPayload.(map[string]interface{})
+	if !ok {
+		config = map[string]interface{}{}
+	}
+
 	accounts, _ := config["accounts"].(map[string]interface{})
+	normalizedAccounts := make(map[string]interface{}, len(accounts)+1)
+	for accountKey, rawAccount := range accounts {
+		accountMap, ok := rawAccount.(map[string]interface{})
+		if !ok {
+			normalizedAccounts[accountKey] = rawAccount
+			continue
+		}
+		normalizedAccount := make(map[string]interface{}, len(accountMap))
+		for k, v := range accountMap {
+			normalizedAccount[k] = v
+		}
+		if _, ok := normalizedAccount["appId"].(string); !ok {
+			normalizedAccount["appId"] = ""
+		}
+		if _, ok := normalizedAccount["appSecret"].(string); !ok {
+			normalizedAccount["appSecret"] = ""
+		}
+		normalizedAccounts[accountKey] = normalizedAccount
+	}
 
 	var account map[string]interface{}
 	if mainAccount, ok := accounts["main"].(map[string]interface{}); ok {
@@ -1330,16 +1764,29 @@ func normalizeFeishuChannelConfigForEnv(configPayload interface{}) map[string]in
 	if appSecret == "" {
 		appSecret, _ = config["appSecret"].(string)
 	}
-
-	return map[string]interface{}{
-		"enabled": true,
-		"accounts": map[string]interface{}{
-			"main": map[string]interface{}{
-				"appId":     appID,
-				"appSecret": appSecret,
-			},
-		},
+	if _, ok := normalizedAccounts["main"]; !ok {
+		normalizedAccounts["main"] = map[string]interface{}{
+			"appId":     appID,
+			"appSecret": appSecret,
+		}
 	}
+
+	defaultAccount, _ := config["defaultAccount"].(string)
+	if strings.TrimSpace(defaultAccount) == "" {
+		defaultAccount = "main"
+	}
+
+	result := map[string]interface{}{
+		"enabled":        true,
+		"domain":         "feishu",
+		"defaultAccount": defaultAccount,
+		"accounts":       normalizedAccounts,
+	}
+	if requireMention, ok := config["requireMention"].(bool); ok {
+		result["requireMention"] = requireMention
+	}
+
+	return result
 }
 
 func normalizeSlackChannelConfigForEnv(configPayload interface{}) map[string]interface{} {
@@ -1428,6 +1875,32 @@ func normalizeDingTalkChannelConfigForEnv(configPayload interface{}) map[string]
 	}
 }
 
+func normalizeWeComChannelConfigForEnv(configPayload interface{}) map[string]interface{} {
+	config, ok := configPayload.(map[string]interface{})
+	if !ok {
+		config = map[string]interface{}{}
+	}
+
+	botID, _ := config["botId"].(string)
+	secret, _ := config["secret"].(string)
+	dmPolicy, _ := config["dmPolicy"].(string)
+	if strings.TrimSpace(dmPolicy) == "" {
+		dmPolicy = "pairing"
+	}
+
+	allowFrom := normalizeStringArrayForEnv(config["allowFrom"])
+	if len(allowFrom) == 0 {
+		allowFrom = []string{"*"}
+	}
+
+	return map[string]interface{}{
+		"botId":     botID,
+		"secret":    secret,
+		"dmPolicy":  dmPolicy,
+		"allowFrom": allowFrom,
+	}
+}
+
 func normalizeStringArrayForEnv(value interface{}) []string {
 	items, ok := value.([]interface{})
 	if !ok {
@@ -1461,8 +1934,15 @@ func normalizeOpenClawResourceContent(resourceType, resourceKey string, raw json
 	}
 
 	normalizedConfig := normalizeOpenClawChannelConfigForEnv(resourceKey, configPayload)
+	// Preserve unknown fields at storage time: the *ForEnv helpers rebuild the
+	// config from a known-field allowlist, which is correct for rendering runtime
+	// env but would silently drop tenant-authored keys (e.g. webhook, custom
+	// capabilities, additional feishu accounts) if applied verbatim to stored
+	// content. Merge the allowlist output back over the original payload so
+	// storage is a superset of the normalized render.
+	mergedConfig := mergeOpenClawChannelConfigForStorage(resourceKey, configPayload, normalizedConfig)
 	envelope.Format = openClawChannelFormat(resourceKey)
-	envelope.Config, err = json.Marshal(normalizedConfig)
+	envelope.Config, err = json.Marshal(mergedConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal normalized openclaw channel config")
 	}

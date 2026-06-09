@@ -23,6 +23,18 @@ const RUNTIME_BURST_WINDOW_MS = 15000;
 const METRIC_WINDOW_MS = 5 * 60 * 1000;
 const INSTANCE_SKILL_PAGE_SIZE = 5;
 
+const supportsRuntimeWorkspace = (type: string) =>
+  type === "openclaw" || type === "hermes";
+
+const supportsRuntimeSkillManagement = (type: string) =>
+  type === "openclaw" || type === "hermes";
+
+const runtimeWorkspaceDirectory = (type: string) =>
+  type === "hermes" ? ".hermes" : ".openclaw";
+
+const runtimeProductName = (type: string) =>
+  type === "hermes" ? "Hermes" : "OpenClaw";
+
 // describeOpenClawError extracts a user-facing message from an axios error.
 // When the server returned a structured JSON body it surfaces the `error`
 // field; otherwise it falls back to the HTTP status (e.g. plain-HTML 413
@@ -83,6 +95,20 @@ type MetricCurve = {
   secondaryPoints?: MetricSample[];
   legend?: Array<{ label: string; accent: string }>;
   preNormalized?: boolean;
+};
+
+type CpuInfo = {
+  cores?: number;
+  available_cores?: number;
+  usage_percent?: number;
+  usage_percent_of_quota?: number;
+  used_cores?: number;
+  usage_ready?: boolean;
+  load?: {
+    "1m"?: number;
+    "5m"?: number;
+    "15m"?: number;
+  };
 };
 
 type TranslateFn = (
@@ -408,7 +434,12 @@ const InstanceDetailPage: React.FC = () => {
       return;
     }
 
-    const ts = Date.now();
+    const reportedTimestamp = runtimeDetails?.runtime?.last_reported_at
+      ? new Date(runtimeDetails.runtime.last_reported_at).getTime()
+      : Date.now();
+    const ts = Number.isFinite(reportedTimestamp)
+      ? reportedTimestamp
+      : Date.now();
     const previousNetwork = lastNetworkCounterRef.current;
     let networkDownSample: number | null = null;
     let networkUpSample: number | null = null;
@@ -530,23 +561,31 @@ const InstanceDetailPage: React.FC = () => {
     }
   };
 
-  const handleExportOpenClaw = async () => {
+  const handleExportWorkspace = async () => {
     if (!instance) return;
 
+    const directory = runtimeWorkspaceDirectory(instance.type);
+    const runtime = runtimeProductName(instance.type);
+
     try {
-      setActionLoading("export-openclaw");
-      const blob = await instanceService.exportOpenClawWorkspace(instance.id);
+      setActionLoading("export-workspace");
+      const blob =
+        instance.type === "hermes"
+          ? await instanceService.exportHermesWorkspace(instance.id)
+          : await instanceService.exportOpenClawWorkspace(instance.id);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${instance.name || "openclaw-workspace"}.openclaw.tar.gz`;
+      link.download = `${instance.name || `${instance.type}-workspace`}${directory}.tar.gz`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
       alert(
-        t("instances.exportOpenClawFailed", {
+        t("instances.exportRuntimeWorkspaceFailed", {
+          runtime,
+          directory,
           message: describeOpenClawError(err, t),
         }),
       );
@@ -555,17 +594,31 @@ const InstanceDetailPage: React.FC = () => {
     }
   };
 
-  const handleImportOpenClaw = async (file?: File | null) => {
+  const handleImportWorkspace = async (file?: File | null) => {
     if (!instance || !file) return;
 
+    const directory = runtimeWorkspaceDirectory(instance.type);
+    const runtime = runtimeProductName(instance.type);
+
     try {
-      setActionLoading("import-openclaw");
-      await instanceService.importOpenClawWorkspace(instance.id, file);
+      setActionLoading("import-workspace");
+      if (instance.type === "hermes") {
+        await instanceService.importHermesWorkspace(instance.id, file);
+      } else {
+        await instanceService.importOpenClawWorkspace(instance.id, file);
+      }
       await fetchRuntime(instance.id, { background: true });
-      alert(t("instances.importOpenClawSuccess"));
+      alert(
+        t("instances.importRuntimeWorkspaceSuccess", {
+          runtime,
+          directory,
+        }),
+      );
     } catch (err: any) {
       alert(
-        t("instances.importOpenClawFailed", {
+        t("instances.importRuntimeWorkspaceFailed", {
+          runtime,
+          directory,
           message: describeOpenClawError(err, t),
         }),
       );
@@ -740,6 +793,9 @@ const InstanceDetailPage: React.FC = () => {
                 <span className="rounded-full border border-[#ead8cf] bg-[#fffaf7] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#8f776b]">
                   {instance.type}
                 </span>
+                <span className="rounded-full border border-[#dbe4ef] bg-[#f7fbff] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#516070]">
+                  {instance.runtime_type || "desktop"}
+                </span>
                 <span className="text-sm text-[#7a6d66]">
                   {t("instances.instanceIdLabel")}: {instance.id}
                 </span>
@@ -810,8 +866,9 @@ const InstanceDetailPage: React.FC = () => {
                   instanceId={instance.id}
                   instanceName={instance.name}
                   isRunning={effectiveInstanceStatus === "running"}
+                  runtimeType={instance.runtime_type || "desktop"}
                   overlay={
-                    instance.type === "openclaw"
+                    instance.runtime_type !== "shell" && instance.type === "openclaw"
                       ? {
                           gatewayStatus,
                           canControl: canControlGateway,
@@ -824,7 +881,7 @@ const InstanceDetailPage: React.FC = () => {
               </div>
             </section>
 
-            {instance.type === "openclaw" && (
+            {supportsRuntimeWorkspace(instance.type) && (
               <section className="app-panel px-5 py-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div className="max-w-xl">
@@ -832,27 +889,33 @@ const InstanceDetailPage: React.FC = () => {
                       {t("instances.workspaceSection")}
                     </p>
                     <h2 className="mt-2 text-[1.35rem] font-semibold tracking-[-0.03em] text-[#1d1713]">
-                      {t("instances.openClawWorkspace")}
+                      {t("instances.runtimeWorkspace", {
+                        runtime: runtimeProductName(instance.type),
+                      })}
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-[#7a6d66]">
-                      {t("instances.openClawWorkspaceDesc")}
+                      {t("instances.runtimeWorkspaceDesc", {
+                        directory: runtimeWorkspaceDirectory(instance.type),
+                      })}
                     </p>
                   </div>
 
                   <div className="grid w-full gap-3 lg:max-w-[320px]">
                     <button
                       type="button"
-                      onClick={handleExportOpenClaw}
+                      onClick={handleExportWorkspace}
                       disabled={
                         effectiveInstanceStatus !== "running" ||
-                        actionLoading === "export-openclaw" ||
-                        actionLoading === "import-openclaw"
+                        actionLoading === "export-workspace" ||
+                        actionLoading === "import-workspace"
                       }
                       className="app-button-primary disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {actionLoading === "export-openclaw"
-                        ? t("instances.exportingOpenClaw")
-                        : t("instances.exportOpenClaw")}
+                      {actionLoading === "export-workspace"
+                        ? t("instances.exportingRuntimeWorkspace")
+                        : t("instances.exportRuntimeWorkspace", {
+                            directory: runtimeWorkspaceDirectory(instance.type),
+                          })}
                     </button>
                     <input
                       ref={importInputRef}
@@ -860,7 +923,7 @@ const InstanceDetailPage: React.FC = () => {
                       accept=".tar.gz,.tgz,application/gzip,application/x-gzip,application/octet-stream"
                       className="hidden"
                       onChange={(e) =>
-                        handleImportOpenClaw(e.target.files?.[0] || null)
+                        handleImportWorkspace(e.target.files?.[0] || null)
                       }
                     />
                     <button
@@ -868,14 +931,16 @@ const InstanceDetailPage: React.FC = () => {
                       onClick={() => importInputRef.current?.click()}
                       disabled={
                         effectiveInstanceStatus !== "running" ||
-                        actionLoading === "export-openclaw" ||
-                        actionLoading === "import-openclaw"
+                        actionLoading === "export-workspace" ||
+                        actionLoading === "import-workspace"
                       }
                       className="app-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {actionLoading === "import-openclaw"
-                        ? t("instances.importingOpenClaw")
-                        : t("instances.importOpenClaw")}
+                      {actionLoading === "import-workspace"
+                        ? t("instances.importingRuntimeWorkspace")
+                        : t("instances.importRuntimeWorkspace", {
+                            directory: runtimeWorkspaceDirectory(instance.type),
+                          })}
                     </button>
                   </div>
                 </div>
@@ -935,7 +1000,7 @@ const InstanceDetailPage: React.FC = () => {
               </div>
             </section>
 
-            {instance.type === "openclaw" && (
+            {supportsRuntimeSkillManagement(instance.type) && (
               <section className="app-panel px-6 py-6">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                   <div>
@@ -1822,6 +1887,73 @@ function percentLabel(value: number | null, t: TranslateFn): string {
   return `${Math.round(value)}%`;
 }
 
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value));
+}
+
+function getCpuUsagePercent(cpu?: CpuInfo): number | null {
+  if (!cpu) {
+    return null;
+  }
+
+  if (
+    typeof cpu.usage_percent_of_quota === "number" &&
+    Number.isFinite(cpu.usage_percent_of_quota)
+  ) {
+    return clampPercent(cpu.usage_percent_of_quota);
+  }
+
+  if (
+    cpu.usage_ready !== false &&
+    typeof cpu.usage_percent === "number" &&
+    Number.isFinite(cpu.usage_percent)
+  ) {
+    return clampPercent(cpu.usage_percent);
+  }
+
+  return null;
+}
+
+function asCpuInfo(value: unknown): CpuInfo | undefined {
+  const record = asRecord(value);
+  return record as CpuInfo | undefined;
+}
+
+function formatLoadValue(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toFixed(2)
+    : "-";
+}
+
+function buildCpuDetail(cpu: CpuInfo | undefined, t: TranslateFn): string {
+  if (!cpu) {
+    return t("instances.notAvailable");
+  }
+
+  const details = [
+    typeof cpu.used_cores === "number" &&
+    Number.isFinite(cpu.used_cores) &&
+    typeof cpu.available_cores === "number" &&
+    Number.isFinite(cpu.available_cores)
+      ? t("instances.metricCpuUsedCoresDetail", {
+          used: cpu.used_cores.toFixed(2),
+          available: `${cpu.available_cores}`,
+        })
+      : typeof cpu.cores === "number" && Number.isFinite(cpu.cores)
+        ? t("instances.metricCpuCoresDetail", { cores: cpu.cores })
+        : null,
+    cpu.load
+      ? t("instances.metricCpuLoadDetail", {
+          load1: formatLoadValue(cpu.load["1m"]),
+          load5: formatLoadValue(cpu.load["5m"]),
+          load15: formatLoadValue(cpu.load["15m"]),
+        })
+      : null,
+  ].filter(Boolean);
+
+  return details.length > 0 ? details.join(" · ") : t("instances.notAvailable");
+}
+
 function buildMetricCurves({
   cpuInfo,
   memoryInfo,
@@ -1839,14 +1971,8 @@ function buildMetricCurves({
   sessionStartedAt: number;
   t: TranslateFn;
 }): MetricCurve[] {
-  const cores = getNumber(cpuInfo?.cores) || 1;
-  const cpuLoad = asRecord(cpuInfo?.load);
-  const cpuPoints = [
-    Math.min(((getNumber(cpuLoad?.["15m"]) || 0) / cores) * 100, 100),
-    Math.min(((getNumber(cpuLoad?.["5m"]) || 0) / cores) * 100, 100),
-    Math.min(((getNumber(cpuLoad?.["1m"]) || 0) / cores) * 100, 100),
-  ];
-  const cpuCurrent = cpuPoints[cpuPoints.length - 1] ?? 0;
+  const cpu = asCpuInfo(cpuInfo);
+  const cpuCurrent = getCpuUsagePercent(cpu);
 
   const memTotal = getNumber(memoryInfo?.mem_total_bytes);
   const memAvailable = getNumber(memoryInfo?.mem_available_bytes);
@@ -1927,13 +2053,11 @@ function buildMetricCurves({
   return [
     {
       label: t("instances.metricCpu"),
-      value: percentLabel(cpuCurrent, t),
-      detail: t("instances.metricCpuDetail", {
-        cores,
-        load1: formatNumber(getNumber(cpuLoad?.["1m"]), t),
-        load5: formatNumber(getNumber(cpuLoad?.["5m"]), t),
-        load15: formatNumber(getNumber(cpuLoad?.["15m"]), t),
-      }),
+      value:
+        cpuCurrent === null
+          ? t("instances.metricCpuSampling")
+          : `${cpuCurrent.toFixed(0)}%`,
+      detail: buildCpuDetail(cpu, t),
       accent: "#f97316",
       points: cpuSeries,
     },
@@ -2162,13 +2286,6 @@ function normalizePoints(points: number[]): number[] {
   return safe.map((point) => Math.max(point / max, 0.08));
 }
 
-function formatNumber(value: number | null, t: TranslateFn): string {
-  if (value === null) {
-    return t("instances.notAvailable");
-  }
-  return value.toFixed(2);
-}
-
 function formatBytesCompact(value: number | null, t: TranslateFn): string {
   if (value === null) {
     return t("instances.notAvailable");
@@ -2252,18 +2369,8 @@ function extractMetricSnapshot(systemInfoValue: unknown) {
     return null;
   }
 
-  const cpuInfo = asRecord(systemInfo.cpu);
-  const cpuLoad = asRecord(cpuInfo?.load);
-  const cores = getNumber(cpuInfo?.cores) || 1;
-  // Prefer backend-augmented metrics-server reading. The fallback
-  // (load.1m / cores) uses HOST loadavg, which is misleading because it
-  // counts every process on the VM (host chromium, IDE, k3s, ...). Backend
-  // populates usage_percent_of_quota from the pod's true cgroup CPU usage.
-  const cpuPercentFromMetrics = getNumber(cpuInfo?.usage_percent_of_quota);
-  const cpuPercent = Math.min(
-    (cpuPercentFromMetrics ?? (((getNumber(cpuLoad?.["1m"]) || 0) / cores) * 100)) || 0,
-    100,
-  );
+  const cpuInfo = asCpuInfo(systemInfo.cpu);
+  const cpuPercent = getCpuUsagePercent(cpuInfo);
 
   const memoryInfo = asRecord(systemInfo.memory);
   const memTotal = getNumber(memoryInfo?.mem_total_bytes);

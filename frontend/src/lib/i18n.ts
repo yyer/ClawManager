@@ -1484,19 +1484,20 @@ export const translations: Record<Locale, TranslationTree> = {
       requiredFields: "Instance type and image are required.",
       duplicateType: "This instance type already has a card.",
       duplicateImage:
-        "This runtime image already exists under the selected instance type.",
+        "This runtime image already exists under the selected instance and runtime type.",
       saveFailed: "Failed to save image setting",
       deleteFailed: "Failed to delete image setting",
       runtimeImageCards: "Runtime Image Cards",
       runtimeImageCardsSubtitle:
-        "Configure the image address used by each supported desktop runtime. Saved cards override the built-in defaults.",
+        "Configure desktop and shell runtime image cards. Shell cards can use smaller images without a virtual desktop.",
       addCard: "Add Card",
       instanceType: "Instance Type",
+      runtimeType: "Runtime Type",
       cardTitle: "Card Title",
       imageAddress: "Image Address",
       defaultImage: "Default image",
       empty:
-        "No runtime image cards yet. Add one to override the default image for a desktop type.",
+        "No runtime image cards yet. Add one to override the default image for a runtime type.",
     },
     userManagementPage: {
       loading: "Loading users...",
@@ -1509,6 +1510,8 @@ export const translations: Record<Locale, TranslationTree> = {
       selectCsv: "Please select a CSV file to import",
       importFailed: "Failed to import users",
       importUsers: "Import Users",
+      showingUsers: "Showing {from}-{to} of {total} users",
+      noUsers: "No users found",
       importCompleted: "Import completed: {created} created, {failed} failed",
       expectedColumns: "Expected columns:",
       lineError: "Line {line}{username}",
@@ -1591,6 +1594,13 @@ export const translations: Record<Locale, TranslationTree> = {
         "Choose which runtime image version should be used for this instance type.",
       runtimeImageUnavailable:
         "No enabled runtime image is currently available for this instance type.",
+      runtimeType: "Runtime Type",
+      runtimeTypeDesktop: "Desktop",
+      runtimeTypeDesktopDesc:
+        "Browser desktop access through the existing virtual desktop path.",
+      runtimeTypeShell: "Shell",
+      runtimeTypeShellDesc:
+        "Direct shell access without creating a virtual desktop service.",
       operatingSystem: "Operating System",
       access: "Access",
       portalView: "Portal View",
@@ -1626,6 +1636,7 @@ export const translations: Record<Locale, TranslationTree> = {
       logsComingSoon: "Coming soon in Phase 6",
       startTheInstance: "Instance Stopped",
       startToAccessDesktop: "Start the instance to access the desktop.",
+      startToAccessShell: "Start the instance to access the shell.",
       generatingToken: "Generating access token...",
       accessError: "Access Error",
       readyToAccess: "Ready to Access",
@@ -1637,6 +1648,17 @@ export const translations: Record<Locale, TranslationTree> = {
       regenerateToken: "Regenerate Token",
       instanceMustBeRunning: "Instance must be running to access",
       failedToGenerateAccessToken: "Failed to generate access token",
+      connectShell: "Connect Shell",
+      disconnectShell: "Disconnect",
+      shellConnecting: "Connecting...",
+      shellConnectedStatus: "Shell connected",
+      enterFullscreen: "Enter fullscreen",
+      exitFullscreen: "Exit fullscreen",
+      shellReady: "Shell ready",
+      shellMissingToken: "Login token is unavailable.",
+      shellConnectionFailed: "Failed to connect shell.",
+      shellConnected: "Connected to {name}\n",
+      shellDisconnected: "\nShell disconnected.\n",
       expired: "Expired",
       createTitle: "Create Instance",
       stepOf: "Step {step} of 3: {label}",
@@ -1681,7 +1703,10 @@ export const translations: Record<Locale, TranslationTree> = {
       workspaceSection: "Workspace",
       openClawWorkspace: "OpenClaw Workspace",
       openClawWorkspaceDesc:
-        "Import or export the `.openclaw` folder as a `.tar.gz` archive up to 50 MiB.",
+        "Import or export the `.openclaw` folder as a `.tar.gz` archive up to 500 MiB by default.",
+      runtimeWorkspace: "{runtime} Workspace",
+      runtimeWorkspaceDesc:
+        "Import or export the `{directory}` folder as a `.tar.gz` archive up to 500 MiB by default.",
       workspaceReady: "Ready",
       workspacePaused: "Paused",
       exportingOpenClaw: "Exporting...",
@@ -1689,9 +1714,19 @@ export const translations: Record<Locale, TranslationTree> = {
       importingOpenClaw: "Importing...",
       importOpenClaw: "Import .openclaw",
       importOpenClawSuccess: "OpenClaw workspace imported successfully.",
-      openClawArchiveTooLarge: "Archive too large. Maximum size is 50 MiB.",
+      exportingRuntimeWorkspace: "Exporting...",
+      exportRuntimeWorkspace: "Export {directory}",
+      importingRuntimeWorkspace: "Importing...",
+      importRuntimeWorkspace: "Import {directory}",
+      importRuntimeWorkspaceSuccess:
+        "{runtime} workspace imported successfully.",
+      openClawArchiveTooLarge: "Archive too large. Maximum size is 500 MiB by default.",
       importOpenClawFailed: "Failed to import .openclaw: {message}",
       exportOpenClawFailed: "Failed to export .openclaw: {message}",
+      importRuntimeWorkspaceFailed:
+        "Failed to import {directory}: {message}",
+      exportRuntimeWorkspaceFailed:
+        "Failed to export {directory}: {message}",
       memoryReserved: "Memory reserved",
       persistentStorage: "Persistent storage",
       gpuAttached: "GPU attached",
@@ -1705,10 +1740,14 @@ export const translations: Record<Locale, TranslationTree> = {
       optional: "Optional",
       changeOpenClawArchive: "Change .openclaw Archive",
       chooseOpenClawArchive: "Choose .openclaw Archive",
+      changeRuntimeArchive: "Change {directory} Archive",
+      chooseRuntimeArchive: "Choose {directory} Archive",
       remove: "Remove",
       selectedArchive: "Selected archive: {name}",
       noArchiveSelected:
         "No archive selected. The instance will be created with an empty .openclaw workspace.",
+      noRuntimeArchiveSelected:
+        "No archive selected. The instance will be created with an empty {directory} workspace.",
       quotaValidation: "Quota Validation",
       unableToLoadQuota:
         "Unable to load your quota. Create Instance stays disabled until quota is available.",
@@ -1738,6 +1777,10 @@ export const translations: Record<Locale, TranslationTree> = {
           label: "Webtop Desktop",
           description:
             "Browser-based Linux desktop proxied through ClawManager",
+        },
+        hermes: {
+          label: "Hermes Runtime",
+          description: "Hermes runtime built on the webtop desktop base",
         },
         custom: {
           label: "Custom Image",
@@ -1797,6 +1840,7 @@ export const translations: Record<Locale, TranslationTree> = {
         "{name} is a ClawManager built-in variable. Edit it in the built-in section instead.",
       duplicateEnvName: "Duplicate environment variable name: {name}",
       openClawInjection: "OpenClaw Injection",
+      runtimeInjection: "{runtime} Injection",
       selectedCount: "{count} selected",
       noReusableSkillsSelected: "No reusable skills selected.",
       noAvailableSkillsForInjection:
@@ -1812,6 +1856,7 @@ export const translations: Record<Locale, TranslationTree> = {
       archiveSkipsChannelInjection:
         "Archive mode skips resource-based channel injection.",
       compilingOpenClawPreview: "Compiling OpenClaw resource preview...",
+      compilingRuntimePreview: "Compiling runtime resource preview...",
       noChannelsSelectedForInjection: "No channels selected for injection.",
       skillInjection: "Skill Injection",
       envManagedProxyPath: "ClawManager managed proxy path",
@@ -1930,8 +1975,10 @@ export const translations: Record<Locale, TranslationTree> = {
       timelineSectionKubernetes: "k8s",
       timelineSectionCommand: "command",
       metricCpu: "CPU",
-      metricCpuDetail:
-        "{cores} cores · load 1m {load1} · 5m {load5} · 15m {load15}",
+      metricCpuSampling: "Sampling...",
+      metricCpuUsedCoresDetail: "{used} / {available} cores",
+      metricCpuCoresDetail: "{cores} cores",
+      metricCpuLoadDetail: "load 1m {load1} · 5m {load5} · 15m {load15}",
       metricMemory: "Memory",
       metricMemoryDetail: "{used} used / {total}",
       metricDisk: "Disk",
@@ -1980,7 +2027,7 @@ export const translations: Record<Locale, TranslationTree> = {
       paginationPrev: "Previous",
       paginationNext: "Next",
       skillUploadHint:
-        "Upload `.zip` only. Each top-level directory is imported as one skill.",
+        "Upload `.zip` only. Put SKILL.md at the archive root for one skill, or in each top-level directory for batch import.",
       loadingSkills: "Loading skills...",
       noSkills: "No skills uploaded yet.",
       skillMeta: "{key} · risk {risk} · used by {count} instance(s)",
@@ -2021,6 +2068,8 @@ export const translations: Record<Locale, TranslationTree> = {
         "Compose a new reusable bundle without leaving the resources list behind.",
       bundleName: "Bundle Name",
       bundleResources: "Bundle Resources",
+      uploadedSkills: "Uploaded Skills",
+      noUploadedSkillsForBundle: "No active low-risk uploaded skills yet.",
       noResourcesForGroup: "No {type} resources yet.",
       actions: {
         new: "New",
@@ -2056,6 +2105,11 @@ export const translations: Record<Locale, TranslationTree> = {
           description:
             "DingTalk channel with client credentials and sender allowlist controls.",
         },
+        wecom: {
+          label: "WeCom",
+          description:
+            "WeCom channel with bot credentials and pairing DM controls.",
+        },
         slack: {
           label: "Slack",
           description: "Slack workspace app powered by Bolt.",
@@ -2083,6 +2137,21 @@ export const translations: Record<Locale, TranslationTree> = {
             clientSecret: {
               label: "Client Secret",
               placeholder: "client secret",
+            },
+          },
+        },
+        wecom: {
+          title: "WeCom Channel Editor",
+          description:
+            "Start with the bot credential form, or switch to JSON when you need the full config surface.",
+          fields: {
+            botId: {
+              label: "Bot ID",
+              placeholder: "xxxxxxx",
+            },
+            secret: {
+              label: "Secret",
+              placeholder: "bot secret",
             },
           },
         },
@@ -2655,19 +2724,20 @@ export const translations: Record<Locale, TranslationTree> = {
       loadFailed: "加载镜像设置失败",
       requiredFields: "实例类型和镜像地址为必填项。",
       duplicateType: "这个实例类型已经有一张卡片。",
-      duplicateImage: "该实例类型下已经存在相同的运行时镜像。",
+      duplicateImage: "该实例类型和运行时类型下已经存在相同的运行时镜像。",
       saveFailed: "保存镜像设置失败",
       deleteFailed: "删除镜像设置失败",
       runtimeImageCards: "运行时镜像卡片",
       runtimeImageCardsSubtitle:
-        "为每种桌面运行时配置镜像地址。保存后的卡片会覆盖内置默认值。",
+        "配置桌面和 Shell 运行时镜像卡片。Shell 卡片可以使用不包含虚拟桌面的轻量镜像。",
       addCard: "添加卡片",
       instanceType: "实例类型",
+      runtimeType: "运行时类型",
       cardTitle: "卡片标题",
       imageAddress: "镜像地址",
       defaultImage: "默认镜像",
       empty:
-        "当前还没有运行时镜像卡片。添加一张卡片即可覆盖某种桌面类型的默认镜像。",
+        "当前还没有运行时镜像卡片。添加一张卡片即可覆盖某种运行时类型的默认镜像。",
     },
     userManagementPage: {
       loading: "正在加载用户...",
@@ -2680,6 +2750,8 @@ export const translations: Record<Locale, TranslationTree> = {
       selectCsv: "请先选择要导入的 CSV 文件",
       importFailed: "导入用户失败",
       importUsers: "导入用户",
+      showingUsers: "显示第 {from}-{to} 个用户，共 {total} 个",
+      noUsers: "暂无用户",
       importCompleted: "导入完成：成功创建 {created} 个，失败 {failed} 个",
       expectedColumns: "期望列：",
       lineError: "第 {line} 行{username}",
@@ -2754,6 +2826,11 @@ export const translations: Record<Locale, TranslationTree> = {
       instanceImage: "实例镜像",
       runtimeImageSelectionHint: "选择该实例类型实际要使用的运行时镜像版本。",
       runtimeImageUnavailable: "当前这个实例类型没有可用的运行时镜像。",
+      runtimeType: "Runtime 类型",
+      runtimeTypeDesktop: "桌面",
+      runtimeTypeDesktopDesc: "通过现有虚拟桌面路径在浏览器中访问。",
+      runtimeTypeShell: "Shell",
+      runtimeTypeShellDesc: "不创建虚拟桌面服务，直接通过 Shell 访问实例。",
       operatingSystem: "操作系统",
       access: "访问",
       portalView: "门户视图",
@@ -2789,6 +2866,7 @@ export const translations: Record<Locale, TranslationTree> = {
       logsComingSoon: "将在第 6 阶段提供",
       startTheInstance: "实例已停止",
       startToAccessDesktop: "启动实例后即可访问桌面。",
+      startToAccessShell: "启动实例后即可访问 Shell。",
       generatingToken: "正在生成访问令牌...",
       accessError: "访问错误",
       readyToAccess: "准备访问",
@@ -2800,6 +2878,17 @@ export const translations: Record<Locale, TranslationTree> = {
       regenerateToken: "重新生成令牌",
       instanceMustBeRunning: "实例必须处于运行中才能访问",
       failedToGenerateAccessToken: "生成访问令牌失败",
+      connectShell: "连接 Shell",
+      disconnectShell: "断开连接",
+      shellConnecting: "正在连接...",
+      shellConnectedStatus: "Shell 已连接",
+      enterFullscreen: "进入全屏",
+      exitFullscreen: "退出全屏",
+      shellReady: "Shell 已就绪",
+      shellMissingToken: "登录令牌不可用。",
+      shellConnectionFailed: "Shell 连接失败。",
+      shellConnected: "已连接到 {name}\n",
+      shellDisconnected: "\nShell 已断开。\n",
       expired: "已过期",
       createTitle: "创建实例",
       stepOf: "第 {step} 步，共 3 步：{label}",
@@ -2843,14 +2932,24 @@ export const translations: Record<Locale, TranslationTree> = {
       workspaceSection: "工作区",
       openClawWorkspace: "OpenClaw 工作区",
       openClawWorkspaceDesc:
-        "可将 `.openclaw` 文件夹导入或导出为不超过 50 MiB 的 `.tar.gz` 压缩包。",
+        "默认可将 `.openclaw` 文件夹导入或导出为不超过 500 MiB 的 `.tar.gz` 压缩包。",
+      runtimeWorkspace: "{runtime} 工作区",
+      runtimeWorkspaceDesc:
+        "默认可将 `{directory}` 文件夹导入或导出为不超过 500 MiB 的 `.tar.gz` 压缩包。",
       workspaceReady: "可操作",
       workspacePaused: "未就绪",
       exportingOpenClaw: "正在导出...",
       exportOpenClaw: "导出 .openclaw",
       importingOpenClaw: "正在导入...",
       importOpenClaw: "导入 .openclaw",
-      openClawArchiveTooLarge: "归档过大。最大大小为 50 MiB。",
+      exportingRuntimeWorkspace: "正在导出...",
+      exportRuntimeWorkspace: "导出 {directory}",
+      importingRuntimeWorkspace: "正在导入...",
+      importRuntimeWorkspace: "导入 {directory}",
+      importRuntimeWorkspaceSuccess: "{runtime} 工作区导入成功。",
+      openClawArchiveTooLarge: "归档过大。默认最大大小为 500 MiB。",
+      importRuntimeWorkspaceFailed: "导入 {directory} 失败：{message}",
+      exportRuntimeWorkspaceFailed: "导出 {directory} 失败：{message}",
       memoryReserved: "预留内存",
       persistentStorage: "持久存储",
       gpuAttached: "GPU 数量",
@@ -2862,9 +2961,13 @@ export const translations: Record<Locale, TranslationTree> = {
       optional: "可选",
       changeOpenClawArchive: "更换 .openclaw 归档",
       chooseOpenClawArchive: "选择 .openclaw 归档",
+      changeRuntimeArchive: "更换 {directory} 归档",
+      chooseRuntimeArchive: "选择 {directory} 归档",
       remove: "移除",
       selectedArchive: "已选择归档：{name}",
       noArchiveSelected: "尚未选择归档。实例将以空的 .openclaw 工作区创建。",
+      noRuntimeArchiveSelected:
+        "尚未选择归档。实例将以空的 {directory} 工作区创建。",
       quotaValidation: "配额校验",
       unableToLoadQuota:
         "无法加载你的配额。在配额可用前，创建实例按钮会保持禁用。",
@@ -2893,6 +2996,10 @@ export const translations: Record<Locale, TranslationTree> = {
         webtop: {
           label: "Webtop 桌面",
           description: "通过 ClawManager 代理的浏览器 Linux 桌面",
+        },
+        hermes: {
+          label: "Hermes Runtime",
+          description: "基于 Webtop 桌面基础镜像构建的 Hermes 运行时",
         },
         custom: {
           label: "自定义镜像",
@@ -2951,6 +3058,7 @@ export const translations: Record<Locale, TranslationTree> = {
         "{name} 是 ClawManager 内置变量，请到内置变量区域中编辑。",
       duplicateEnvName: "环境变量名称重复：{name}",
       openClawInjection: "OpenClaw 注入",
+      runtimeInjection: "{runtime} 注入",
       selectedCount: "已选择 {count} 个",
       noReusableSkillsSelected: "还没有选择可复用技能。",
       noAvailableSkillsForInjection:
@@ -2964,6 +3072,7 @@ export const translations: Record<Locale, TranslationTree> = {
       channelInjection: "Channel 注入",
       archiveSkipsChannelInjection: "归档模式会跳过基于资源的 Channel 注入。",
       compilingOpenClawPreview: "正在生成 OpenClaw 资源预览...",
+      compilingRuntimePreview: "正在生成运行时资源预览...",
       noChannelsSelectedForInjection: "还没有选择用于注入的 Channel。",
       skillInjection: "技能注入",
       envManagedProxyPath: "ClawManager 管理的代理路径",
@@ -3070,8 +3179,11 @@ export const translations: Record<Locale, TranslationTree> = {
       timelineSectionKubernetes: "K8s",
       timelineSectionCommand: "命令",
       metricCpu: "CPU",
-      metricCpuDetail:
-        "{cores} 核 · 1 分钟负载 {load1} · 5 分钟负载 {load5} · 15 分钟负载 {load15}",
+      metricCpuSampling: "采样中",
+      metricCpuUsedCoresDetail: "{used} / {available} 核",
+      metricCpuCoresDetail: "{cores} 核",
+      metricCpuLoadDetail:
+        "1 分钟负载 {load1} · 5 分钟负载 {load5} · 15 分钟负载 {load15}",
       metricMemory: "内存",
       metricMemoryDetail: "已用 {used} / 总计 {total}",
       metricDisk: "磁盘",
@@ -3117,7 +3229,8 @@ export const translations: Record<Locale, TranslationTree> = {
       paginationSummary: "每页 {pageSize} 条，本页显示 {from}-{to}",
       paginationPrev: "上一页",
       paginationNext: "下一页",
-      skillUploadHint: "仅支持上传 `.zip`。每个一级目录会被导入为一个技能。",
+      skillUploadHint:
+        "仅支持上传 `.zip`。单个技能可把 SKILL.md 放在压缩包根目录；批量导入时每个一级目录都需要包含 SKILL.md。",
       loadingSkills: "正在加载技能...",
       noSkills: "暂时还没有上传任何技能。",
       skillMeta: "{key} · 风险 {risk} · 已被 {count} 个实例使用",
@@ -3155,6 +3268,8 @@ export const translations: Record<Locale, TranslationTree> = {
       newBundleSubtitle: "无需离开资源列表，就能创建新的可复用资源包。",
       bundleName: "资源包名称",
       bundleResources: "资源包内容",
+      uploadedSkills: "已上传技能",
+      noUploadedSkillsForBundle: "当前还没有可加入资源包的低风险已上传技能。",
       noResourcesForGroup: "当前还没有 {type} 资源。",
       actions: {
         new: "新建",
@@ -3188,6 +3303,10 @@ export const translations: Record<Locale, TranslationTree> = {
           label: "DingTalk",
           description: "支持客户端凭证和发送方白名单控制的 DingTalk 通道。",
         },
+        wecom: {
+          label: "企业微信",
+          description: "支持 Bot ID、Secret 和私聊配对策略的企业微信通道。",
+        },
         slack: {
           label: "Slack",
           description: "基于 Bolt 的 Slack 工作区应用通道。",
@@ -3214,6 +3333,20 @@ export const translations: Record<Locale, TranslationTree> = {
             clientSecret: {
               label: "Client Secret",
               placeholder: "客户端密钥",
+            },
+          },
+        },
+        wecom: {
+          title: "企业微信 Channel 编辑器",
+          description: "先填写 Bot 凭证表单，只有在需要完整配置时再切到 JSON。",
+          fields: {
+            botId: {
+              label: "Bot ID",
+              placeholder: "xxxxxxx",
+            },
+            secret: {
+              label: "Secret",
+              placeholder: "机器人密钥",
             },
           },
         },
@@ -3806,19 +3939,20 @@ export const translations: Record<Locale, TranslationTree> = {
       requiredFields: "インスタンスタイプとイメージは必須です。",
       duplicateType: "このインスタンスタイプには既にカードがあります。",
       duplicateImage:
-        "選択したインスタンスタイプには同じランタイムイメージが既に存在します。",
+        "選択したインスタンスとランタイムタイプには同じランタイムイメージが既に存在します。",
       saveFailed: "イメージ設定の保存に失敗しました",
       deleteFailed: "イメージ設定の削除に失敗しました",
       runtimeImageCards: "ランタイムイメージカード",
       runtimeImageCardsSubtitle:
-        "サポートされている各デスクトップランタイムで使用するイメージアドレスを設定します。保存したカードは組み込み既定値を上書きします。",
+        "デスクトップと Shell のランタイムイメージカードを設定します。Shell カードには仮想デスクトップを含まない軽量イメージを使用できます。",
       addCard: "カードを追加",
       instanceType: "インスタンスタイプ",
+      runtimeType: "ランタイムタイプ",
       cardTitle: "カードタイトル",
       imageAddress: "イメージアドレス",
       defaultImage: "既定イメージ",
       empty:
-        "ランタイムイメージカードはまだありません。追加するとデスクトップタイプの既定イメージを上書きできます。",
+        "ランタイムイメージカードはまだありません。追加するとランタイムタイプの既定イメージを上書きできます。",
     },
     userManagementPage: {
       loading: "ユーザーを読み込み中...",
@@ -3831,6 +3965,8 @@ export const translations: Record<Locale, TranslationTree> = {
       selectCsv: "インポートする CSV ファイルを選択してください",
       importFailed: "ユーザーのインポートに失敗しました",
       importUsers: "ユーザーをインポート",
+      showingUsers: "{total} 人中 {from}-{to} 人のユーザーを表示",
+      noUsers: "ユーザーが見つかりません",
       importCompleted: "インポート完了: 作成 {created} 件、失敗 {failed} 件",
       expectedColumns: "想定列:",
       lineError: "行 {line}{username}",
@@ -3913,6 +4049,13 @@ export const translations: Record<Locale, TranslationTree> = {
         "このインスタンスタイプで使用するランタイムイメージのバージョンを選択してください。",
       runtimeImageUnavailable:
         "このインスタンスタイプで利用可能なランタイムイメージは現在ありません。",
+      runtimeType: "Runtime タイプ",
+      runtimeTypeDesktop: "デスクトップ",
+      runtimeTypeDesktopDesc:
+        "既存の仮想デスクトップ経路でブラウザからアクセスします。",
+      runtimeTypeShell: "Shell",
+      runtimeTypeShellDesc:
+        "仮想デスクトップサービスを作成せず、Shell で直接アクセスします。",
       operatingSystem: "オペレーティングシステム",
       access: "アクセス",
       portalView: "ポータル表示",
@@ -3952,6 +4095,8 @@ export const translations: Record<Locale, TranslationTree> = {
       startTheInstance: "インスタンス停止中",
       startToAccessDesktop:
         "デスクトップにアクセスするにはインスタンスを開始してください。",
+      startToAccessShell:
+        "シェルにアクセスするにはインスタンスを開始してください。",
       generatingToken: "アクセストークンを生成中...",
       accessError: "アクセスエラー",
       readyToAccess: "アクセス可能です",
@@ -3965,6 +4110,17 @@ export const translations: Record<Locale, TranslationTree> = {
       instanceMustBeRunning:
         "アクセスするにはインスタンスが稼働中である必要があります",
       failedToGenerateAccessToken: "アクセストークンの生成に失敗しました",
+      connectShell: "Shell に接続",
+      disconnectShell: "切断",
+      shellConnecting: "接続中...",
+      shellConnectedStatus: "Shell 接続済み",
+      enterFullscreen: "全画面表示",
+      exitFullscreen: "全画面を終了",
+      shellReady: "Shell 準備完了",
+      shellMissingToken: "ログイントークンを利用できません。",
+      shellConnectionFailed: "Shell への接続に失敗しました。",
+      shellConnected: "{name} に接続しました\n",
+      shellDisconnected: "\nShell が切断されました。\n",
       expired: "期限切れ",
       createTitle: "インスタンス作成",
       stepOf: "ステップ {step}/3: {label}",
@@ -4009,7 +4165,10 @@ export const translations: Record<Locale, TranslationTree> = {
       workspaceSection: "ワークスペース",
       openClawWorkspace: "OpenClaw ワークスペース",
       openClawWorkspaceDesc:
-        "`.openclaw` フォルダーを 50 MiB までの `.tar.gz` アーカイブとしてインポートまたはエクスポートできます。",
+        "`.openclaw` フォルダーを既定で 500 MiB までの `.tar.gz` アーカイブとしてインポートまたはエクスポートできます。",
+      runtimeWorkspace: "{runtime} ワークスペース",
+      runtimeWorkspaceDesc:
+        "`{directory}` フォルダーを既定で 500 MiB までの `.tar.gz` アーカイブとしてインポートまたはエクスポートできます。",
       workspaceReady: "利用可能",
       workspacePaused: "停止中",
       exportingOpenClaw: "エクスポート中...",
@@ -4017,9 +4176,19 @@ export const translations: Record<Locale, TranslationTree> = {
       importingOpenClaw: "インポート中...",
       importOpenClaw: ".openclaw をインポート",
       importOpenClawSuccess: "OpenClaw ワークスペースをインポートしました。",
-      openClawArchiveTooLarge: "アーカイブが大きすぎます。最大サイズは 50 MiB です。",
+      exportingRuntimeWorkspace: "エクスポート中...",
+      exportRuntimeWorkspace: "{directory} をエクスポート",
+      importingRuntimeWorkspace: "インポート中...",
+      importRuntimeWorkspace: "{directory} をインポート",
+      importRuntimeWorkspaceSuccess:
+        "{runtime} ワークスペースをインポートしました。",
+      openClawArchiveTooLarge: "アーカイブが大きすぎます。既定の最大サイズは 500 MiB です。",
       importOpenClawFailed: ".openclaw のインポートに失敗しました: {message}",
       exportOpenClawFailed: ".openclaw のエクスポートに失敗しました: {message}",
+      importRuntimeWorkspaceFailed:
+        "{directory} のインポートに失敗しました: {message}",
+      exportRuntimeWorkspaceFailed:
+        "{directory} のエクスポートに失敗しました: {message}",
       memoryReserved: "予約済みメモリ",
       persistentStorage: "永続ストレージ",
       gpuAttached: "GPU 接続数",
@@ -4033,10 +4202,14 @@ export const translations: Record<Locale, TranslationTree> = {
       optional: "任意",
       changeOpenClawArchive: ".openclaw アーカイブを変更",
       chooseOpenClawArchive: ".openclaw アーカイブを選択",
+      changeRuntimeArchive: "{directory} アーカイブを変更",
+      chooseRuntimeArchive: "{directory} アーカイブを選択",
       remove: "削除",
       selectedArchive: "選択済みアーカイブ: {name}",
       noArchiveSelected:
         "アーカイブが選択されていません。空の .openclaw ワークスペースでインスタンスが作成されます。",
+      noRuntimeArchiveSelected:
+        "アーカイブが選択されていません。空の {directory} ワークスペースでインスタンスが作成されます。",
       quotaValidation: "クォータ検証",
       unableToLoadQuota:
         "クォータを読み込めませんでした。クォータが取得できるまでインスタンス作成は無効のままです。",
@@ -4067,6 +4240,11 @@ export const translations: Record<Locale, TranslationTree> = {
           label: "Webtop デスクトップ",
           description:
             "ClawManager 経由でプロキシされるブラウザベースの Linux デスクトップ",
+        },
+        hermes: {
+          label: "Hermes Runtime",
+          description:
+            "Webtop デスクトップベースで構築された Hermes ランタイム",
         },
         custom: {
           label: "カスタムイメージ",
@@ -4126,6 +4304,7 @@ export const translations: Record<Locale, TranslationTree> = {
         "{name} は ClawManager の組み込み変数です。組み込みセクションで編集してください。",
       duplicateEnvName: "重複した環境変数名: {name}",
       openClawInjection: "OpenClaw 注入",
+      runtimeInjection: "{runtime} 注入",
       selectedCount: "{count} 件を選択",
       noReusableSkillsSelected: "再利用可能なスキルが選択されていません。",
       noAvailableSkillsForInjection:
@@ -4140,6 +4319,7 @@ export const translations: Record<Locale, TranslationTree> = {
       archiveSkipsChannelInjection:
         "アーカイブモードではリソースベースの Channel 注入をスキップします。",
       compilingOpenClawPreview: "OpenClaw リソースのプレビューを生成中...",
+      compilingRuntimePreview: "Runtime リソースのプレビューを生成中...",
       noChannelsSelectedForInjection: "注入する Channel が選択されていません。",
       skillInjection: "スキル注入",
       envManagedProxyPath: "ClawManager が管理するプロキシパス",
@@ -4260,8 +4440,10 @@ export const translations: Record<Locale, TranslationTree> = {
       timelineSectionKubernetes: "k8s",
       timelineSectionCommand: "command",
       metricCpu: "CPU",
-      metricCpuDetail:
-        "{cores} コア · 負荷 1m {load1} · 5m {load5} · 15m {load15}",
+      metricCpuSampling: "サンプリング中",
+      metricCpuUsedCoresDetail: "{used} / {available} コア",
+      metricCpuCoresDetail: "{cores} コア",
+      metricCpuLoadDetail: "負荷 1m {load1} · 5m {load5} · 15m {load15}",
       metricMemory: "メモリ",
       metricMemoryDetail: "{used} 使用 / {total}",
       metricDisk: "ディスク",
@@ -4312,7 +4494,7 @@ export const translations: Record<Locale, TranslationTree> = {
       paginationPrev: "前へ",
       paginationNext: "次へ",
       skillUploadHint:
-        "`.zip` のみアップロードできます。トップレベルの各ディレクトリが 1 つのスキルとして取り込まれます。",
+        "`.zip` のみアップロードできます。単一スキルはルートに SKILL.md、複数スキルは各トップレベルディレクトリに SKILL.md を置いてください。",
       loadingSkills: "スキルを読み込み中...",
       noSkills: "まだアップロードされたスキルはありません。",
       skillMeta: "{key} · リスク {risk} · {count} インスタンスで使用中",
@@ -4353,6 +4535,9 @@ export const translations: Record<Locale, TranslationTree> = {
         "リソース一覧を離れずに新しい再利用可能バンドルを作成します。",
       bundleName: "バンドル名",
       bundleResources: "バンドルのリソース",
+      uploadedSkills: "アップロード済みスキル",
+      noUploadedSkillsForBundle:
+        "バンドルに追加できる低リスクのアップロード済みスキルはまだありません。",
       noResourcesForGroup: "{type} のリソースはまだありません。",
       actions: {
         new: "新規作成",
@@ -4388,6 +4573,11 @@ export const translations: Record<Locale, TranslationTree> = {
           description:
             "クライアント認証情報と送信元許可リストを設定できる DingTalk チャネル。",
         },
+        wecom: {
+          label: "WeCom",
+          description:
+            "Bot 認証情報とペアリング DM 制御を備えた WeCom チャネル。",
+        },
         slack: {
           label: "Slack",
           description: "Bolt ベースの Slack ワークスペースアプリ。",
@@ -4414,6 +4604,21 @@ export const translations: Record<Locale, TranslationTree> = {
             clientSecret: {
               label: "Client Secret",
               placeholder: "client secret",
+            },
+          },
+        },
+        wecom: {
+          title: "WeCom Channel エディタ",
+          description:
+            "まず Bot 認証情報フォームから始め、完全な設定が必要なときだけ JSON に切り替えます。",
+          fields: {
+            botId: {
+              label: "Bot ID",
+              placeholder: "xxxxxxx",
+            },
+            secret: {
+              label: "Secret",
+              placeholder: "bot secret",
             },
           },
         },
@@ -5004,19 +5209,20 @@ export const translations: Record<Locale, TranslationTree> = {
       requiredFields: "인스턴스 유형과 이미지는 필수입니다.",
       duplicateType: "이 인스턴스 유형에는 이미 카드가 있습니다.",
       duplicateImage:
-        "선택한 인스턴스 유형에 동일한 런타임 이미지가 이미 있습니다.",
+        "선택한 인스턴스 및 런타임 유형에 동일한 런타임 이미지가 이미 있습니다.",
       saveFailed: "이미지 설정을 저장하지 못했습니다",
       deleteFailed: "이미지 설정을 삭제하지 못했습니다",
       runtimeImageCards: "런타임 이미지 카드",
       runtimeImageCardsSubtitle:
-        "지원되는 각 데스크톱 런타임에서 사용할 이미지 주소를 설정합니다. 저장된 카드는 기본 내장값을 덮어씁니다.",
+        "데스크톱 및 Shell 런타임 이미지 카드를 설정합니다. Shell 카드는 가상 데스크톱이 없는 더 작은 이미지를 사용할 수 있습니다.",
       addCard: "카드 추가",
       instanceType: "인스턴스 유형",
+      runtimeType: "런타임 유형",
       cardTitle: "카드 제목",
       imageAddress: "이미지 주소",
       defaultImage: "기본 이미지",
       empty:
-        "아직 런타임 이미지 카드가 없습니다. 카드를 추가하면 데스크톱 유형의 기본 이미지를 덮어쓸 수 있습니다.",
+        "아직 런타임 이미지 카드가 없습니다. 카드를 추가하면 런타임 유형의 기본 이미지를 덮어쓸 수 있습니다.",
     },
     userManagementPage: {
       loading: "사용자를 불러오는 중...",
@@ -5029,6 +5235,8 @@ export const translations: Record<Locale, TranslationTree> = {
       selectCsv: "가져올 CSV 파일을 선택하세요",
       importFailed: "사용자 가져오기에 실패했습니다",
       importUsers: "사용자 가져오기",
+      showingUsers: "총 {total}명 중 {from}-{to}명 사용자 표시",
+      noUsers: "사용자를 찾을 수 없습니다",
       importCompleted: "가져오기 완료: 생성 {created}명, 실패 {failed}명",
       expectedColumns: "필수 열:",
       lineError: "{line}행{username}",
@@ -5108,6 +5316,13 @@ export const translations: Record<Locale, TranslationTree> = {
         "이 인스턴스 유형에 사용할 런타임 이미지 버전을 선택하세요.",
       runtimeImageUnavailable:
         "이 인스턴스 유형에 현재 사용할 수 있는 런타임 이미지가 없습니다.",
+      runtimeType: "Runtime 유형",
+      runtimeTypeDesktop: "데스크톱",
+      runtimeTypeDesktopDesc:
+        "기존 가상 데스크톱 경로를 통해 브라우저에서 접속합니다.",
+      runtimeTypeShell: "Shell",
+      runtimeTypeShellDesc:
+        "가상 데스크톱 서비스를 만들지 않고 Shell 로 직접 접속합니다.",
       operatingSystem: "운영체제",
       access: "접속",
       portalView: "포털 보기",
@@ -5144,6 +5359,7 @@ export const translations: Record<Locale, TranslationTree> = {
       logsComingSoon: "6단계에서 지원 예정",
       startTheInstance: "인스턴스 중지됨",
       startToAccessDesktop: "데스크톱에 접속하려면 인스턴스를 시작하세요.",
+      startToAccessShell: "Shell 에 접속하려면 인스턴스를 시작하세요.",
       generatingToken: "접속 토큰 생성 중...",
       accessError: "접속 오류",
       readyToAccess: "접속 준비 완료",
@@ -5155,6 +5371,17 @@ export const translations: Record<Locale, TranslationTree> = {
       regenerateToken: "토큰 재생성",
       instanceMustBeRunning: "접속하려면 인스턴스가 실행 중이어야 합니다",
       failedToGenerateAccessToken: "접속 토큰 생성에 실패했습니다",
+      connectShell: "Shell 연결",
+      disconnectShell: "연결 끊기",
+      shellConnecting: "연결 중...",
+      shellConnectedStatus: "Shell 연결됨",
+      enterFullscreen: "전체 화면으로 전환",
+      exitFullscreen: "전체 화면 종료",
+      shellReady: "Shell 준비됨",
+      shellMissingToken: "로그인 토큰을 사용할 수 없습니다.",
+      shellConnectionFailed: "Shell 연결에 실패했습니다.",
+      shellConnected: "{name}에 연결되었습니다\n",
+      shellDisconnected: "\nShell 연결이 끊어졌습니다.\n",
       expired: "만료됨",
       createTitle: "인스턴스 생성",
       stepOf: "3단계 중 {step}단계: {label}",
@@ -5199,7 +5426,10 @@ export const translations: Record<Locale, TranslationTree> = {
       workspaceSection: "워크스페이스",
       openClawWorkspace: "OpenClaw 워크스페이스",
       openClawWorkspaceDesc:
-        "`.openclaw` 폴더를 최대 50 MiB 크기의 `.tar.gz` 아카이브로 가져오거나 내보낼 수 있습니다.",
+        "기본적으로 `.openclaw` 폴더를 최대 500 MiB 크기의 `.tar.gz` 아카이브로 가져오거나 내보낼 수 있습니다.",
+      runtimeWorkspace: "{runtime} 워크스페이스",
+      runtimeWorkspaceDesc:
+        "기본적으로 `{directory}` 폴더를 최대 500 MiB 크기의 `.tar.gz` 아카이브로 가져오거나 내보낼 수 있습니다.",
       workspaceReady: "준비됨",
       workspacePaused: "대기 중",
       exportingOpenClaw: "내보내는 중...",
@@ -5207,9 +5437,17 @@ export const translations: Record<Locale, TranslationTree> = {
       importingOpenClaw: "가져오는 중...",
       importOpenClaw: ".openclaw 가져오기",
       importOpenClawSuccess: "OpenClaw 워크스페이스를 가져왔습니다.",
-      openClawArchiveTooLarge: "아카이브가 너무 큽니다. 최대 크기는 50 MiB입니다.",
+      exportingRuntimeWorkspace: "내보내는 중...",
+      exportRuntimeWorkspace: "{directory} 내보내기",
+      importingRuntimeWorkspace: "가져오는 중...",
+      importRuntimeWorkspace: "{directory} 가져오기",
+      importRuntimeWorkspaceSuccess:
+        "{runtime} 워크스페이스를 가져왔습니다.",
+      openClawArchiveTooLarge: "아카이브가 너무 큽니다. 기본 최대 크기는 500 MiB입니다.",
       importOpenClawFailed: ".openclaw 가져오기 실패: {message}",
       exportOpenClawFailed: ".openclaw 내보내기 실패: {message}",
+      importRuntimeWorkspaceFailed: "{directory} 가져오기 실패: {message}",
+      exportRuntimeWorkspaceFailed: "{directory} 내보내기 실패: {message}",
       memoryReserved: "예약 메모리",
       persistentStorage: "영구 스토리지",
       gpuAttached: "연결된 GPU",
@@ -5223,10 +5461,14 @@ export const translations: Record<Locale, TranslationTree> = {
       optional: "선택",
       changeOpenClawArchive: ".openclaw 아카이브 변경",
       chooseOpenClawArchive: ".openclaw 아카이브 선택",
+      changeRuntimeArchive: "{directory} 아카이브 변경",
+      chooseRuntimeArchive: "{directory} 아카이브 선택",
       remove: "제거",
       selectedArchive: "선택된 아카이브: {name}",
       noArchiveSelected:
         "선택된 아카이브가 없습니다. 빈 .openclaw 워크스페이스로 인스턴스가 생성됩니다.",
+      noRuntimeArchiveSelected:
+        "선택된 아카이브가 없습니다. 빈 {directory} 워크스페이스로 인스턴스가 생성됩니다.",
       quotaValidation: "할당량 검증",
       unableToLoadQuota:
         "할당량을 불러올 수 없습니다. 할당량 정보를 받을 때까지 인스턴스 생성은 비활성화됩니다.",
@@ -5256,6 +5498,10 @@ export const translations: Record<Locale, TranslationTree> = {
           label: "Webtop 데스크톱",
           description:
             "ClawManager를 통해 프록시되는 브라우저 기반 Linux 데스크톱",
+        },
+        hermes: {
+          label: "Hermes Runtime",
+          description: "Webtop 데스크톱 기반으로 빌드된 Hermes 런타임",
         },
         custom: {
           label: "사용자 지정 이미지",
@@ -5314,6 +5560,7 @@ export const translations: Record<Locale, TranslationTree> = {
         "{name}은(는) ClawManager 내장 변수입니다. 내장 변수 섹션에서 편집하세요.",
       duplicateEnvName: "중복된 환경 변수 이름: {name}",
       openClawInjection: "OpenClaw 주입",
+      runtimeInjection: "{runtime} 주입",
       selectedCount: "{count}개 선택됨",
       noReusableSkillsSelected: "선택된 재사용 가능 스킬이 없습니다.",
       noAvailableSkillsForInjection:
@@ -5329,6 +5576,7 @@ export const translations: Record<Locale, TranslationTree> = {
       archiveSkipsChannelInjection:
         "아카이브 모드는 리소스 기반 Channel 주입을 건너뜁니다.",
       compilingOpenClawPreview: "OpenClaw 리소스 미리보기를 생성하는 중...",
+      compilingRuntimePreview: "Runtime 리소스 미리보기를 생성하는 중...",
       noChannelsSelectedForInjection: "주입할 Channel 이 선택되지 않았습니다.",
       skillInjection: "스킬 주입",
       envManagedProxyPath: "ClawManager가 관리하는 프록시 경로",
@@ -5449,8 +5697,10 @@ export const translations: Record<Locale, TranslationTree> = {
       timelineSectionKubernetes: "k8s",
       timelineSectionCommand: "command",
       metricCpu: "CPU",
-      metricCpuDetail:
-        "{cores}코어 · 1분 부하 {load1} · 5분 부하 {load5} · 15분 부하 {load15}",
+      metricCpuSampling: "샘플링 중",
+      metricCpuUsedCoresDetail: "{used} / {available}코어",
+      metricCpuCoresDetail: "{cores}코어",
+      metricCpuLoadDetail: "1분 부하 {load1} · 5분 부하 {load5} · 15분 부하 {load15}",
       metricMemory: "메모리",
       metricMemoryDetail: "{used} 사용 / {total}",
       metricDisk: "디스크",
@@ -5499,7 +5749,7 @@ export const translations: Record<Locale, TranslationTree> = {
       paginationPrev: "이전 페이지",
       paginationNext: "다음 페이지",
       skillUploadHint:
-        "`.zip`만 업로드할 수 있습니다. 최상위 디렉터리 하나가 스킬 하나로 가져와집니다.",
+        "`.zip`만 업로드할 수 있습니다. 단일 스킬은 루트에 SKILL.md를 두고, 일괄 가져오기는 각 최상위 디렉터리에 SKILL.md를 두세요.",
       loadingSkills: "스킬을 불러오는 중...",
       noSkills: "업로드된 스킬이 아직 없습니다.",
       skillMeta: "{key} · 위험도 {risk} · {count}개 인스턴스에서 사용 중",
@@ -5540,6 +5790,9 @@ export const translations: Record<Locale, TranslationTree> = {
         "리소스 목록을 벗어나지 않고 새 재사용 번들을 만듭니다.",
       bundleName: "번들 이름",
       bundleResources: "번들 리소스",
+      uploadedSkills: "업로드된 스킬",
+      noUploadedSkillsForBundle:
+        "번들에 추가할 수 있는 저위험 업로드 스킬이 아직 없습니다.",
       noResourcesForGroup: "{type} 리소스가 아직 없습니다.",
       actions: {
         new: "새로 만들기",
@@ -5575,6 +5828,11 @@ export const translations: Record<Locale, TranslationTree> = {
           description:
             "클라이언트 자격 증명과 발신자 허용 목록을 지원하는 DingTalk 채널입니다.",
         },
+        wecom: {
+          label: "WeCom",
+          description:
+            "Bot 자격 증명과 페어링 DM 제어를 지원하는 WeCom 채널입니다.",
+        },
         slack: {
           label: "Slack",
           description: "Bolt 기반의 Slack 워크스페이스 앱입니다.",
@@ -5601,6 +5859,21 @@ export const translations: Record<Locale, TranslationTree> = {
             clientSecret: {
               label: "Client Secret",
               placeholder: "client secret",
+            },
+          },
+        },
+        wecom: {
+          title: "WeCom Channel 편집기",
+          description:
+            "먼저 Bot 자격 증명 폼으로 시작하고, 전체 설정이 필요할 때만 JSON 으로 전환하세요.",
+          fields: {
+            botId: {
+              label: "Bot ID",
+              placeholder: "xxxxxxx",
+            },
+            secret: {
+              label: "Secret",
+              placeholder: "bot secret",
             },
           },
         },
@@ -6204,19 +6477,20 @@ export const translations: Record<Locale, TranslationTree> = {
       requiredFields: "Instanztyp und Image sind erforderlich.",
       duplicateType: "Für diesen Instanztyp existiert bereits eine Karte.",
       duplicateImage:
-        "Dieses Runtime-Image existiert für den gewählten Instanztyp bereits.",
+        "Dieses Runtime-Image existiert für den gewählten Instanz- und Runtime-Typ bereits.",
       saveFailed: "Bildeinstellung konnte nicht gespeichert werden",
       deleteFailed: "Bildeinstellung konnte nicht gelöscht werden",
       runtimeImageCards: "Runtime-Image-Karten",
       runtimeImageCardsSubtitle:
-        "Konfigurieren Sie die Image-Adresse für jede unterstützte Desktop-Laufzeit. Gespeicherte Karten überschreiben die eingebauten Standardwerte.",
+        "Konfigurieren Sie Desktop- und Shell-Runtime-Image-Karten. Shell-Karten können kleinere Images ohne virtuellen Desktop verwenden.",
       addCard: "Karte hinzufügen",
       instanceType: "Instanztyp",
+      runtimeType: "Runtime-Typ",
       cardTitle: "Kartentitel",
       imageAddress: "Image-Adresse",
       defaultImage: "Standard-Image",
       empty:
-        "Es gibt noch keine Runtime-Image-Karten. Fügen Sie eine hinzu, um das Standard-Image für einen Desktop-Typ zu überschreiben.",
+        "Es gibt noch keine Runtime-Image-Karten. Fügen Sie eine hinzu, um das Standard-Image für einen Runtime-Typ zu überschreiben.",
     },
     userManagementPage: {
       loading: "Benutzer werden geladen...",
@@ -6229,6 +6503,8 @@ export const translations: Record<Locale, TranslationTree> = {
       selectCsv: "Bitte wählen Sie eine CSV-Datei zum Importieren aus",
       importFailed: "Benutzer konnten nicht importiert werden",
       importUsers: "Benutzer importieren",
+      showingUsers: "Zeige Benutzer {from}-{to} von {total}",
+      noUsers: "Keine Benutzer gefunden",
       importCompleted:
         "Import abgeschlossen: {created} erstellt, {failed} fehlgeschlagen",
       expectedColumns: "Erwartete Spalten:",
@@ -6312,6 +6588,13 @@ export const translations: Record<Locale, TranslationTree> = {
         "Wählen Sie aus, welche Runtime-Image-Version für diesen Instanztyp verwendet werden soll.",
       runtimeImageUnavailable:
         "Für diesen Instanztyp ist derzeit kein aktiviertes Runtime-Image verfügbar.",
+      runtimeType: "Runtime-Typ",
+      runtimeTypeDesktop: "Desktop",
+      runtimeTypeDesktopDesc:
+        "Browserzugriff über den bestehenden virtuellen Desktop.",
+      runtimeTypeShell: "Shell",
+      runtimeTypeShellDesc:
+        "Direkter Shell-Zugriff ohne virtuellen Desktop-Service.",
       operatingSystem: "Betriebssystem",
       access: "Zugriff",
       portalView: "Portalansicht",
@@ -6350,6 +6633,8 @@ export const translations: Record<Locale, TranslationTree> = {
       startTheInstance: "Instanz gestoppt",
       startToAccessDesktop:
         "Starten Sie die Instanz, um auf den Desktop zuzugreifen.",
+      startToAccessShell:
+        "Starten Sie die Instanz, um auf die Shell zuzugreifen.",
       generatingToken: "Zugriffstoken wird erstellt...",
       accessError: "Zugriffsfehler",
       readyToAccess: "Bereit für den Zugriff",
@@ -6362,6 +6647,17 @@ export const translations: Record<Locale, TranslationTree> = {
       regenerateToken: "Token neu erzeugen",
       instanceMustBeRunning: "Die Instanz muss laufen, um darauf zuzugreifen",
       failedToGenerateAccessToken: "Zugriffstoken konnte nicht erstellt werden",
+      connectShell: "Shell verbinden",
+      disconnectShell: "Trennen",
+      shellConnecting: "Verbindung...",
+      shellConnectedStatus: "Shell verbunden",
+      enterFullscreen: "Vollbild öffnen",
+      exitFullscreen: "Vollbild beenden",
+      shellReady: "Shell bereit",
+      shellMissingToken: "Anmeldetoken ist nicht verfügbar.",
+      shellConnectionFailed: "Shell-Verbindung fehlgeschlagen.",
+      shellConnected: "Mit {name} verbunden\n",
+      shellDisconnected: "\nShell getrennt.\n",
       expired: "Abgelaufen",
       createTitle: "Instanz erstellen",
       stepOf: "Schritt {step} von 3: {label}",
@@ -6406,7 +6702,10 @@ export const translations: Record<Locale, TranslationTree> = {
       workspaceSection: "Arbeitsbereich",
       openClawWorkspace: "OpenClaw-Arbeitsbereich",
       openClawWorkspaceDesc:
-        "Importieren oder exportieren Sie den Ordner `.openclaw` als `.tar.gz`-Archiv bis 50 MiB.",
+        "Importieren oder exportieren Sie den Ordner `.openclaw` standardmaessig als `.tar.gz`-Archiv bis 500 MiB.",
+      runtimeWorkspace: "{runtime}-Arbeitsbereich",
+      runtimeWorkspaceDesc:
+        "Importieren oder exportieren Sie den Ordner `{directory}` standardmaessig als `.tar.gz`-Archiv bis 500 MiB.",
       workspaceReady: "Bereit",
       workspacePaused: "Pausiert",
       exportingOpenClaw: "Export wird erstellt...",
@@ -6414,9 +6713,19 @@ export const translations: Record<Locale, TranslationTree> = {
       importingOpenClaw: "Import läuft...",
       importOpenClaw: ".openclaw importieren",
       importOpenClawSuccess: "OpenClaw-Arbeitsbereich erfolgreich importiert.",
-      openClawArchiveTooLarge: "Archiv zu groß. Die maximale Größe beträgt 50 MiB.",
+      exportingRuntimeWorkspace: "Export wird erstellt...",
+      exportRuntimeWorkspace: "{directory} exportieren",
+      importingRuntimeWorkspace: "Import läuft...",
+      importRuntimeWorkspace: "{directory} importieren",
+      importRuntimeWorkspaceSuccess:
+        "{runtime}-Arbeitsbereich erfolgreich importiert.",
+      openClawArchiveTooLarge: "Archiv zu gross. Die Standard-Maximalgroesse betraegt 500 MiB.",
       importOpenClawFailed: ".openclaw-Import fehlgeschlagen: {message}",
       exportOpenClawFailed: ".openclaw-Export fehlgeschlagen: {message}",
+      importRuntimeWorkspaceFailed:
+        "{directory}-Import fehlgeschlagen: {message}",
+      exportRuntimeWorkspaceFailed:
+        "{directory}-Export fehlgeschlagen: {message}",
       memoryReserved: "Reservierter Speicher",
       persistentStorage: "Persistenter Speicher",
       gpuAttached: "Zugewiesene GPU",
@@ -6430,10 +6739,14 @@ export const translations: Record<Locale, TranslationTree> = {
       optional: "Optional",
       changeOpenClawArchive: ".openclaw-Archiv ändern",
       chooseOpenClawArchive: ".openclaw-Archiv auswählen",
+      changeRuntimeArchive: "{directory}-Archiv ändern",
+      chooseRuntimeArchive: "{directory}-Archiv auswählen",
       remove: "Entfernen",
       selectedArchive: "Ausgewähltes Archiv: {name}",
       noArchiveSelected:
         "Kein Archiv ausgewählt. Die Instanz wird mit einem leeren .openclaw-Arbeitsbereich erstellt.",
+      noRuntimeArchiveSelected:
+        "Kein Archiv ausgewählt. Die Instanz wird mit einem leeren {directory}-Arbeitsbereich erstellt.",
       quotaValidation: "Kontingentprüfung",
       unableToLoadQuota:
         "Ihr Kontingent konnte nicht geladen werden. Instanz erstellen bleibt deaktiviert, bis das Kontingent verfügbar ist.",
@@ -6463,6 +6776,11 @@ export const translations: Record<Locale, TranslationTree> = {
           label: "Webtop-Desktop",
           description:
             "Browserbasierter Linux-Desktop, der über ClawManager bereitgestellt wird",
+        },
+        hermes: {
+          label: "Hermes Runtime",
+          description:
+            "Hermes-Runtime auf Basis des Webtop-Desktop-Images",
         },
         custom: {
           label: "Benutzerdefiniertes Image",
@@ -6525,6 +6843,7 @@ export const translations: Record<Locale, TranslationTree> = {
         "{name} ist eine ClawManager-Built-in-Variable. Bearbeiten Sie sie stattdessen im Built-in-Bereich.",
       duplicateEnvName: "Doppelter Umgebungsvariablenname: {name}",
       openClawInjection: "OpenClaw-Injektion",
+      runtimeInjection: "{runtime}-Injektion",
       selectedCount: "{count} ausgewählt",
       noReusableSkillsSelected: "Keine wiederverwendbaren Skills ausgewählt.",
       noAvailableSkillsForInjection:
@@ -6540,6 +6859,7 @@ export const translations: Record<Locale, TranslationTree> = {
       archiveSkipsChannelInjection:
         "Der Archivmodus überspringt die ressourcenbasierte Channel-Injektion.",
       compilingOpenClawPreview: "OpenClaw-Ressourcenvorschau wird erstellt...",
+      compilingRuntimePreview: "Runtime-Ressourcenvorschau wird erstellt...",
       noChannelsSelectedForInjection:
         "Keine Channels für die Injektion ausgewählt.",
       skillInjection: "Skill-Injektion",
@@ -6661,8 +6981,10 @@ export const translations: Record<Locale, TranslationTree> = {
       timelineSectionKubernetes: "K8s",
       timelineSectionCommand: "Befehl",
       metricCpu: "CPU",
-      metricCpuDetail:
-        "{cores} Kerne · Last 1m {load1} · 5m {load5} · 15m {load15}",
+      metricCpuSampling: "Sampling...",
+      metricCpuUsedCoresDetail: "{used} / {available} Kerne",
+      metricCpuCoresDetail: "{cores} Kerne",
+      metricCpuLoadDetail: "Last 1m {load1} · 5m {load5} · 15m {load15}",
       metricMemory: "Speicher",
       metricMemoryDetail: "{used} genutzt / {total}",
       metricDisk: "Festplatte",
@@ -6713,7 +7035,7 @@ export const translations: Record<Locale, TranslationTree> = {
       paginationPrev: "Zurück",
       paginationNext: "Weiter",
       skillUploadHint:
-        "Nur `.zip` hochladen. Jedes Verzeichnis auf oberster Ebene wird als ein Skill importiert.",
+        "Nur `.zip` hochladen. Für einen Skill SKILL.md im Archivstamm ablegen; für Batch-Importe SKILL.md in jedem Verzeichnis oberster Ebene ablegen.",
       loadingSkills: "Skills werden geladen...",
       noSkills: "Noch keine Skills hochgeladen.",
       skillMeta: "{key} · Risiko {risk} · in {count} Instanz(en) verwendet",
@@ -6754,6 +7076,9 @@ export const translations: Record<Locale, TranslationTree> = {
         "Erstellen Sie ein neues wiederverwendbares Bundle, ohne die Ressourcenliste zu verlassen.",
       bundleName: "Bundle-Name",
       bundleResources: "Bundle-Ressourcen",
+      uploadedSkills: "Hochgeladene Skills",
+      noUploadedSkillsForBundle:
+        "Es gibt noch keine aktiven hochgeladenen Skills mit niedrigem Risiko.",
       noResourcesForGroup: "Es gibt noch keine {type}-Ressourcen.",
       actions: {
         new: "Neu",
@@ -6789,6 +7114,11 @@ export const translations: Record<Locale, TranslationTree> = {
           description:
             "DingTalk-Channel mit Client-Zugangsdaten und Absender-Allowlist-Steuerung.",
         },
+        wecom: {
+          label: "WeCom",
+          description:
+            "WeCom-Channel mit Bot-Zugangsdaten und Pairing-Steuerung fuer Direktnachrichten.",
+        },
         slack: {
           label: "Slack",
           description: "Slack-Workspace-App auf Basis von Bolt.",
@@ -6816,6 +7146,21 @@ export const translations: Record<Locale, TranslationTree> = {
             clientSecret: {
               label: "Client Secret",
               placeholder: "client secret",
+            },
+          },
+        },
+        wecom: {
+          title: "WeCom-Channel-Editor",
+          description:
+            "Beginnen Sie mit dem Formular für Bot-Zugangsdaten und wechseln Sie nur bei Bedarf zur vollständigen JSON-Konfiguration.",
+          fields: {
+            botId: {
+              label: "Bot ID",
+              placeholder: "xxxxxxx",
+            },
+            secret: {
+              label: "Secret",
+              placeholder: "bot secret",
             },
           },
         },

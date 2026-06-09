@@ -3,6 +3,8 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -115,6 +117,268 @@ func (s *PVCService) CreatePVC(ctx context.Context, userID, instanceID int, stor
 	return createdPVC, nil
 }
 
+// CreateTeamSharedPVC creates the RWX PVC mounted by every member of a Team.
+func (s *PVCService) CreateTeamSharedPVC(ctx context.Context, userID, teamID, storageSizeGB int, storageClass string) (*corev1.PersistentVolumeClaim, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("k8s client not initialized")
+	}
+	if storageSizeGB <= 0 {
+		storageSizeGB = 10
+	}
+
+	if _, err := s.namespaceService.EnsureNamespace(ctx, userID); err != nil {
+		return nil, fmt.Errorf("failed to ensure namespace: %w", err)
+	}
+
+	pvcName := s.client.GetTeamSharedPVCName(teamID)
+	namespace := s.client.GetNamespace(userID)
+	if storageClass == "" {
+		storageClass = s.client.StorageClass
+	}
+	storageSize := resource.MustParse(fmt.Sprintf("%dGi", storageSizeGB))
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app":        "clawreef",
+				"team-id":    fmt.Sprintf("%d", teamID),
+				"managed-by": "clawreef",
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteMany,
+			},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: storageSize,
+				},
+			},
+			StorageClassName: &storageClass,
+		},
+	}
+
+	createdPVC, err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			existingPVC, getErr := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+			if getErr == nil && existingPVC != nil && existingPVC.Labels["team-id"] == fmt.Sprintf("%d", teamID) {
+				if existingPVC.Status.Phase != corev1.ClaimBound {
+					go s.monitorTeamSharedPVCBinding(context.Background(), namespace, pvcName, userID, teamID, storageSizeGB, storageClass, 15*time.Second)
+				}
+				return existingPVC, nil
+			}
+		}
+		return nil, fmt.Errorf("failed to create Team shared PVC %s: %w", pvcName, err)
+	}
+
+	go s.monitorTeamSharedPVCBinding(context.Background(), namespace, pvcName, userID, teamID, storageSizeGB, storageClass, 15*time.Second)
+	return createdPVC, nil
+}
+
+func (s *PVCService) monitorTeamSharedPVCBinding(ctx context.Context, namespace, pvcName string, userID, teamID, storageSizeGB int, storageClass string, timeout time.Duration) {
+	if _, err := s.waitForTeamSharedPVCBinding(ctx, namespace, pvcName, userID, teamID, storageSizeGB, storageClass, timeout); err != nil {
+		fmt.Printf("Async Team shared PVC binding monitor failed for %s: %v\n", pvcName, err)
+	}
+}
+
+func (s *PVCService) waitForTeamSharedPVCBinding(ctx context.Context, namespace, pvcName string, userID, teamID, storageSizeGB int, storageClass string, timeout time.Duration) (*corev1.PersistentVolumeClaim, error) {
+	pvc, err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Team shared PVC %s: %w", pvcName, err)
+	}
+	if pvc.Status.Phase == corev1.ClaimBound {
+		return pvc, nil
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	timeoutChan := time.After(timeout)
+
+	for {
+		select {
+		case <-timeoutChan:
+			fmt.Printf("Team shared PVC %s binding timeout, creating hostPath RWX PV manually\n", pvcName)
+			return s.createPVForTeamSharedPVC(ctx, namespace, pvcName, userID, teamID, storageSizeGB, storageClass)
+		case <-ticker.C:
+			pvc, err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get Team shared PVC %s during wait: %w", pvcName, err)
+			}
+			if pvc.Status.Phase == corev1.ClaimBound {
+				fmt.Printf("Team shared PVC %s bound successfully to %s\n", pvcName, pvc.Spec.VolumeName)
+				return pvc, nil
+			}
+			fmt.Printf("Waiting for Team shared PVC %s binding, current status: %s\n", pvcName, pvc.Status.Phase)
+		}
+	}
+}
+
+func (s *PVCService) createPVForTeamSharedPVC(ctx context.Context, namespace, pvcName string, userID, teamID, storageSizeGB int, storageClass string) (*corev1.PersistentVolumeClaim, error) {
+	pvName := fmt.Sprintf("clawreef-pv-user-%d-team-%d-shared", userID, teamID)
+	hostPathPrefix := "/data/clawreef"
+	if s.client != nil && s.client.HostPathPrefix != "" {
+		hostPathPrefix = s.client.HostPathPrefix
+	}
+	hostPath := fmt.Sprintf("%s/user-%d/team-%d-shared", hostPathPrefix, userID, teamID)
+
+	existingPV, err := s.client.Clientset.CoreV1().PersistentVolumes().Get(ctx, pvName, metav1.GetOptions{})
+	if err == nil && existingPV != nil {
+		if existingPV.Status.Phase == corev1.VolumeReleased {
+			if deleteErr := s.client.Clientset.CoreV1().PersistentVolumes().Delete(ctx, pvName, metav1.DeleteOptions{}); deleteErr != nil && !errors.IsNotFound(deleteErr) {
+				return nil, fmt.Errorf("failed to delete released Team shared PV %s: %w", pvName, deleteErr)
+			}
+			time.Sleep(3 * time.Second)
+		} else if existingPV.Spec.ClaimRef != nil &&
+			existingPV.Spec.ClaimRef.Namespace == namespace &&
+			existingPV.Spec.ClaimRef.Name == pvcName {
+			time.Sleep(2 * time.Second)
+			return s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+		} else if existingPV.Spec.ClaimRef != nil {
+			return nil, fmt.Errorf("Team shared PV %s already belongs to %s/%s", pvName, existingPV.Spec.ClaimRef.Namespace, existingPV.Spec.ClaimRef.Name)
+		}
+	}
+
+	pvc, err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Team shared PVC %s for UID: %w", pvcName, err)
+	}
+	storageSize := resource.MustParse(fmt.Sprintf("%dGi", storageSizeGB))
+	nodeAffinity, err := s.hostPathPVNodeAffinity(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select node for Team shared hostPath PV %s: %w", pvName, err)
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pvName,
+			Labels: map[string]string{
+				"app":        "clawreef",
+				"user-id":    fmt.Sprintf("%d", userID),
+				"team-id":    fmt.Sprintf("%d", teamID),
+				"managed-by": "clawreef",
+			},
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceStorage: storageSize,
+			},
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteMany,
+			},
+			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+			StorageClassName:              storageClass,
+			NodeAffinity:                  nodeAffinity,
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: hostPath,
+					Type: func() *corev1.HostPathType {
+						t := corev1.HostPathDirectoryOrCreate
+						return &t
+					}(),
+				},
+			},
+			ClaimRef: &corev1.ObjectReference{
+				Kind:            "PersistentVolumeClaim",
+				APIVersion:      "v1",
+				Namespace:       namespace,
+				Name:            pvcName,
+				UID:             pvc.UID,
+				ResourceVersion: pvc.ResourceVersion,
+			},
+		},
+	}
+	if _, err := s.client.Clientset.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("failed to create Team shared PV %s: %w", pvName, err)
+	}
+
+	time.Sleep(3 * time.Second)
+	pvc, err = s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Team shared PVC after PV creation: %w", err)
+	}
+	if pvc.Status.Phase != corev1.ClaimBound {
+		return nil, fmt.Errorf("Team shared PVC %s is still not bound after PV creation, status: %s", pvcName, pvc.Status.Phase)
+	}
+	fmt.Printf("Team shared PVC %s successfully bound to PV %s\n", pvcName, pvName)
+	return pvc, nil
+}
+
+func (s *PVCService) hostPathPVNodeAffinity(ctx context.Context) (*corev1.VolumeNodeAffinity, error) {
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("k8s client not initialized")
+	}
+	nodes, err := s.client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		name     string
+		hostname string
+	}
+	candidates := []candidate{}
+	for _, node := range nodes.Items {
+		if !isHostPathPVNodeCandidate(node) {
+			continue
+		}
+		hostname := strings.TrimSpace(node.Labels["kubernetes.io/hostname"])
+		if hostname == "" {
+			hostname = strings.TrimSpace(node.Name)
+		}
+		if hostname == "" {
+			continue
+		}
+		candidates = append(candidates, candidate{name: node.Name, hostname: hostname})
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no ready node found for hostPath PV")
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].name < candidates[j].name
+	})
+	return hostPathPVNodeAffinityForHostname(candidates[0].hostname), nil
+}
+
+func hostPathPVNodeAffinityForHostname(hostname string) *corev1.VolumeNodeAffinity {
+	return &corev1.VolumeNodeAffinity{
+		Required: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{
+					MatchExpressions: []corev1.NodeSelectorRequirement{
+						{
+							Key:      "kubernetes.io/hostname",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{hostname},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func isStorageNodeReady(node corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func isHostPathPVNodeCandidate(node corev1.Node) bool {
+	if node.Spec.Unschedulable || !isStorageNodeReady(node) {
+		return false
+	}
+	for _, taint := range node.Spec.Taints {
+		if taint.Effect == corev1.TaintEffectNoSchedule || taint.Effect == corev1.TaintEffectNoExecute {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *PVCService) monitorPVCBinding(ctx context.Context, namespace, pvcName string, userID, instanceID, storageSizeGB int, storageClass string, timeout time.Duration) {
 	if _, err := s.waitForPVCBinding(ctx, namespace, pvcName, userID, instanceID, storageSizeGB, storageClass, timeout); err != nil {
 		fmt.Printf("Async PVC binding monitor failed for %s: %v\n", pvcName, err)
@@ -162,8 +426,12 @@ func (s *PVCService) waitForPVCBinding(ctx context.Context, namespace, pvcName s
 // createPVForPVC creates a PV manually to bind to the PVC
 func (s *PVCService) createPVForPVC(ctx context.Context, namespace, pvcName string, userID, instanceID, storageSizeGB int, storageClass string) (*corev1.PersistentVolumeClaim, error) {
 	pvName := fmt.Sprintf("clawreef-pv-user-%d-instance-%d", userID, instanceID)
-	// Use /tmp path to comply with host_path provisioner requirements
-	hostPath := fmt.Sprintf("/tmp/clawreef/user-%d/instance-%d", userID, instanceID)
+	// Use configurable host path prefix for persistent storage
+	hostPathPrefix := "/data/clawreef"
+	if s.client != nil && s.client.HostPathPrefix != "" {
+		hostPathPrefix = s.client.HostPathPrefix
+	}
+	hostPath := fmt.Sprintf("%s/user-%d/instance-%d", hostPathPrefix, userID, instanceID)
 
 	fmt.Printf("Creating PV %s with hostPath %s for PVC %s\n", pvName, hostPath, pvcName)
 
@@ -211,6 +479,10 @@ func (s *PVCService) createPVForPVC(ctx context.Context, namespace, pvcName stri
 	}
 
 	storageSize := resource.MustParse(fmt.Sprintf("%dGi", storageSizeGB))
+	nodeAffinity, err := s.hostPathPVNodeAffinity(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select node for hostPath PV %s: %w", pvName, err)
+	}
 
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -231,6 +503,7 @@ func (s *PVCService) createPVForPVC(ctx context.Context, namespace, pvcName stri
 			},
 			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
 			StorageClassName:              storageClass,
+			NodeAffinity:                  nodeAffinity,
 			PersistentVolumeSource: corev1.PersistentVolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
 					Path: hostPath,
@@ -368,6 +641,31 @@ func (s *PVCService) DeletePVC(ctx context.Context, userID, instanceID int) erro
 		}
 	}
 
+	return nil
+}
+
+// DeleteTeamSharedPVC deletes a Team shared PVC and the predictable hostPath PV
+// used by the single-node manual storage fallback. It does not delete an
+// arbitrary bound PV because that may belong to a real RWX provisioner.
+func (s *PVCService) DeleteTeamSharedPVC(ctx context.Context, userID, teamID int) error {
+	if s.client == nil {
+		return fmt.Errorf("k8s client not initialized")
+	}
+
+	pvcName := s.client.GetTeamSharedPVCName(teamID)
+	namespace := s.client.GetNamespace(userID)
+	pvName := fmt.Sprintf("clawreef-pv-user-%d-team-%d-shared", userID, teamID)
+
+	if err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvcName, metav1.DeleteOptions{}); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete Team shared PVC %s/%s: %w", namespace, pvcName, err)
+		}
+	}
+	if err := s.client.Clientset.CoreV1().PersistentVolumes().Delete(ctx, pvName, metav1.DeleteOptions{}); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete Team shared PV %s: %w", pvName, err)
+		}
+	}
 	return nil
 }
 

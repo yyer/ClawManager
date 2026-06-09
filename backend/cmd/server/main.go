@@ -66,6 +66,7 @@ func main() {
 	instanceDesiredStateRepo := repository.NewInstanceDesiredStateRepository(database)
 	instanceCommandRepo := repository.NewInstanceCommandRepository(database)
 	instanceConfigRevisionRepo := repository.NewInstanceConfigRevisionRepository(database)
+	teamRepo := repository.NewTeamRepository(database)
 	skillRepo := repository.NewSkillRepository(database)
 	securityScanRepo := repository.NewSecurityScanRepository(database)
 
@@ -89,7 +90,7 @@ func main() {
 	riskDetectionService := services.NewRiskDetectionService(riskRuleRepo)
 	riskHitService := services.NewRiskHitService(riskHitRepo)
 	riskRuleService := services.NewRiskRuleService(riskRuleRepo)
-	openClawConfigService := services.NewOpenClawConfigService(openClawConfigRepo)
+	openClawConfigService := services.NewOpenClawConfigService(openClawConfigRepo, skillRepo)
 	objectStorageService, err := services.NewObjectStorageService(cfg.ObjectStorage)
 	if err != nil {
 		log.Fatalf("Failed to initialize object storage: %v", err)
@@ -98,11 +99,18 @@ func main() {
 	aiObservabilityService := services.NewAIObservabilityService(modelInvocationRepo, auditEventRepo, costRecordRepo, riskHitRepo, chatMessageRepo, llmModelRepo, instanceRepo, userRepo)
 	clusterResourceService := services.NewClusterResourceService(instanceRepo)
 	services.SetRuntimeImageSettingsProvider(systemImageSettingService)
-	instanceService := services.NewInstanceService(instanceRepo, quotaRepo, llmModelRepo, openClawConfigService)
+	instanceService := services.NewInstanceService(
+		instanceRepo,
+		quotaRepo,
+		llmModelRepo,
+		openClawConfigService,
+		services.WithPrivilegedInstancePods(cfg.Kubernetes.Runtime.Pod.Privileged),
+	)
 	instanceAgentService := services.NewInstanceAgentService(instanceRepo, instanceAgentRepo, instanceDesiredStateRepo, instanceRuntimeStatusRepo, instanceCommandRepo)
 	instanceRuntimeStatusService := services.NewInstanceRuntimeStatusService(instanceRuntimeStatusRepo, instanceAgentRepo, instanceDesiredStateRepo)
 	instanceCommandService := services.NewInstanceCommandService(instanceCommandRepo, instanceRuntimeStatusRepo, instanceDesiredStateRepo)
 	instanceConfigRevisionService := services.NewInstanceConfigRevisionService(instanceConfigRevisionRepo)
+	teamService := services.NewTeamService(teamRepo, instanceService)
 	skillService := services.NewSkillService(skillRepo, instanceRepo, instanceCommandService, objectStorageService, skillScannerClient)
 	securityScanService := services.NewSecurityScanService(securityScanRepo, skillRepo, objectStorageService, skillScannerClient)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
@@ -122,6 +130,7 @@ func main() {
 	skillHandler := handlers.NewSkillHandler(skillService, instanceService)
 	securityHandler := handlers.NewSecurityHandler(securityScanService)
 	agentHandler := handlers.NewAgentHandler(instanceAgentService, instanceCommandService, instanceRuntimeStatusService, instanceConfigRevisionService, skillService)
+	teamHandler := handlers.NewTeamHandler(teamService)
 
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
@@ -136,6 +145,7 @@ func main() {
 	// Start sync service to keep instance status in sync with K8s
 	syncService := services.NewSyncService(instanceRepo, instanceRuntimeStatusService)
 	syncService.Start()
+	teamService.Start()
 
 	// Setup router
 	r := gin.Default()
@@ -203,9 +213,12 @@ func main() {
 			instances.POST("/:id/config/revisions/publish", instanceHandler.PublishConfigRevision)
 			instances.POST("/:id/access", instanceHandler.GenerateAccessToken)
 			instances.GET("/:id/access", instanceHandler.AccessInstance)
+			instances.GET("/:id/shell", instanceHandler.StreamShell)
 			instances.POST("/:id/sync", instanceHandler.ForceSync)
 			instances.GET("/:id/openclaw/export", instanceHandler.ExportOpenClaw)
 			instances.POST("/:id/openclaw/import", instanceHandler.ImportOpenClaw)
+			instances.GET("/:id/hermes/export", instanceHandler.ExportHermes)
+			instances.POST("/:id/hermes/import", instanceHandler.ImportHermes)
 			instances.GET("/:id/skills", skillHandler.ListInstanceSkills)
 			instances.POST("/:id/skills", skillHandler.AttachSkillToInstance)
 			instances.DELETE("/:id/skills/:skillId", skillHandler.RemoveSkillFromInstance)
@@ -221,6 +234,20 @@ func main() {
 		adminInstances.Use(middleware.NewAdminAuth(userRepo))
 		{
 			adminInstances.GET("", instanceHandler.ListAllInstances)
+		}
+
+		teams := api.Group("/teams")
+		teams.Use(middleware.Auth())
+		teams.Use(middleware.SetUserInfo(userRepo))
+		{
+			teams.GET("", teamHandler.ListTeams)
+			teams.POST("", teamHandler.CreateTeam)
+			teams.GET("/:id", teamHandler.GetTeam)
+			teams.DELETE("/:id", teamHandler.DeleteTeam)
+			teams.GET("/:id/tasks", teamHandler.ListTasks)
+			teams.POST("/:id/tasks", teamHandler.DispatchTask)
+			teams.GET("/:id/events", teamHandler.ListEvents)
+			teams.DELETE("/:id/members/:memberID", teamHandler.DeleteMember)
 		}
 
 		openClawConfigs := api.Group("/openclaw-configs")
@@ -407,6 +434,7 @@ func main() {
 
 	// Stop background services
 	syncService.Stop()
+	teamService.Stop()
 	wsHub.Stop()
 	instanceHandler.Shutdown()
 

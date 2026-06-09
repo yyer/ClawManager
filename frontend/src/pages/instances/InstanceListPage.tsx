@@ -8,7 +8,7 @@ import type { Instance } from '../../types/instance';
 import { useI18n } from '../../contexts/I18nContext';
 
 type ViewMode = 'list' | 'card';
-type StatusFilter = 'all' | 'running' | 'stopped' | 'creating' | 'error';
+type StatusFilter = 'all' | 'running' | 'stopped' | 'creating' | 'deleting' | 'error';
 
 const INSTANCE_FIELDS_TO_COMPARE: Array<keyof Instance> = [
   'id',
@@ -51,6 +51,32 @@ const mergeInstances = (current: Instance[], incoming: Instance[]) => {
       ? existingInstance
       : nextInstance;
   });
+};
+
+const INSTANCE_LIST_PAGE_SIZE = 100;
+
+const instanceTimeValue = (instance: Instance) => {
+  const value = Date.parse(instance.created_at || instance.updated_at || '');
+  return Number.isFinite(value) ? value : 0;
+};
+
+const sortInstances = (items: Instance[]) =>
+  [...items].sort(
+    (left, right) => instanceTimeValue(right) - instanceTimeValue(left) || right.id - left.id,
+  );
+
+const loadAllInstances = async () => {
+  const firstPage = await instanceService.getInstances(1, INSTANCE_LIST_PAGE_SIZE);
+  const instances = [...(firstPage.instances || [])];
+  const total = firstPage.total || instances.length;
+  const totalPages = Math.ceil(total / INSTANCE_LIST_PAGE_SIZE);
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const nextPage = await instanceService.getInstances(page, INSTANCE_LIST_PAGE_SIZE);
+    instances.push(...(nextPage.instances || []));
+  }
+
+  return sortInstances(instances);
 };
 
 interface InstanceItemProps {
@@ -149,7 +175,7 @@ const InstanceCardItem = React.memo(({
         </Link>
         <button
           onClick={() => onRequestDelete(instance.id)}
-          disabled={deletingIds.includes(instance.id)}
+          disabled={deletingIds.includes(instance.id) || instance.status === 'deleting'}
           className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none disabled:opacity-50"
         >
           {deletingIds.includes(instance.id) ? `${t('common.delete')}...` : t('common.delete')}
@@ -223,7 +249,7 @@ const InstanceListItem = React.memo(({
 
         <button
           onClick={() => onRequestDelete(instance.id)}
-          disabled={deletingIds.includes(instance.id)}
+          disabled={deletingIds.includes(instance.id) || instance.status === 'deleting'}
           className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none disabled:opacity-50"
         >
           {deletingIds.includes(instance.id) ? `${t('common.delete')}...` : t('common.delete')}
@@ -253,8 +279,8 @@ const InstanceListPage: React.FC = () => {
         setLoading(true);
       }
       setError(null);
-      const data = await instanceService.getInstances();
-      setInstances((prevInstances) => mergeInstances(prevInstances, data.instances));
+      const data = await loadAllInstances();
+      setInstances((prevInstances) => mergeInstances(prevInstances, data));
     } catch (err: any) {
       setError(err.response?.data?.error || t('instances.failedToLoad'));
     } finally {
@@ -269,7 +295,7 @@ const InstanceListPage: React.FC = () => {
   }, [loadInstances]);
 
   useEffect(() => {
-    if (!instances.some((instance) => instance.status === 'creating')) {
+    if (!instances.some((instance) => instance.status === 'creating' || instance.status === 'deleting')) {
       return;
     }
 
@@ -280,7 +306,7 @@ const InstanceListPage: React.FC = () => {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [instances]);
+  }, [instances, loadInstances]);
 
   // Handle WebSocket status updates
   const handleStatusUpdate = useCallback((update: { instance_id: number; status: string; pod_name?: string; pod_ip?: string }) => {
@@ -330,14 +356,19 @@ const InstanceListPage: React.FC = () => {
     try {
       setDeletingIds((prevIds) => [...prevIds, id]);
       await instanceService.deleteInstance(id);
-      setInstances((prevInstances) => prevInstances.filter((instance) => instance.id !== id));
+      setInstances((prevInstances) =>
+        prevInstances.map((instance) =>
+          instance.id === id ? { ...instance, status: 'deleting' } : instance,
+        ),
+      );
       setPendingDeleteId(null);
+      await loadInstances({ silent: true });
     } catch (err: any) {
       alert(err.response?.data?.error || t('instances.failedToDelete'));
     } finally {
       setDeletingIds((prevIds) => prevIds.filter((deletingId) => deletingId !== id));
     }
-  }, [t]);
+  }, [loadInstances, t]);
 
   const handleStart = useCallback(async (id: number) => {
     try {
@@ -375,10 +406,12 @@ const InstanceListPage: React.FC = () => {
         return 'bg-gray-100 text-gray-800';
       case 'creating':
         return 'bg-yellow-100 text-yellow-800';
+      case 'deleting':
+        return 'bg-orange-100 text-orange-800';
       case 'error':
         return 'bg-red-100 text-red-800';
       default:
-        return 'VM';
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -403,6 +436,13 @@ const InstanceListPage: React.FC = () => {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
         );
+      case 'deleting':
+        return (
+          <svg className="animate-spin w-3 h-3 mr-1.5 text-orange-600" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        );
       default:
         return null;
     }
@@ -418,6 +458,8 @@ const InstanceListPage: React.FC = () => {
         return 'CE';
       case 'openclaw':
         return 'OC';
+      case 'hermes':
+        return 'HM';
       default:
         return 'VM';
     }
@@ -553,6 +595,7 @@ const InstanceListPage: React.FC = () => {
             <option value="running">{t('status.running')}</option>
             <option value="stopped">{t('status.stopped')}</option>
             <option value="creating">{t('status.creating')}</option>
+            <option value="deleting">{t('status.deleting')}</option>
             <option value="error">{t('status.error')}</option>
           </select>
 

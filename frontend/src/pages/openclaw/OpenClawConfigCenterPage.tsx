@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import UserLayout from "../../components/UserLayout";
 import { useI18n } from "../../contexts/I18nContext";
@@ -11,6 +11,7 @@ import { skillService } from "../../services/skillService";
 import type {
   OpenClawConfigBundle,
   OpenClawConfigBundleItem,
+  OpenClawConfigBundleSkillItem,
   OpenClawConfigMode,
   OpenClawConfigResource,
   OpenClawInjectionSnapshot,
@@ -63,6 +64,7 @@ const CHANNEL_TEMPLATE_LABEL_I18N_KEYS: Record<string, string> = {
   telegram: "openClawResourcesPage.templates.telegram.label",
   "dingtalk-connector":
     "openClawResourcesPage.templates.dingtalkConnector.label",
+  wecom: "openClawResourcesPage.templates.wecom.label",
   slack: "openClawResourcesPage.templates.slack.label",
   feishu: "openClawResourcesPage.templates.feishu.label",
 };
@@ -71,6 +73,7 @@ const CHANNEL_TEMPLATE_DESCRIPTION_I18N_KEYS: Record<string, string> = {
   telegram: "openClawResourcesPage.templates.telegram.description",
   "dingtalk-connector":
     "openClawResourcesPage.templates.dingtalkConnector.description",
+  wecom: "openClawResourcesPage.templates.wecom.description",
   slack: "openClawResourcesPage.templates.slack.description",
   feishu: "openClawResourcesPage.templates.feishu.description",
 };
@@ -151,6 +154,7 @@ const newBundleForm = () => ({
   description: "",
   enabled: true,
   itemIds: [] as number[],
+  skillIds: [] as number[],
 });
 
 const splitTagText = (value: string): string[] =>
@@ -168,7 +172,8 @@ type SupportedChannelEditorId =
   | "dingtalk-connector"
   | "feishu"
   | "slack"
-  | "telegram";
+  | "telegram"
+  | "wecom";
 
 interface SupportedChannelEditorField {
   key: string;
@@ -228,6 +233,20 @@ const readStringArray = (value: unknown): string[] | null =>
 const stringifyChannelContentText = (config: Record<string, unknown>): string =>
   JSON.stringify(config, null, 2);
 
+// mergeChannelConfig overlays the form-owned, allowlisted fields onto the
+// existing parsed config so tenant-authored keys (webhook, custom capabilities,
+// extra feishu accounts, etc.) survive a Save. Allowlisted keys win on
+// conflict. Every channel editor's update*ChannelContentText must route its
+// output through this helper — building the saved config from the allowlist
+// alone silently drops unknown fields.
+const mergeChannelConfig = (
+  existing: Record<string, unknown>,
+  allowlisted: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...existing,
+  ...allowlisted,
+});
+
 const channelFormatForResourceKey = (resourceKey: string): string => {
   const trimmed = resourceKey.trim();
   return trimmed ? `channel/${trimmed}@v1` : "channel/custom@v1";
@@ -284,18 +303,64 @@ const updateTelegramChannelContentText = (
     ...patch,
   };
 
-  const existingConfig = parsed;
-  const config = {
+  const allowlisted = {
     enabled: true,
     botToken: nextForm.botToken,
     dmPolicy:
-      typeof existingConfig.dmPolicy === "string" && existingConfig.dmPolicy
-        ? existingConfig.dmPolicy
+      typeof parsed.dmPolicy === "string" && parsed.dmPolicy
+        ? parsed.dmPolicy
         : "open",
-    allowFrom: readStringArray(existingConfig.allowFrom) || ["*"],
+    allowFrom: readStringArray(parsed.allowFrom) || ["*"],
   };
 
-  return stringifyChannelContentText(config);
+  return stringifyChannelContentText(mergeChannelConfig(parsed, allowlisted));
+};
+
+const readWeComChannelFormState = (
+  contentText: string,
+): Record<string, string> | null => {
+  const config = parseChannelContentText(contentText);
+  if (!config) {
+    return null;
+  }
+
+  return {
+    botId: typeof config.botId === "string" ? config.botId : "",
+    secret: typeof config.secret === "string" ? config.secret : "",
+  };
+};
+
+const updateWeComChannelContentText = (
+  contentText: string,
+  patch: Record<string, string>,
+): string => {
+  const parsed = parseChannelContentText(contentText);
+  if (!parsed) {
+    return contentText;
+  }
+
+  const currentForm = readWeComChannelFormState(contentText);
+  if (!currentForm) {
+    return contentText;
+  }
+
+  const nextForm = {
+    ...currentForm,
+    ...patch,
+  };
+
+  const allowFrom = readStringArray(parsed.allowFrom);
+  const allowlisted = {
+    botId: nextForm.botId,
+    secret: nextForm.secret,
+    dmPolicy:
+      typeof parsed.dmPolicy === "string" && parsed.dmPolicy
+        ? parsed.dmPolicy
+        : "pairing",
+    allowFrom: allowFrom && allowFrom.length > 0 ? allowFrom : ["*"],
+  };
+
+  return stringifyChannelContentText(mergeChannelConfig(parsed, allowlisted));
 };
 
 const readDingTalkChannelFormState = (
@@ -332,15 +397,14 @@ const updateDingTalkChannelContentText = (
     ...patch,
   };
 
-  const existingConfig = parsed;
-  const config = {
+  const allowlisted = {
     enabled: true,
     clientId: nextForm.clientId,
     clientSecret: nextForm.clientSecret,
-    allowFrom: readStringArray(existingConfig.allowFrom) || ["*"],
+    allowFrom: readStringArray(parsed.allowFrom) || ["*"],
   };
 
-  return stringifyChannelContentText(config);
+  return stringifyChannelContentText(mergeChannelConfig(parsed, allowlisted));
 };
 
 const readSlackChannelFormState = (
@@ -376,31 +440,29 @@ const updateSlackChannelContentText = (
     ...patch,
   };
 
-  const existingConfig = parsed;
-  const config = {
+  const allowlisted = {
     enabled: true,
     botToken: nextForm.botToken,
     appToken: nextForm.appToken,
     groupPolicy:
-      typeof existingConfig.groupPolicy === "string" &&
-      existingConfig.groupPolicy
-        ? existingConfig.groupPolicy
+      typeof parsed.groupPolicy === "string" && parsed.groupPolicy
+        ? parsed.groupPolicy
         : "allowlist",
-    channels: isRecord(existingConfig.channels)
-      ? existingConfig.channels
+    channels: isRecord(parsed.channels)
+      ? parsed.channels
       : {
           "#general": {
             allow: true,
           },
         },
-    capabilities: isRecord(existingConfig.capabilities)
-      ? existingConfig.capabilities
+    capabilities: isRecord(parsed.capabilities)
+      ? parsed.capabilities
       : {
           interactiveReplies: true,
         },
   };
 
-  return stringifyChannelContentText(config);
+  return stringifyChannelContentText(mergeChannelConfig(parsed, allowlisted));
 };
 
 const readFeishuChannelFormState = (
@@ -454,17 +516,23 @@ const updateFeishuChannelContentText = (
     ...patch,
   };
 
-  const config = {
+  const existingAccounts = isRecord(parsed.accounts) ? parsed.accounts : {};
+  const existingMain = isRecord(existingAccounts.main)
+    ? existingAccounts.main
+    : {};
+  const allowlisted = {
     enabled: true,
     accounts: {
+      ...existingAccounts,
       main: {
+        ...existingMain,
         appId: nextForm.appId,
         appSecret: nextForm.appSecret,
       },
     },
   };
 
-  return stringifyChannelContentText(config);
+  return stringifyChannelContentText(mergeChannelConfig(parsed, allowlisted));
 };
 
 const detectSupportedChannelEditor = (
@@ -482,9 +550,14 @@ const detectSupportedChannelEditor = (
   const hasClientSecret = config && typeof config.clientSecret === "string";
   const hasAppToken = config && typeof config.appToken === "string";
   const hasBotToken = config && typeof config.botToken === "string";
+  const hasBotId = config && typeof config.botId === "string";
+  const hasSecret = config && typeof config.secret === "string";
 
   if (normalizedResourceKey === "feishu" || domain === "feishu" || !!accounts) {
     return "feishu";
+  }
+  if (normalizedResourceKey === "wecom" || (hasBotId && hasSecret)) {
+    return "wecom";
   }
   if (
     normalizedResourceKey === "dingtalk-connector" ||
@@ -546,6 +619,12 @@ const normalizeResourceContentTextForEditor = (
       ? updateTelegramChannelContentText(normalizedContentText, currentForm)
       : normalizedContentText;
   }
+  if (editorId === "wecom") {
+    const currentForm = readWeComChannelFormState(normalizedContentText);
+    return currentForm
+      ? updateWeComChannelContentText(normalizedContentText, currentForm)
+      : normalizedContentText;
+  }
 
   return normalizedContentText;
 };
@@ -577,6 +656,28 @@ const SUPPORTED_CHANNEL_EDITORS: Record<
     ],
     readFormState: readDingTalkChannelFormState,
     updateContentText: updateDingTalkChannelContentText,
+  },
+  wecom: {
+    id: "wecom",
+    titleKey: "openClawResourcesPage.channelEditors.wecom.title",
+    descriptionKey: "openClawResourcesPage.channelEditors.wecom.description",
+    fields: [
+      {
+        key: "botId",
+        labelKey: "openClawResourcesPage.channelEditors.wecom.fields.botId.label",
+        placeholderKey:
+          "openClawResourcesPage.channelEditors.wecom.fields.botId.placeholder",
+      },
+      {
+        key: "secret",
+        labelKey:
+          "openClawResourcesPage.channelEditors.wecom.fields.secret.label",
+        placeholderKey:
+          "openClawResourcesPage.channelEditors.wecom.fields.secret.placeholder",
+      },
+    ],
+    readFormState: readWeComChannelFormState,
+    updateContentText: updateWeComChannelContentText,
   },
   feishu: {
     id: "feishu",
@@ -743,6 +844,7 @@ const bundleFormFromItem = (item: OpenClawConfigBundle) => ({
   description: item.description || "",
   enabled: item.enabled,
   itemIds: item.items.map((bundleItem) => bundleItem.resource_id),
+  skillIds: (item.skill_items || []).map((bundleSkill) => bundleSkill.skill_id),
 });
 
 const skillRiskKey = (riskLevel?: string | null) => {
@@ -916,10 +1018,50 @@ const OpenClawConfigCenterPage: React.FC = () => {
       })),
     [resourceTypeOptions, resources],
   );
+  const bundleSkillOptions = useMemo(
+    () =>
+      skills.filter(
+        (item) =>
+          bundleForm.skillIds.includes(item.id) ||
+          (item.status === "active" &&
+            item.risk_level !== "medium" &&
+            item.risk_level !== "high"),
+      ),
+    [bundleForm.skillIds, skills],
+  );
 
   const selectedChannelTemplate = useMemo(
     () => findOpenClawChannelTemplate(selectedChannelTemplateId),
     [selectedChannelTemplateId],
+  );
+  const buildUniqueResourceKey = useCallback(
+    (baseKey: string): string => {
+      const trimmedBaseKey = baseKey.trim();
+      if (!trimmedBaseKey) {
+        return "";
+      }
+
+      const existingKeys = new Set(
+        resources
+          .filter(
+            (item) =>
+              item.resource_type === "channel" && item.id !== selectedResourceId,
+          )
+          .map((item) => item.resource_key.trim().toLowerCase()),
+      );
+      if (!existingKeys.has(trimmedBaseKey.toLowerCase())) {
+        return trimmedBaseKey;
+      }
+
+      let suffix = 2;
+      let candidate = `${trimmedBaseKey}-${suffix}`;
+      while (existingKeys.has(candidate.toLowerCase())) {
+        suffix += 1;
+        candidate = `${trimmedBaseKey}-${suffix}`;
+      }
+      return candidate;
+    },
+    [resources, selectedResourceId],
   );
   const supportedChannelEditorId = useMemo(
     () =>
@@ -1257,7 +1399,9 @@ const OpenClawConfigCenterPage: React.FC = () => {
     setResourceForm((current) => ({
       ...current,
       resource_type: "channel",
-      resource_key: current.resource_key.trim() || template.resourceKey,
+      resource_key:
+        current.resource_key.trim() ||
+        buildUniqueResourceKey(template.resourceKey),
       name: current.name.trim() || templateLabel,
       description: current.description.trim() || templateDescription,
       tagsText: mergeTagText(current.tagsText, template.tags),
@@ -1278,6 +1422,13 @@ const OpenClawConfigCenterPage: React.FC = () => {
         items: bundleForm.itemIds.map(
           (resourceId, index): OpenClawConfigBundleItem => ({
             resource_id: resourceId,
+            sort_order: index + 1,
+            required: true,
+          }),
+        ),
+        skill_items: bundleForm.skillIds.map(
+          (skillId, index): OpenClawConfigBundleSkillItem => ({
+            skill_id: skillId,
             sort_order: index + 1,
             required: true,
           }),
@@ -1770,7 +1921,9 @@ const OpenClawConfigCenterPage: React.FC = () => {
                         </div>
                         <div className="mt-1 text-xs text-gray-500">
                           {t("openClawResourcesPage.bundleResourceCount", {
-                            count: item.items.length,
+                            count:
+                              item.items.length +
+                              (item.skill_items?.length || 0),
                           })}
                         </div>
                         {item.description && (
@@ -2407,6 +2560,53 @@ const OpenClawConfigCenterPage: React.FC = () => {
                   </div>
                 </div>
               ))}
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#b46c50]">
+                  {t("openClawResourcesPage.uploadedSkills")}
+                </div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {bundleSkillOptions.map((item) => {
+                    const checked = bundleForm.skillIds.includes(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 ${checked ? "border-indigo-300 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setBundleForm((current) => ({
+                              ...current,
+                              skillIds: e.target.checked
+                                ? [...current.skillIds, item.id]
+                                : current.skillIds.filter(
+                                    (value) => value !== item.id,
+                                  ),
+                            }))
+                          }
+                        />
+                        <span>
+                          <span className="block font-medium text-gray-900">
+                            {item.name}
+                          </span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            {item.skill_key}
+                          </span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            {getSkillRiskLabel(item.risk_level)}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {bundleSkillOptions.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500">
+                      {t("openClawResourcesPage.noUploadedSkillsForBundle")}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 

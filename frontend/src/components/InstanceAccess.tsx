@@ -1,5 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef } from "react";
+import type { RefObject } from "react";
 import { OpenClawDesktopOverlay } from "./OpenClawDesktopOverlay";
+import { InstanceShellTerminal } from "./InstanceShellTerminal";
 import { useI18n } from "../contexts/I18nContext";
 import { useInstanceDesktopAccess } from "../hooks/useInstanceDesktopAccess";
 
@@ -7,6 +9,9 @@ interface InstanceAccessProps {
   instanceId: number;
   instanceName: string;
   isRunning: boolean;
+  runtimeType?: "desktop" | "shell";
+  frameHeightClassName?: string;
+  containerClassName?: string;
   overlay?: {
     gatewayStatus: string;
     canControl: boolean;
@@ -26,7 +31,7 @@ const DesktopIframeSurface = memo(function DesktopIframeSurface({
   handleFrameError,
 }: {
   frameHeightClass: string;
-  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  iframeRef: RefObject<HTMLIFrameElement | null>;
   embedUrl: string;
   instanceName: string;
   handleFrameLoad: (frame: HTMLIFrameElement | null) => void;
@@ -47,10 +52,28 @@ const DesktopIframeSurface = memo(function DesktopIframeSurface({
   );
 });
 
-export function InstanceAccess({
+export function InstanceAccess(props: InstanceAccessProps) {
+  if (props.runtimeType === "shell") {
+    return (
+      <InstanceShellTerminal
+        instanceId={props.instanceId}
+        instanceName={props.instanceName}
+        isRunning={props.isRunning}
+        heightClassName={props.frameHeightClassName}
+        className={props.containerClassName}
+      />
+    );
+  }
+
+  return <DesktopInstanceAccess {...props} />;
+}
+
+function DesktopInstanceAccess({
   instanceId,
   instanceName,
   isRunning,
+  frameHeightClassName,
+  containerClassName,
   overlay,
 }: InstanceAccessProps) {
   const { t } = useI18n();
@@ -140,7 +163,8 @@ export function InstanceAccess({
 
   const frameHeightClass = isFullscreen
     ? "min-h-0 flex-1"
-    : "h-[54vh] min-h-[420px] max-h-[720px] md:h-[58vh] xl:h-[60vh]";
+    : frameHeightClassName ||
+      "h-[54vh] min-h-[420px] max-h-[720px] md:h-[58vh] xl:h-[60vh]";
   const showStartScreen = !embedUrl;
   const hasDesktopSession =
     shouldConnect || Boolean(embedUrl) || loading || reconnecting;
@@ -184,7 +208,7 @@ export function InstanceAccess({
     return (
       <div
         ref={containerRef}
-        className="relative overflow-hidden rounded-[28px] border border-[#1f2937] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.2),transparent_28%),linear-gradient(180deg,#111827_0%,#0f172a_100%)] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"
+        className={`relative overflow-hidden rounded-[28px] border border-[#1f2937] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.2),transparent_28%),linear-gradient(180deg,#111827_0%,#0f172a_100%)] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)] ${containerClassName || ""}`}
       >
         {overlay ? (
           <OpenClawDesktopOverlay
@@ -242,7 +266,7 @@ export function InstanceAccess({
   return (
     <div
       ref={containerRef}
-      className={`relative overflow-hidden bg-[#111827] ${isFullscreen ? "flex h-screen flex-col rounded-none" : "rounded-[28px] border border-[#1f2937] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"}`}
+      className={`relative overflow-hidden bg-[#111827] ${isFullscreen ? "flex h-screen flex-col rounded-none" : "rounded-[28px] border border-[#1f2937] shadow-[0_30px_90px_-56px_rgba(17,24,39,0.9)]"} ${containerClassName || ""}`}
     >
       {overlay ? (
         <OpenClawDesktopOverlay

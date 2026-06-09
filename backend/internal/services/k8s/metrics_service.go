@@ -42,7 +42,7 @@ func (s *MetricsService) GetPodCPUUsage(ctx context.Context, namespace, name str
 	}
 
 	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods/%s", namespace, name)
-	raw, err := s.client.Clientset.RESTClient().Get().AbsPath(path).DoRaw(ctx)
+	raw, err := s.client.Clientset.Discovery().RESTClient().Get().AbsPath(path).DoRaw(ctx)
 	if err != nil {
 		// metrics-server may be unavailable; surface as soft failure (nil, nil)
 		// so the caller can simply omit the metric and the UI falls back.

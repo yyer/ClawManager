@@ -868,15 +868,30 @@ func extractSkillDirectories(filename string, raw []byte) ([]extractedSkillDirec
 		return nil, err
 	}
 
-	grouped := map[string]map[string][]byte{}
+	normalized := map[string][]byte{}
 	for name, content := range fileMap {
-		clean := path.Clean(strings.TrimPrefix(name, "./"))
-		if clean == "." || strings.HasPrefix(clean, "..") {
+		clean := normalizeArchiveEntryPath(name)
+		if clean == "" || isArchiveMetadataEntry(clean) {
 			continue
 		}
+		normalized[clean] = content
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+
+	if hasSkillManifest(normalized) {
+		return []extractedSkillDirectory{{
+			Name:  archiveSkillName(filename),
+			Files: normalized,
+		}}, nil
+	}
+
+	grouped := map[string]map[string][]byte{}
+	for clean, content := range normalized {
 		parts := strings.Split(clean, "/")
 		if len(parts) < 2 {
-			return nil, fmt.Errorf("archive must contain one or more top-level directories; found loose file %s", clean)
+			return nil, fmt.Errorf("archive must contain SKILL.md at the root or top-level skill directories; found loose file %s", clean)
 		}
 		root := parts[0]
 		if _, ok := grouped[root]; !ok {
@@ -884,8 +899,12 @@ func extractSkillDirectories(filename string, raw []byte) ([]extractedSkillDirec
 		}
 		grouped[root][strings.Join(parts[1:], "/")] = content
 	}
+
 	keys := make([]string, 0, len(grouped))
-	for key := range grouped {
+	for key, files := range grouped {
+		if !hasSkillManifest(files) {
+			return nil, fmt.Errorf("skill directory %s must contain SKILL.md", key)
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -894,6 +913,48 @@ func extractSkillDirectories(filename string, raw []byte) ([]extractedSkillDirec
 		result = append(result, extractedSkillDirectory{Name: key, Files: grouped[key]})
 	}
 	return result, nil
+}
+
+func normalizeArchiveEntryPath(value string) string {
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = path.Clean(strings.TrimPrefix(strings.TrimSpace(value), "./"))
+	if value == "." || value == "" || strings.HasPrefix(value, "..") {
+		return ""
+	}
+	return value
+}
+
+func hasSkillManifest(files map[string][]byte) bool {
+	for key := range files {
+		if strings.EqualFold(normalizeArchiveEntryPath(key), "SKILL.md") {
+			return true
+		}
+	}
+	return false
+}
+
+func isArchiveMetadataEntry(value string) bool {
+	clean := normalizeArchiveEntryPath(value)
+	if clean == "" {
+		return true
+	}
+	parts := strings.Split(clean, "/")
+	if parts[0] == "__MACOSX" {
+		return true
+	}
+	base := parts[len(parts)-1]
+	return base == ".DS_Store" || base == "Thumbs.db" || strings.HasPrefix(base, "._")
+}
+
+func archiveSkillName(filename string) string {
+	name := path.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
+	if ext := path.Ext(name); ext != "" {
+		name = strings.TrimSuffix(name, ext)
+	}
+	if sanitizeSkillKey(name) == "" {
+		return "skill"
+	}
+	return name
 }
 
 func extractArchiveFileMap(filename string, raw []byte) (map[string][]byte, error) {
@@ -1082,11 +1143,10 @@ func buildNormalizedZip(dir extractedSkillDirectory) ([]byte, string, error) {
 }
 
 func hashDirectory(files map[string][]byte) string {
-	flattened := flattenSingleTopLevelDir(files)
 	digest := md5.New()
 	entryKinds := map[string]string{}
 	fileMap := map[string][]byte{}
-	for key, body := range flattened {
+	for key, body := range files {
 		clean := normalizeSkillRelPath(key)
 		if clean == "" || hasHiddenPathSegment(clean) {
 			continue
@@ -1136,7 +1196,7 @@ func (s *skillService) resolveContentMD5(blob *models.SkillBlob) string {
 		sum := md5.Sum(content)
 		return hex.EncodeToString(sum[:])
 	}
-	return hashDirectory(files)
+	return hashDirectory(flattenSingleTopLevelDir(files))
 }
 
 func normalizeSkillRelPath(value string) string {

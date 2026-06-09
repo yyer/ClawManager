@@ -61,6 +61,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+.codex-logs/
 dev_docs/
 devplan.md
 AGENTS.md
