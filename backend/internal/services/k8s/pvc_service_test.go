@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
@@ -369,6 +370,90 @@ func TestHostPathPVNodeAffinitySkipsHardTaintedNodes(t *testing.T) {
 		t.Fatalf("hostPathPVNodeAffinity returned error: %v", err)
 	}
 	requireHostnameAffinity(t, affinity, "k8s-worker1")
+}
+
+func TestNodeSelectorForPVCUsesBoundPVNodeAffinity(t *testing.T) {
+	ctx := context.Background()
+	namespace := "clawmanager-user-162"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "clawreef-371-pvc",
+			Namespace: namespace,
+			Labels:    map[string]string{"instance-id": "371"},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "clawreef-pv-user-162-instance-371",
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "clawreef-pv-user-162-instance-371"},
+		Spec: corev1.PersistentVolumeSpec{
+			NodeAffinity: hostPathPVNodeAffinityForHostname("node125"),
+		},
+	}
+	client := &Client{
+		Clientset: fake.NewSimpleClientset(pvc, pv),
+		Namespace: "clawmanager",
+	}
+	service := &PVCService{
+		client:           client,
+		namespaceService: &NamespaceService{client: client},
+	}
+
+	selector, err := service.NodeSelectorForPVC(ctx, 162, 371, "manual")
+	if err != nil {
+		t.Fatalf("NodeSelectorForPVC returned error: %v", err)
+	}
+	if selector["kubernetes.io/hostname"] != "node125" {
+		t.Fatalf("selector = %#v, want hostname node125", selector)
+	}
+}
+
+func TestNodeSelectorForPVCFallsBackForNoProvisionerStorageClass(t *testing.T) {
+	ctx := context.Background()
+	namespace := "clawmanager-user-162"
+	storageClassName := "manual"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "clawreef-371-pvc",
+			Namespace: namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &storageClassName,
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
+	storageClass := &storagev1.StorageClass{
+		ObjectMeta:  metav1.ObjectMeta{Name: "manual"},
+		Provisioner: "kubernetes.io/no-provisioner",
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "node125",
+			Labels: map[string]string{"kubernetes.io/hostname": "node125"},
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	client := &Client{
+		Clientset:    fake.NewSimpleClientset(pvc, storageClass, node),
+		Namespace:    "clawmanager",
+		StorageClass: "manual",
+	}
+	service := &PVCService{
+		client:           client,
+		namespaceService: &NamespaceService{client: client},
+	}
+
+	selector, err := service.NodeSelectorForPVC(ctx, 162, 371, "")
+	if err != nil {
+		t.Fatalf("NodeSelectorForPVC returned error: %v", err)
+	}
+	if selector["kubernetes.io/hostname"] != "node125" {
+		t.Fatalf("selector = %#v, want hostname node125", selector)
+	}
 }
 
 func requireHostnameAffinity(t *testing.T, affinity *corev1.VolumeNodeAffinity, hostname string) {

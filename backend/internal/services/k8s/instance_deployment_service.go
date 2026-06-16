@@ -299,6 +299,7 @@ func buildInstanceDeploymentPodSpec(client *Client, config PodConfig, runtimeTyp
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyAlways,
 		SecurityContext: buildPodSecurityContext(config.FSGroup),
+		NodeSelector:    copyStringMap(config.NodeSelector),
 		Containers:      []corev1.Container{container},
 		Volumes: []corev1.Volume{{
 			Name: "data",
