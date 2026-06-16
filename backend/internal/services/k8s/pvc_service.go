@@ -23,6 +23,11 @@ type PVCService struct {
 	namespaceService *NamespaceService
 }
 
+const (
+	nodeHostnameLabel = "kubernetes.io/hostname"
+	noProvisionerName = "kubernetes.io/no-provisioner"
+)
+
 // NewPVCService creates a new PVC service
 func NewPVCService() *PVCService {
 	return &PVCService{
@@ -507,13 +512,13 @@ func teamSharedWorkspaceNFSPath(basePath string, userID, teamID int) string {
 	return path.Join(basePath, relativePath)
 }
 
-func (s *PVCService) hostPathPVNodeAffinity(ctx context.Context) (*corev1.VolumeNodeAffinity, error) {
+func (s *PVCService) hostPathPVNodeHostname(ctx context.Context) (string, error) {
 	if s == nil || s.client == nil {
-		return nil, fmt.Errorf("k8s client not initialized")
+		return "", fmt.Errorf("k8s client not initialized")
 	}
 	nodes, err := s.client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	type candidate struct {
 		name     string
@@ -524,7 +529,7 @@ func (s *PVCService) hostPathPVNodeAffinity(ctx context.Context) (*corev1.Volume
 		if !isHostPathPVNodeCandidate(node) {
 			continue
 		}
-		hostname := strings.TrimSpace(node.Labels["kubernetes.io/hostname"])
+		hostname := strings.TrimSpace(node.Labels[nodeHostnameLabel])
 		if hostname == "" {
 			hostname = strings.TrimSpace(node.Name)
 		}
@@ -534,12 +539,28 @@ func (s *PVCService) hostPathPVNodeAffinity(ctx context.Context) (*corev1.Volume
 		candidates = append(candidates, candidate{name: node.Name, hostname: hostname})
 	}
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no ready node found for hostPath PV")
+		return "", fmt.Errorf("no ready node found for hostPath PV")
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].name < candidates[j].name
 	})
-	return hostPathPVNodeAffinityForHostname(candidates[0].hostname), nil
+	return candidates[0].hostname, nil
+}
+
+func (s *PVCService) hostPathPVNodeSelector(ctx context.Context) (map[string]string, error) {
+	hostname, err := s.hostPathPVNodeHostname(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return nodeSelectorForHostname(hostname), nil
+}
+
+func (s *PVCService) hostPathPVNodeAffinity(ctx context.Context) (*corev1.VolumeNodeAffinity, error) {
+	hostname, err := s.hostPathPVNodeHostname(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return hostPathPVNodeAffinityForHostname(hostname), nil
 }
 
 func hostPathPVNodeAffinityForHostname(hostname string) *corev1.VolumeNodeAffinity {
@@ -549,7 +570,7 @@ func hostPathPVNodeAffinityForHostname(hostname string) *corev1.VolumeNodeAffini
 				{
 					MatchExpressions: []corev1.NodeSelectorRequirement{
 						{
-							Key:      "kubernetes.io/hostname",
+							Key:      nodeHostnameLabel,
 							Operator: corev1.NodeSelectorOpIn,
 							Values:   []string{hostname},
 						},
@@ -773,6 +794,91 @@ func (s *PVCService) GetPVC(ctx context.Context, userID, instanceID int) (*corev
 	}
 
 	return pvc, nil
+}
+
+func (s *PVCService) NodeSelectorForPVC(ctx context.Context, userID, instanceID int, storageClass string) (map[string]string, error) {
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("k8s client not initialized")
+	}
+
+	pvcName := s.client.GetPVCName(instanceID)
+	namespace := s.client.GetNamespace(userID)
+	pvc, err := s.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PVC %s: %w", pvcName, err)
+	}
+
+	storageClass = pvcStorageClassName(pvc, storageClass)
+
+	if strings.TrimSpace(pvc.Spec.VolumeName) != "" {
+		pv, err := s.client.Clientset.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get bound PV %s for PVC %s: %w", pvc.Spec.VolumeName, pvcName, err)
+		}
+		return nodeSelectorFromPVNodeAffinity(pv.Spec.NodeAffinity), nil
+	}
+
+	return s.nodeSelectorForStorageClass(ctx, storageClass)
+}
+
+func (s *PVCService) nodeSelectorForStorageClass(ctx context.Context, storageClass string) (map[string]string, error) {
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("k8s client not initialized")
+	}
+
+	storageClass = strings.TrimSpace(storageClass)
+	if storageClass == "" {
+		storageClass = strings.TrimSpace(s.client.StorageClass)
+	}
+	if storageClass == "" {
+		return nil, nil
+	}
+
+	sc, err := s.client.Clientset.StorageV1().StorageClasses().Get(ctx, storageClass, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage class %s: %w", storageClass, err)
+	}
+	if sc.Provisioner != noProvisionerName {
+		return nil, nil
+	}
+	return s.hostPathPVNodeSelector(ctx)
+}
+
+func pvcStorageClassName(pvc *corev1.PersistentVolumeClaim, fallback string) string {
+	storageClass := strings.TrimSpace(fallback)
+	if storageClass == "" && pvc != nil && pvc.Spec.StorageClassName != nil {
+		storageClass = strings.TrimSpace(*pvc.Spec.StorageClassName)
+	}
+	return storageClass
+}
+
+func nodeSelectorForHostname(hostname string) map[string]string {
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return nil
+	}
+	return map[string]string{nodeHostnameLabel: hostname}
+}
+
+func nodeSelectorFromPVNodeAffinity(affinity *corev1.VolumeNodeAffinity) map[string]string {
+	if affinity == nil || affinity.Required == nil {
+		return nil
+	}
+	for _, term := range affinity.Required.NodeSelectorTerms {
+		for _, expression := range term.MatchExpressions {
+			if expression.Key != nodeHostnameLabel || expression.Operator != corev1.NodeSelectorOpIn {
+				continue
+			}
+			if len(expression.Values) != 1 {
+				continue
+			}
+			return nodeSelectorForHostname(expression.Values[0])
+		}
+	}
+	return nil
 }
 
 // DeletePVC deletes a PVC and associated PV

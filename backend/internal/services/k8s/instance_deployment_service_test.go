@@ -56,6 +56,29 @@ func TestBuildInstanceDeploymentUsesStableIdentityAndPVC(t *testing.T) {
 	}
 }
 
+func TestBuildInstanceDeploymentAppliesNodeSelector(t *testing.T) {
+	client := &Client{Clientset: fake.NewSimpleClientset(), Namespace: "clawreef"}
+	deployment := BuildInstanceDeployment(client, PodConfig{
+		InstanceID:    44,
+		InstanceName:  "Pro Desktop",
+		UserID:        7,
+		Type:          "openclaw",
+		RuntimeType:   "desktop",
+		CPUCores:      2,
+		MemoryGB:      4,
+		Image:         "registry/openclaw:pro",
+		MountPath:     "/config",
+		ContainerPort: 3001,
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "node125",
+		},
+	}, 1)
+
+	if got := deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]; got != "node125" {
+		t.Fatalf("node selector hostname = %q, want node125", got)
+	}
+}
+
 func TestInstanceDeploymentServiceEnsureAndScale(t *testing.T) {
 	client := &Client{Clientset: fake.NewSimpleClientset(), Namespace: "clawreef"}
 	service := &InstanceDeploymentService{

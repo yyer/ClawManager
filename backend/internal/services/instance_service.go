@@ -484,6 +484,16 @@ func (s *instanceService) Create(userID int, req CreateInstanceRequest) (*models
 		return nil, fmt.Errorf("failed to create PVC: %w", err)
 	}
 
+	nodeSelector, err := s.pvcService.NodeSelectorForPVC(ctx, userID, instance.ID, storageClass)
+	if err != nil {
+		if bootstrapSnapshot != nil {
+			_ = s.openClawConfigService.MarkSnapshotFailed(bootstrapSnapshot, err)
+		}
+		s.pvcService.DeletePVC(ctx, userID, instance.ID)
+		s.instanceRepo.Delete(instance.ID)
+		return nil, fmt.Errorf("failed to resolve PVC node selector: %w", err)
+	}
+
 	// Ensure any legacy per-instance network policy is removed before creating pod.
 	// This keeps new pods unrestricted even if older versions created netpols.
 	if err := s.networkPolicyService.DeletePolicy(ctx, userID, instance.ID, instance.Name); err != nil {
@@ -562,6 +572,7 @@ func (s *instanceService) Create(userID int, req CreateInstanceRequest) (*models
 		ConfigMapFileMounts:  configMapFileMounts,
 		VolumeInitScripts:    runtimeVolumeInitScripts(instance.Type, runtimeConfig.MountPath),
 		FSGroup:              fsGroup,
+		NodeSelector:         nodeSelector,
 		VolumeOwnershipFixes: volumeOwnershipFixes,
 		SHMSizeGB:            shmSizeGB,
 		SecurityMode:         s.securityModeForInstance(instance.Type),
@@ -805,6 +816,10 @@ func (s *instanceService) Start(instanceID int) error {
 
 	runtimeType := normalizeInstanceRuntimeType(instance.RuntimeType)
 	shmSizeGB := popSHMSizeGB(extraEnv, runtimeType, instance.MemoryGB)
+	nodeSelector, err := s.pvcService.NodeSelectorForPVC(ctx, instance.UserID, instance.ID, instance.StorageClass)
+	if err != nil {
+		return fmt.Errorf("failed to resolve PVC node selector: %w", err)
+	}
 	podConfig := k8s.PodConfig{
 		InstanceID:         instance.ID,
 		InstanceName:       instance.Name,
@@ -822,6 +837,7 @@ func (s *instanceService) Start(instanceID int) error {
 		ExtraEnv:           extraEnv,
 		EnvFromSecretNames: []string{bootstrapSecretName},
 		VolumeInitScripts:  runtimeVolumeInitScripts(instance.Type, mountPath),
+		NodeSelector:       nodeSelector,
 		SHMSizeGB:          shmSizeGB,
 		SecurityMode:       s.securityModeForInstance(instance.Type),
 	}
