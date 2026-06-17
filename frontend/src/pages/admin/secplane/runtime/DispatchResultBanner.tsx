@@ -1,20 +1,22 @@
 import React from 'react';
 import { type DispatchResult } from '../../../../services/secplaneService';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 // Honest dispatch banner: a DispatchResult only means rows were inserted into
 // instance_commands. Pod-side agent has to poll/execute/ack for the policy
 // to actually take effect. If the OpenClaw pod is unreachable, rows stay
 // `pending` indefinitely. We surface per-target status here so operators
-// don't read "下发成功" and assume the policy is live on the pod.
+// don't read "dispatch succeeded" and assume the policy is live on the pod.
 
 interface Props {
   result: DispatchResult;
 }
 
 const DispatchResultBanner: React.FC<Props> = ({ result }) => {
+  const { t } = useI18n();
   const counts: Record<string, number> = {};
-  for (const t of result.targets) {
-    const s = (t.status || 'unknown').toLowerCase();
+  for (const tgt of result.targets) {
+    const s = (tgt.status || 'unknown').toLowerCase();
     counts[s] = (counts[s] || 0) + 1;
   }
 
@@ -27,19 +29,19 @@ const DispatchResultBanner: React.FC<Props> = ({ result }) => {
 
   // tone: failure dominates; all-succeeded is the only green; mixed/pending → warning
   let alertClass = 'alert alert-warning';
-  let headline = '已入队，等待 pod agent 拉取';
+  let headline = t('secplane.runtime.dispatchResultBanner.queued');
   if (failed > 0 && succeeded === 0 && pending === 0 && dispatched === 0) {
     alertClass = 'alert alert-danger';
-    headline = '下发失败';
+    headline = t('secplane.runtime.dispatchResultBanner.allFailed');
   } else if (succeeded === total && total > 0) {
     alertClass = 'alert alert-success';
-    headline = '已下发并生效';
+    headline = t('secplane.runtime.dispatchResultBanner.allSucceeded');
   } else if (failed > 0) {
     alertClass = 'alert alert-danger';
-    headline = `部分失败（${failed}/${total}）`;
+    headline = t('secplane.runtime.dispatchResultBanner.partialFailed', { failed, total });
   }
 
-  const failedTargets = result.targets.filter((t) => (t.status || '').toLowerCase() === 'failed');
+  const failedTargets = result.targets.filter((tgt) => (tgt.status || '').toLowerCase() === 'failed');
 
   return (
     <div className={alertClass} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
@@ -50,30 +52,28 @@ const DispatchResultBanner: React.FC<Props> = ({ result }) => {
         </span>
       </div>
       <div className="text-xs flex flex-wrap gap-x-4 gap-y-1">
-        <span>共 <strong>{total}</strong> 个实例</span>
-        {pending > 0 && <span>· pending <strong>{pending}</strong>（等待 agent 消费）</span>}
-        {dispatched > 0 && <span>· dispatched <strong>{dispatched}</strong>（agent 已拉取，未确认）</span>}
-        {succeeded > 0 && <span>· succeeded <strong className="tone-green">{succeeded}</strong></span>}
-        {failed > 0 && <span>· failed <strong className="tone-red">{failed}</strong></span>}
-        {others > 0 && <span>· other <strong>{others}</strong></span>}
+        <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.totalInstances', { total }) ?? '' }} />
+        {pending > 0 && <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.pendingNote', { count: pending }) ?? '' }} />}
+        {dispatched > 0 && <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.dispatchedNote', { count: dispatched }) ?? '' }} />}
+        {succeeded > 0 && <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.succeededNote', { count: succeeded }) ?? '' }} />}
+        {failed > 0 && <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.failedNote', { count: failed }) ?? '' }} />}
+        {others > 0 && <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.dispatchResultBanner.otherNote', { count: others }) ?? '' }} />}
       </div>
       {failedTargets.length > 0 && (
         <div className="text-xs">
-          失败实例：
-          {failedTargets.map((t, i) => (
-            <span key={t.instance_id}>
+          {t('secplane.runtime.dispatchResultBanner.failedInstances')}
+          {failedTargets.map((tgt, i) => (
+            <span key={tgt.instance_id}>
               {i > 0 && '、'}
-              <code className="font-mono">#{t.instance_id}</code>
-              {t.error && <span className="muted ml-1">({t.error})</span>}
+              <code className="font-mono">#{tgt.instance_id}</code>
+              {tgt.error && <span className="muted ml-1">({tgt.error})</span>}
             </span>
           ))}
         </div>
       )}
       {(pending > 0 || dispatched > 0) && (
         <div className="text-xs muted">
-          注：命令仅入队，**pod agent 拉取后才会真正生效**。若实例状态异常（stopped / error / 失联），
-          命令会持续停留在 pending；可在「实例管理」确认实例健康，或查 instance_commands.status 转
-          succeeded 后才表示生效。
+          {t('secplane.runtime.dispatchResultBanner.note')}
         </div>
       )}
     </div>

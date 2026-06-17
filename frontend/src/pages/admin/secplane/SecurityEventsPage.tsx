@@ -7,23 +7,7 @@ import {
   type AlertSource,
   type Severity,
 } from '../../../services/secplaneService';
-
-const SOURCE_OPTIONS: { value: AlertSource | ''; label: string }[] = [
-  { value: '', label: '全部来源' },
-  { value: 'aegis', label: 'aegis' },
-  { value: 'secureclaw', label: 'secureclaw' },
-  { value: 'gateway', label: 'gateway' },
-  { value: 'platform', label: 'platform' },
-  { value: 'ksecure', label: 'ksecure' },
-  { value: 'kubearmor', label: 'kubearmor' },
-];
-
-const SEVERITY_OPTIONS: { value: Severity | ''; label: string }[] = [
-  { value: '', label: '全部严重度' },
-  { value: 'high', label: '高 (high)' },
-  { value: 'medium', label: '中 (medium)' },
-  { value: 'low', label: '低 (low)' },
-];
+import { useI18n } from '../../../contexts/I18nContext';
 
 const sourceBadgeTone = (src: string): string => {
   switch (src) {
@@ -54,36 +38,53 @@ const actionTone = (action: string): string => {
   return 'badge-slate';
 };
 
-// 快速过滤芯片：每个对应一组预设过滤条件 (内部 state 修改)
-const QUICK_CHIPS: Array<{ label: string; apply: { source?: string; action?: string; severity?: string; rule_id?: string } }> = [
-  { label: '仅 BLOCK', apply: { action: 'block' } },
-  { label: '今日高危', apply: { severity: 'high' } },
-  { label: 'jailbreak 类', apply: { rule_id: 'jailbreak' } },
-  { label: '出站拦截', apply: { rule_id: 'outbound' } },
-  { label: '主机异常', apply: { source: 'ksecure' } },
-];
-
-// 防护场景过滤 — rule_id 前缀映射
-const SCENE_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: '全部场景' },
-  { value: 'defense.userRiskScan', label: '输入面' },
-  { value: 'defense.memoryGuard', label: '状态面' },
-  { value: 'defense.commandBlock', label: '决策面' },
-  { value: 'defense.outputRedaction', label: '输出面' },
-  { value: 'pp.', label: '资产防篡改' },
-  { value: 'output_redaction', label: '脱敏告警' },
-];
-
-const ACTION_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: '全部动作' },
-  { value: 'block', label: 'BLOCK' },
-  { value: 'redact', label: 'REDACT' },
-  { value: 'observe', label: 'OBSERVE' },
-  { value: 'approval', label: 'APPROVAL' },
-  { value: 'warn', label: 'WARN' },
-];
-
 const SecurityEventsPage: React.FC = () => {
+  const { t } = useI18n();
+
+  const SOURCE_OPTIONS: { value: AlertSource | ''; label: string }[] = useMemo(() => [
+    { value: '', label: t('secplane.events.sourceOptions.all') },
+    { value: 'aegis', label: 'aegis' },
+    { value: 'secureclaw', label: 'secureclaw' },
+    { value: 'gateway', label: 'gateway' },
+    { value: 'platform', label: 'platform' },
+    { value: 'ksecure', label: 'ksecure' },
+    { value: 'kubearmor', label: 'kubearmor' },
+  ], [t]);
+
+  const SEVERITY_OPTIONS: { value: Severity | ''; label: string }[] = useMemo(() => [
+    { value: '', label: t('secplane.events.severityOptions.all') },
+    { value: 'high', label: t('secplane.events.severityOptions.high') },
+    { value: 'medium', label: t('secplane.events.severityOptions.medium') },
+    { value: 'low', label: t('secplane.events.severityOptions.low') },
+  ], [t]);
+
+  const SCENE_OPTIONS: { value: string; label: string }[] = useMemo(() => [
+    { value: '', label: t('secplane.events.sceneOptions.all') },
+    { value: 'defense.userRiskScan', label: t('secplane.events.sceneOptions.inputSurface') },
+    { value: 'defense.memoryGuard', label: t('secplane.events.sceneOptions.stateSurface') },
+    { value: 'defense.commandBlock', label: t('secplane.events.sceneOptions.decisionSurface') },
+    { value: 'defense.outputRedaction', label: t('secplane.events.sceneOptions.outputSurface') },
+    { value: 'pp.', label: t('secplane.events.sceneOptions.assetAntiTamper') },
+    { value: 'output_redaction', label: t('secplane.events.sceneOptions.redactionAlert') },
+  ], [t]);
+
+  const ACTION_OPTIONS: { value: string; label: string }[] = useMemo(() => [
+    { value: '', label: t('secplane.events.actionOptions.all') },
+    { value: 'block', label: 'BLOCK' },
+    { value: 'redact', label: 'REDACT' },
+    { value: 'observe', label: 'OBSERVE' },
+    { value: 'approval', label: 'APPROVAL' },
+    { value: 'warn', label: 'WARN' },
+  ], [t]);
+
+  const QUICK_CHIPS = useMemo(() => [
+    { label: t('secplane.events.quickChips.blockOnly'), apply: { action: 'block' } },
+    { label: t('secplane.events.quickChips.todayHigh'), apply: { severity: 'high' } },
+    { label: t('secplane.events.quickChips.jailbreak'), apply: { rule_id: 'jailbreak' } },
+    { label: t('secplane.events.quickChips.outbound'), apply: { rule_id: 'outbound' } },
+    { label: t('secplane.events.quickChips.hostAnomaly'), apply: { source: 'ksecure' } },
+  ], [t]);
+
   const [items, setItems] = useState<SecplaneAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState<AlertSource | ''>('');
@@ -100,37 +101,20 @@ const SecurityEventsPage: React.FC = () => {
       if (source) params.source = source;
       if (severity) params.severity = severity;
       if (ruleIdFilter.trim()) params.rule_id = ruleIdFilter.trim();
-      const data = await secplaneService.listAlerts(params);
-      setItems(data);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
+      setItems(await secplaneService.listAlerts(params));
+    } catch { setItems([]); }
+    finally { setLoading(false); }
   }, [source, severity, ruleIdFilter]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     let list = items;
-    // 场景前缀过滤
-    if (scene) {
-      list = list.filter((a) => a.rule_id?.startsWith(scene));
-    }
-    // 动作前缀过滤
-    if (actionFilter) {
-      list = list.filter((a) => a.action?.toLowerCase() === actionFilter);
-    }
-    // 关键字
+    if (scene) list = list.filter((a) => a.rule_id?.startsWith(scene));
+    if (actionFilter) list = list.filter((a) => a.action?.toLowerCase() === actionFilter);
     if (keyword.trim()) {
       const k = keyword.trim().toLowerCase();
-      list = list.filter((a) =>
-        [a.rule_id, a.rule_name, a.subject, a.evidence, a.trace_id, a.agent_id]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(k))
-      );
+      list = list.filter((a) => [a.rule_id, a.rule_name, a.subject, a.evidence, a.trace_id, a.agent_id].filter(Boolean).some((v) => String(v).toLowerCase().includes(k)));
     }
     return list;
   }, [items, scene, actionFilter, keyword]);
@@ -153,58 +137,48 @@ const SecurityEventsPage: React.FC = () => {
     if (apply.rule_id) setRuleIdFilter(apply.rule_id);
   };
 
-  const resetFilters = () => {
-    setSource('');
-    setSeverity('');
-    setRuleIdFilter('');
-    setScene('');
-    setActionFilter('');
-    setKeyword('');
-  };
+  const resetFilters = () => { setSource(''); setSeverity(''); setRuleIdFilter(''); setScene(''); setActionFilter(''); setKeyword(''); };
 
   return (
-    <AdminLayout title="安全防护">
+    <AdminLayout title={t('secplane.events.crumb.parent')}>
       <div className="secp-scope space-y-6">
         <div className="crumb">
-          <Link to="/admin/secplane">安全防护</Link>
+          <Link to="/admin/secplane">{t('secplane.events.crumb.parent')}</Link>
           <span>/</span>
-          <span className="crumb-current">事件日志</span>
+          <span className="crumb-current">{t('secplane.events.crumb.current')}</span>
         </div>
 
         <div className="panel">
           <div className="flex items-start justify-between gap-6 mb-5">
             <div className="hero-block flex-1">
-              <div className="h-eyebrow">SECURITY EVENTS · 跨场景事件流</div>
-              <h2 className="h-title">事件日志</h2>
-              <p className="h-subtitle">
-                来自 ClawAegisEx（运行时）、SecureClaw（审计加固）、KSecure（主机层）的告警事件。
-                支持按来源、严重度、规则 ID 多维筛选；关键字搜索 trace_id / 主体 / 证据片段。
-              </p>
+              <div className="h-eyebrow">{t('secplane.events.hero.eyebrow')}</div>
+              <h2 className="h-title">{t('secplane.events.hero.title')}</h2>
+              <p className="h-subtitle">{t('secplane.events.hero.subtitle')}</p>
             </div>
             <button type="button" className="btn-secondary btn-sm" onClick={load} disabled={loading}>
-              {loading ? '刷新中…' : '刷新'}
+              {loading ? t('secplane.events.refreshing') : t('secplane.events.refresh')}
             </button>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div className="stat-card">
-              <div className="stat-card-label">事件总数</div>
+              <div className="stat-card-label">{t('secplane.events.stats.total')}</div>
               <div className="stat-card-value">{counts.total}</div>
-              <div className="stat-card-sub muted-strong">当前筛选下</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.events.stats.totalSub')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">已拦截</div>
+              <div className="stat-card-label">{t('secplane.events.stats.blocked')}</div>
               <div className="stat-card-value tone-red">{counts.blocks}</div>
-              <div className="stat-card-sub muted-strong">action=block</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.events.stats.blockedSub')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">已脱敏</div>
+              <div className="stat-card-label">{t('secplane.events.stats.redacted')}</div>
               <div className="stat-card-value tone-orange">{counts.redacts}</div>
-              <div className="stat-card-sub muted-strong">action=redact</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.events.stats.redactedSub')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">观察记录</div>
+              <div className="stat-card-label">{t('secplane.events.stats.observed')}</div>
               <div className="stat-card-value tone-slate">{counts.observes}</div>
-              <div className="stat-card-sub muted-strong">action=observe</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.events.stats.observedSub')}</div>
             </div>
           </div>
         </div>
@@ -212,82 +186,64 @@ const SecurityEventsPage: React.FC = () => {
         <div className="panel">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="eyebrow">快速筛选</div>
-              <h3 className="section-title-lg mt-1">事件搜索 + 多维过滤</h3>
+              <div className="eyebrow">{t('secplane.events.filter.eyebrow')}</div>
+              <h3 className="section-title-lg mt-1">{t('secplane.events.filter.title')}</h3>
             </div>
             <div className="text-xs muted-strong">
-              共 {items.length} 条 · 筛选后 {filtered.length}
+              {t('secplane.events.filter.totalFiltered', { total: items.length, filtered: filtered.length })}
               <span className="dot bg-green-500 ml-2" />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3 mb-3">
-            <input
-              type="text"
-              className="input"
-              placeholder="🔍 搜索 trace_id / 主体 / 证据"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-            />
+            <input type="text" className="input"
+              placeholder={t('secplane.events.filter.searchPlaceholder')}
+              value={keyword} onChange={(e) => setKeyword(e.target.value)} />
             <select className="input" value={source} onChange={(e) => setSource(e.target.value as AlertSource | '')}>
-              {SOURCE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+              {SOURCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <select className="input" value={severity} onChange={(e) => setSeverity(e.target.value as Severity | '')}>
-              {SEVERITY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+              {SEVERITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-3 gap-3 mb-3">
             <select className="input" value={scene} onChange={(e) => setScene(e.target.value)}>
-              {SCENE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+              {SCENE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <select className="input" value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
-              {ACTION_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+              {ACTION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            <input
-              type="text"
-              className="input"
-              placeholder="规则 ID 精确过滤（如 defense.userRiskScan）"
-              value={ruleIdFilter}
-              onChange={(e) => setRuleIdFilter(e.target.value)}
-            />
+            <input type="text" className="input"
+              placeholder={t('secplane.events.ruleIdPlaceholder')}
+              value={ruleIdFilter} onChange={(e) => setRuleIdFilter(e.target.value)} />
           </div>
           <div className="flex items-center justify-between mb-2">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs muted">快速过滤：</span>
+              <span className="text-xs muted">{t('secplane.events.filter.quickFilterLabel')}</span>
               {QUICK_CHIPS.map((c) => (
-                <button key={c.label} type="button" className="tag" onClick={() => applyChip(c.apply)}>
-                  {c.label}
-                </button>
+                <button key={c.label} type="button" className="tag" onClick={() => applyChip(c.apply)}>{c.label}</button>
               ))}
             </div>
             <button type="button" className="btn-secondary btn-sm" onClick={resetFilters}>
-              ✗ 清除筛选
+              {t('secplane.events.filter.clearFilters')}
             </button>
           </div>
 
           {loading ? (
-            <div className="muted text-sm py-6 text-center">加载中…</div>
+            <div className="muted text-sm py-6 text-center">{t('secplane.events.empty.loading')}</div>
           ) : filtered.length === 0 ? (
-            <div className="muted text-sm py-6 text-center">无匹配事件。</div>
+            <div className="muted text-sm py-6 text-center">{t('secplane.events.empty.noMatch')}</div>
           ) : (
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>时间</th>
-                  <th>来源</th>
-                  <th>规则</th>
-                  <th>主体</th>
-                  <th>证据预览</th>
-                  <th>Trace</th>
-                  <th>严重度</th>
-                  <th>动作</th>
+                  <th>{t('secplane.events.table.time')}</th>
+                  <th>{t('secplane.events.table.source')}</th>
+                  <th>{t('secplane.events.table.rule')}</th>
+                  <th>{t('secplane.events.table.subject')}</th>
+                  <th>{t('secplane.events.table.evidence')}</th>
+                  <th>{t('secplane.events.table.trace')}</th>
+                  <th>{t('secplane.events.table.severity')}</th>
+                  <th>{t('secplane.events.table.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -297,14 +253,10 @@ const SecurityEventsPage: React.FC = () => {
                     <td><span className={`badge ${sourceBadgeTone(a.source)}`}>{a.source}</span></td>
                     <td>
                       <div className="text-sm">{a.rule_name || a.rule_id || '—'}</div>
-                      {a.rule_id && a.rule_name && (
-                        <div className="muted text-xs font-mono">{a.rule_id}</div>
-                      )}
+                      {a.rule_id && a.rule_name && <div className="muted text-xs font-mono">{a.rule_id}</div>}
                     </td>
                     <td className="text-xs">{a.subject || a.agent_id || '—'}</td>
-                    <td className="muted text-xs" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {a.evidence || '—'}
-                    </td>
+                    <td className="muted text-xs" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.evidence || '—'}</td>
                     <td className="muted-strong text-xs font-mono">{a.trace_id ? a.trace_id.slice(0, 12) : '—'}</td>
                     <td><span className={`badge ${severityTone(a.severity)}`}>{a.severity}</span></td>
                     <td><span className={`badge ${actionTone(a.action)}`}>{a.action}</span></td>

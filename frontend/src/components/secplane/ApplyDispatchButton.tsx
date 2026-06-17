@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import DispatchPickerModal from './DispatchPickerModal';
+import { useI18n } from '../../contexts/I18nContext';
 
 // Trigger button + DispatchPickerModal in one. Replaces the prior
-// "应用到所有实例" buttons that called dispatchAegisApply() with no args.
+// "Apply to All Instances" buttons that called dispatchAegisApply() with no args.
 // The picker shows a checklist of instances (with running / unhealthy
 // badges so the user can see the state), then dispatches to the chosen
 // subset or to all.
@@ -23,12 +24,15 @@ const ApplyDispatchButton: React.FC<ApplyDispatchButtonProps> = ({
   onDispatch,
   busy = false,
   className = 'btn-primary',
-  triggerLabel = '应用到实例…',
-  busyLabel = '下发中…',
+  triggerLabel,
+  busyLabel,
   modalTitle,
   modalHint,
   disabled = false,
 }) => {
+  const { t } = useI18n();
+  const _triggerLabel = triggerLabel ?? t('secplane.runtime.applyButton.defaultLabel');
+  const _busyLabel = busyLabel ?? t('secplane.runtime.applyButton.defaultBusyLabel');
   const [open, setOpen] = useState(false);
 
   const handleDispatch = async (ids: number[] | null) => {
@@ -47,7 +51,7 @@ const ApplyDispatchButton: React.FC<ApplyDispatchButtonProps> = ({
         onClick={() => setOpen(true)}
         disabled={busy || disabled}
       >
-        {busy ? busyLabel : triggerLabel}
+        {busy ? _busyLabel : _triggerLabel}
       </button>
       <DispatchPickerModal
         open={open}

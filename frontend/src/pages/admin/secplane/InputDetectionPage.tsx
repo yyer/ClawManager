@@ -10,88 +10,66 @@ import {
   type RuleMode,
 } from '../../../services/secplaneService';
 import DispatchPickerModal from '../../../components/secplane/DispatchPickerModal';
+import { useI18n } from '../../../contexts/I18nContext';
 
-// ---------------------------------------------------------------------------
-// Canonical ClawAegisEx taxonomy. Names + display labels must stay in sync with
-// the Go side (`backend/internal/secplane/policy/model.go`) and the ClawAegisEx
-// schema (`ClawAegisEx/src/config.ts`). The seed inserts one rule per row here.
-// ---------------------------------------------------------------------------
-
+// Defense spec keys — display names and help texts come from i18n
 interface DefenseSpec {
   name: string;
   ruleID: string;
-  display: string;
-  help: string;
   supportsMode: boolean;
 }
 
 const DEFENSES: DefenseSpec[] = [
-  { name: 'selfProtection', display: '受保护路径访问拦截', help: '拦截读取/写入/删除/搜索 protectedPaths、protectedSkills 与 ClawAegisEx 源码目录的请求。', supportsMode: true, ruleID: 'defense.selfProtection' },
-  { name: 'commandBlock', display: '高危命令拦截', help: '阻止 rm -rf /、curl | sh、shutdown 等明显高危 shell 模式。', supportsMode: true, ruleID: 'defense.commandBlock' },
-  { name: 'encodingGuard', display: '编码/混淆载荷检测', help: '检测有界的 base64/base32/hex/url 编码载荷里隐藏的危险命令或外发逻辑。', supportsMode: true, ruleID: 'defense.encodingGuard' },
-  { name: 'scriptProvenanceGuard', display: '脚本来源追踪', help: '跟踪本轮新落地的脚本，发现含高危命令或外发信号时阻止后续执行。', supportsMode: true, ruleID: 'defense.scriptProvenanceGuard' },
-  { name: 'memoryGuard', display: '记忆写入审查', help: '拒绝针对 memory_store / MEMORY.md / SOUL.md / memory/ 的可疑或过大写入。', supportsMode: true, ruleID: 'defense.memoryGuard' },
-  { name: 'userRiskScan', display: '用户输入风险扫描', help: '在 message_received 检测越狱、密钥外发、插件篡改类用户请求。', supportsMode: false, ruleID: 'defense.userRiskScan' },
-  { name: 'skillScan', display: 'Skill 启动扫描', help: '在 ~/.openclaw/skills 与 workspace/skills 上跑轻量本地 skill 扫描。', supportsMode: false, ruleID: 'defense.skillScan' },
-  { name: 'toolResultScan', display: '工具结果风险扫描', help: '扫描 toolResult 中的提示词注入、密钥窃取、外发等 pattern。', supportsMode: false, ruleID: 'defense.toolResultScan' },
-  { name: 'outputRedaction', display: '敏感输出脱敏', help: '在 assistant 输出发送/落盘前屏蔽 API key、token 等敏感值。', supportsMode: false, ruleID: 'defense.outputRedaction' },
-  { name: 'promptGuard', display: '提示词安全提醒注入', help: '在 before_prompt_build 注入静态/一次性安全提醒。', supportsMode: false, ruleID: 'defense.promptGuard' },
-  { name: 'loopGuard', display: '工具调用循环熔断', help: '同一 run 内同参数高危 tool call 超过预算时熔断。', supportsMode: true, ruleID: 'defense.loopGuard' },
-  { name: 'exfiltrationGuard', display: '外发链路检测', help: '跟踪本 run 的工具调用链，识别 SSRF / 数据外发拦截出站。', supportsMode: true, ruleID: 'defense.exfiltrationGuard' },
-  { name: 'toolCallEnforcement', display: '工具调用强约束', help: '注入提示词，要求破坏性操作必须通过标准 tool call 执行。', supportsMode: false, ruleID: 'defense.toolCallEnforcement' },
-  { name: 'dispatchGuard', display: '消息分发拦截', help: '在 agent 处理前拦截针对受保护资源的危险用户/LLM 消息。', supportsMode: true, ruleID: 'defense.dispatchGuard' },
+  { name: 'selfProtection', ruleID: 'defense.selfProtection', supportsMode: true },
+  { name: 'commandBlock', ruleID: 'defense.commandBlock', supportsMode: true },
+  { name: 'encodingGuard', ruleID: 'defense.encodingGuard', supportsMode: true },
+  { name: 'scriptProvenanceGuard', ruleID: 'defense.scriptProvenanceGuard', supportsMode: true },
+  { name: 'memoryGuard', ruleID: 'defense.memoryGuard', supportsMode: true },
+  { name: 'userRiskScan', ruleID: 'defense.userRiskScan', supportsMode: false },
+  { name: 'skillScan', ruleID: 'defense.skillScan', supportsMode: false },
+  { name: 'toolResultScan', ruleID: 'defense.toolResultScan', supportsMode: false },
+  { name: 'outputRedaction', ruleID: 'defense.outputRedaction', supportsMode: false },
+  { name: 'promptGuard', ruleID: 'defense.promptGuard', supportsMode: false },
+  { name: 'loopGuard', ruleID: 'defense.loopGuard', supportsMode: true },
+  { name: 'exfiltrationGuard', ruleID: 'defense.exfiltrationGuard', supportsMode: true },
+  { name: 'toolCallEnforcement', ruleID: 'defense.toolCallEnforcement', supportsMode: false },
+  { name: 'dispatchGuard', ruleID: 'defense.dispatchGuard', supportsMode: true },
 ];
 
 interface FlagSpec {
   flag: string;
   ruleID: string;
-  display: string;
+  i18nKey: string;
 }
 
 const USER_RISK_FLAGS: FlagSpec[] = [
-  { flag: 'jailbreak-bypass', display: '越狱/绕过守护', ruleID: 'urf.jailbreak-bypass' },
-  { flag: 'system-prompt-exfiltration', display: '系统提示词窃取', ruleID: 'urf.system-prompt-exfiltration' },
-  { flag: 'disable-plugin', display: '禁用安全插件', ruleID: 'urf.disable-plugin' },
-  { flag: 'plugin-path-access', display: '访问插件源码路径', ruleID: 'urf.plugin-path-access' },
-  { flag: 'dangerous-execution-request', display: '高危执行请求', ruleID: 'urf.dangerous-execution-request' },
-  { flag: 'sensitive-secret-request', display: '敏感凭据请求', ruleID: 'urf.sensitive-secret-request' },
-  { flag: 'third-party-as-instructions', display: '第三方内容当指令', ruleID: 'urf.third-party-as-instructions' },
+  { flag: 'jailbreak-bypass', ruleID: 'urf.jailbreak-bypass', i18nKey: 'jailbreak-bypass' },
+  { flag: 'system-prompt-exfiltration', ruleID: 'urf.system-prompt-exfiltration', i18nKey: 'system-prompt-exfiltration' },
+  { flag: 'disable-plugin', ruleID: 'urf.disable-plugin', i18nKey: 'disable-plugin' },
+  { flag: 'plugin-path-access', ruleID: 'urf.plugin-path-access', i18nKey: 'plugin-path-access' },
+  { flag: 'dangerous-execution-request', ruleID: 'urf.dangerous-execution-request', i18nKey: 'dangerous-execution-request' },
+  { flag: 'sensitive-secret-request', ruleID: 'urf.sensitive-secret-request', i18nKey: 'sensitive-secret-request' },
+  { flag: 'third-party-as-instructions', ruleID: 'urf.third-party-as-instructions', i18nKey: 'third-party-as-instructions' },
 ];
 
 const TOOL_RESULT_FLAGS: FlagSpec[] = [
-  { flag: 'role-takeover', display: '角色覆盖', ruleID: 'trf.role-takeover' },
-  { flag: 'policy-bypass', display: '策略绕过', ruleID: 'trf.policy-bypass' },
-  { flag: 'tool-induction', display: '工具诱导', ruleID: 'trf.tool-induction' },
-  { flag: 'secret-request', display: '密钥窃取请求', ruleID: 'trf.secret-request' },
-  { flag: 'exfiltration-request', display: '数据外发请求', ruleID: 'trf.exfiltration-request' },
-  { flag: 'remote-script-bootstrap', display: '远程脚本引导', ruleID: 'trf.remote-script-bootstrap' },
-  { flag: 'remote-binary-bootstrap', display: '远程二进制引导', ruleID: 'trf.remote-binary-bootstrap' },
-  { flag: 'system-prompt-leak', display: '系统提示泄漏', ruleID: 'trf.system-prompt-leak' },
-  { flag: 'approval-bypass', display: '审批流程绕过', ruleID: 'trf.approval-bypass' },
-  { flag: 'disable-claw-aegis', display: '禁用 ClawAegisEx', ruleID: 'trf.disable-claw-aegis' },
-  { flag: 'high-risk-command', display: '高危命令', ruleID: 'trf.high-risk-command' },
-  { flag: 'credential-exfiltration', display: '凭据外发', ruleID: 'trf.credential-exfiltration' },
+  { flag: 'role-takeover', ruleID: 'trf.role-takeover', i18nKey: 'role-takeover' },
+  { flag: 'policy-bypass', ruleID: 'trf.policy-bypass', i18nKey: 'policy-bypass' },
+  { flag: 'tool-induction', ruleID: 'trf.tool-induction', i18nKey: 'tool-induction' },
+  { flag: 'secret-request', ruleID: 'trf.secret-request', i18nKey: 'secret-request' },
+  { flag: 'exfiltration-request', ruleID: 'trf.exfiltration-request', i18nKey: 'exfiltration-request' },
+  { flag: 'remote-script-bootstrap', ruleID: 'trf.remote-script-bootstrap', i18nKey: 'remote-script-bootstrap' },
+  { flag: 'remote-binary-bootstrap', ruleID: 'trf.remote-binary-bootstrap', i18nKey: 'remote-binary-bootstrap' },
+  { flag: 'system-prompt-leak', ruleID: 'trf.system-prompt-leak', i18nKey: 'system-prompt-leak' },
+  { flag: 'approval-bypass', ruleID: 'trf.approval-bypass', i18nKey: 'approval-bypass' },
+  { flag: 'disable-claw-aegis', ruleID: 'trf.disable-claw-aegis', i18nKey: 'disable-claw-aegis' },
+  { flag: 'high-risk-command', ruleID: 'trf.high-risk-command', i18nKey: 'high-risk-command' },
+  { flag: 'credential-exfiltration', ruleID: 'trf.credential-exfiltration', i18nKey: 'credential-exfiltration' },
 ];
-
-// ---------------------------------------------------------------------------
-// Generic helpers
-// ---------------------------------------------------------------------------
 
 type TabKey = 'defenses' | 'userRisk' | 'toolResult' | 'protected' | 'alerts';
 
-const TABS: Array<{ key: TabKey; label: string; help: string }> = [
-  { key: 'defenses', label: '防御开关', help: '14 个 ClawAegisEx 防御模块的总开关与运行模式' },
-  { key: 'userRisk', label: '输入风险标记', help: 'userRiskScan 内置 flag 的三态控制（启用 / observe / 关闭）' },
-  { key: 'toolResult', label: '工具结果检测', help: 'toolResultScan 内置 flag 的三态控制' },
-  { key: 'protected', label: '受保护资源', help: '运行时受保护的 paths / skills / plugins 列表' },
-  { key: 'alerts', label: '告警日志', help: '来自 ClawAegisEx、平台与其他防御端的统一告警流' },
-];
-
-const MODE_LABEL: Record<RuleMode, string> = {
-  enforce: 'Enforce · 强制',
-  observe: 'Observe · 仅观测',
-  off: 'Off · 关闭',
-};
+const TAB_KEYS: TabKey[] = ['defenses', 'userRisk', 'toolResult', 'protected', 'alerts'];
 
 const severityChip = (sev: Severity) => {
   const map: Record<Severity, string> = {
@@ -116,21 +94,16 @@ const actionPill = (action: string) => {
   return lookup[action] || 'bg-gray-100 text-gray-700 border-gray-200';
 };
 
-// Build a rule_id slug for protected_* rules from the user-typed value.
 const slugifyResource = (kind: 'pp' | 'psk' | 'ppl', value: string): string => {
   const cleaned = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '_');
   const trimmed = cleaned.replace(/^_+|_+$/g, '').slice(0, 60);
   return `${kind}.${trimmed || Date.now().toString(36)}`;
 };
 
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
-
 const InputDetectionPage: React.FC = () => {
+  const { t } = useI18n();
   const [tab, setTab] = useState<TabKey>('defenses');
 
-  // All extended-kind rules, refreshed together so cross-tab counts stay live.
   const [defenseRules, setDefenseRules] = useState<SecplaneRule[]>([]);
   const [userRiskRules, setUserRiskRules] = useState<SecplaneRule[]>([]);
   const [toolResultRules, setToolResultRules] = useState<SecplaneRule[]>([]);
@@ -140,30 +113,19 @@ const InputDetectionPage: React.FC = () => {
   const [rulesLoading, setRulesLoading] = useState(true);
   const [rulesError, setRulesError] = useState<string | null>(null);
 
-  // Alerts
   const [alerts, setAlerts] = useState<SecplaneAlert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [alertFilter, setAlertFilter] = useState<{ source: string; ruleID: string }>({ source: '', ruleID: '' });
 
-  // Dispatch
   const [dispatching, setDispatching] = useState(false);
   const [dispatchResult, setDispatchResult] = useState<DispatchResult | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
 
-  // Dispatch target picker (modal). Picker owns the instance list state
-  // internally now — see components/secplane/DispatchPickerModal.
   const [pickerOpen, setPickerOpen] = useState(false);
-
-  // Saving (per-rule) tracker so the UI can spin a single row.
   const [savingRuleID, setSavingRuleID] = useState<string | null>(null);
-
-  // Draft inputs for each protected-resource list. Lifted to the parent so
-  // hooks order stays stable across renders (renderProtectedList runs three
-  // times below — it cannot own per-list state itself).
   const [protectedDrafts, setProtectedDrafts] = useState<{ pp: string; psk: string; ppl: string }>({ pp: '', psk: '', ppl: '' });
 
-  // ---- Loaders ----------------------------------------------------------
   const loadAllRules = async () => {
     setRulesLoading(true);
     setRulesError(null);
@@ -205,17 +167,9 @@ const InputDetectionPage: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    loadAllRules();
-  }, []);
+  useEffect(() => { loadAllRules(); }, []);
+  useEffect(() => { if (tab === 'alerts') loadAlerts(); }, [tab]);
 
-  useEffect(() => {
-    if (tab === 'alerts') loadAlerts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-
-  // ---- Save helpers -----------------------------------------------------
-  // Index existing rules by rule_id so toggle/save can patch in place.
   const allRulesByID = useMemo(() => {
     const m = new Map<string, SecplaneRule>();
     for (const r of [...defenseRules, ...userRiskRules, ...toolResultRules, ...protectedPaths, ...protectedSkills, ...protectedPlugins]) {
@@ -224,7 +178,6 @@ const InputDetectionPage: React.FC = () => {
     return m;
   }, [defenseRules, userRiskRules, toolResultRules, protectedPaths, protectedSkills, protectedPlugins]);
 
-  // Save a single rule (existing or new). Refresh affected list afterwards.
   const persistRule = async (next: SecplaneRule) => {
     setSavingRuleID(next.rule_id);
     setRulesError(null);
@@ -239,9 +192,6 @@ const InputDetectionPage: React.FC = () => {
   };
 
   const hardDeleteRule = async (rule_id: string) => {
-    // The backend's DELETE actually flips is_enabled=false rather than DROP;
-    // the protected-resources tab filters out !is_enabled rows so this feels
-    // like a real delete to the user.
     setSavingRuleID(rule_id);
     try {
       await secplaneService.disableRule(rule_id);
@@ -268,7 +218,10 @@ const InputDetectionPage: React.FC = () => {
     }
   };
 
-  // ---- Renderers --------------------------------------------------------
+  // Get defense display text from i18n
+  const defenseDisplay = (name: string) => t(`secplane.inputDetection.defense.${name}`);
+  const defenseHelp = (name: string) => t(`secplane.inputDetection.defense.${name}Help`);
+  const flagDisplay = (i18nKey: string, kind: 'userRiskFlag' | 'toolResultFlag') => t(`secplane.inputDetection.${kind}.${i18nKey}`);
 
   const renderToggleRow = (
     spec: { ruleID: string; display: string; help?: string; supportsMode: boolean; defaultSeverity: Severity },
@@ -307,16 +260,16 @@ const InputDetectionPage: React.FC = () => {
               className="rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400"
             >
               {(['enforce', 'observe', 'off'] as RuleMode[]).map((m) => (
-                <option key={m} value={m}>{MODE_LABEL[m]}</option>
+                <option key={m} value={m}>{t(`secplane.inputDetection.mode.${m}`)}</option>
               ))}
             </select>
           ) : (
-            <span className="text-xs text-gray-400" title="此防御不支持 mode 字段">—</span>
+            <span className="text-xs text-gray-400" title={t('secplane.inputDetection.defenses.noModeSupport')}>—</span>
           )}
         </td>
         <td className="px-4 py-3 text-center">
           {isDisabled ? (
-            <span className="text-xs text-gray-400" title="已禁用">—</span>
+            <span className="text-xs text-gray-400" title={t('secplane.inputDetection.flag.disabled')}>—</span>
           ) : (
             <span className={`rounded-full border px-2 py-0.5 text-xs ${severityChip(rule.severity)}`}>{rule.severity}</span>
           )}
@@ -326,20 +279,6 @@ const InputDetectionPage: React.FC = () => {
   };
 
   const renderDefenses = () => {
-    const seedFor = (s: DefenseSpec): SecplaneRule => ({
-      rule_id: s.ruleID,
-      kind: 'defense_toggle',
-      display_name: s.display,
-      pattern: '',
-      target: 'user_input',
-      severity: 'medium',
-      action: 'observe',
-      mode: 'enforce',
-      is_enabled: true,
-      sort_order: 100 + DEFENSES.findIndex((d) => d.name === s.name) * 10,
-    });
-
-    // Read current state as a discrete value the segmented control renders.
     type TriState = 'off' | 'observe' | 'enforce';
     type BiState = 'off' | 'on';
     const triStateOf = (r: SecplaneRule): TriState => {
@@ -349,18 +288,11 @@ const InputDetectionPage: React.FC = () => {
     };
     const biStateOf = (r: SecplaneRule): BiState => (r.is_enabled ? 'on' : 'off');
 
-    // applyTri / applyBi turn a button click into a SecplaneRule patch.
-    // For "off" we keep the previous mode around so flipping back to a
-    // non-off state restores the operator's last choice instead of always
-    // defaulting to enforce.
     const applyTri = (r: SecplaneRule, next: TriState): SecplaneRule => {
       switch (next) {
-        case 'off':
-          return { ...r, is_enabled: false };
-        case 'observe':
-          return { ...r, is_enabled: true, mode: 'observe' };
-        case 'enforce':
-          return { ...r, is_enabled: true, mode: 'enforce' };
+        case 'off': return { ...r, is_enabled: false };
+        case 'observe': return { ...r, is_enabled: true, mode: 'observe' };
+        case 'enforce': return { ...r, is_enabled: true, mode: 'enforce' };
       }
     };
     const applyBi = (r: SecplaneRule, next: BiState): SecplaneRule => ({
@@ -370,11 +302,9 @@ const InputDetectionPage: React.FC = () => {
     });
 
     const SegBtn: React.FC<{
-      active: boolean;
-      disabled?: boolean;
+      active: boolean; disabled?: boolean;
       tone: 'off' | 'observe' | 'enforce' | 'on';
-      onClick: () => void;
-      children: React.ReactNode;
+      onClick: () => void; children: React.ReactNode;
     }> = ({ active, disabled, tone, onClick, children }) => {
       const activeClass = {
         off: 'bg-gray-700 text-white',
@@ -383,13 +313,8 @@ const InputDetectionPage: React.FC = () => {
         on: 'bg-emerald-600 text-white',
       }[tone];
       return (
-        <button
-          disabled={disabled}
-          onClick={onClick}
-          className={`px-3 py-1 text-xs transition first:rounded-l-md last:rounded-r-md ${
-            active ? activeClass : 'bg-white text-gray-600 hover:bg-gray-50'
-          } disabled:opacity-60 disabled:cursor-not-allowed`}
-        >
+        <button disabled={disabled} onClick={onClick}
+          className={`px-3 py-1 text-xs transition first:rounded-l-md last:rounded-r-md ${active ? activeClass : 'bg-white text-gray-600 hover:bg-gray-50'} disabled:opacity-60 disabled:cursor-not-allowed`}>
           {children}
         </button>
       );
@@ -397,14 +322,14 @@ const InputDetectionPage: React.FC = () => {
 
     const renderTriRow = (d: DefenseSpec) => {
       const existing = allRulesByID.get(d.ruleID);
-      const rule: SecplaneRule = existing ?? seedFor(d);
+      const rule: SecplaneRule = existing ?? { rule_id: d.ruleID, kind: 'defense_toggle', display_name: defenseDisplay(d.name), pattern: '', target: 'user_input', severity: 'medium', action: 'observe', mode: 'enforce', is_enabled: true, sort_order: 100 + DEFENSES.findIndex((x) => x.name === d.name) * 10 };
       const state = triStateOf(rule);
       const isSaving = savingRuleID === d.ruleID;
       return (
         <tr key={d.ruleID} className={`hover:bg-gray-50 ${state === 'off' ? 'bg-gray-50/50' : ''}`}>
           <td className="px-4 py-3 align-top">
-            <div className={`font-medium ${state === 'off' ? 'text-gray-500' : 'text-gray-900'}`}>{d.display}</div>
-            <div className="mt-0.5 text-xs text-gray-500">{d.help}</div>
+            <div className={`font-medium ${state === 'off' ? 'text-gray-500' : 'text-gray-900'}`}>{defenseDisplay(d.name)}</div>
+            <div className="mt-0.5 text-xs text-gray-500">{defenseHelp(d.name)}</div>
             <div className="mt-0.5 font-mono text-[10px] text-gray-400">{d.ruleID}</div>
           </td>
           <td className="px-4 py-3 text-right">
@@ -423,14 +348,14 @@ const InputDetectionPage: React.FC = () => {
 
     const renderBiRow = (d: DefenseSpec) => {
       const existing = allRulesByID.get(d.ruleID);
-      const rule: SecplaneRule = existing ?? seedFor(d);
+      const rule: SecplaneRule = existing ?? { rule_id: d.ruleID, kind: 'defense_toggle', display_name: defenseDisplay(d.name), pattern: '', target: 'user_input', severity: 'medium', action: 'observe', mode: 'enforce', is_enabled: true, sort_order: 100 + DEFENSES.findIndex((x) => x.name === d.name) * 10 };
       const state = biStateOf(rule);
       const isSaving = savingRuleID === d.ruleID;
       return (
         <tr key={d.ruleID} className={`hover:bg-gray-50 ${state === 'off' ? 'bg-gray-50/50' : ''}`}>
           <td className="px-4 py-3 align-top">
-            <div className={`font-medium ${state === 'off' ? 'text-gray-500' : 'text-gray-900'}`}>{d.display}</div>
-            <div className="mt-0.5 text-xs text-gray-500">{d.help}</div>
+            <div className={`font-medium ${state === 'off' ? 'text-gray-500' : 'text-gray-900'}`}>{defenseDisplay(d.name)}</div>
+            <div className="mt-0.5 text-xs text-gray-500">{defenseHelp(d.name)}</div>
             <div className="mt-0.5 font-mono text-[10px] text-gray-400">{d.ruleID}</div>
           </td>
           <td className="px-4 py-3 text-right">
@@ -451,16 +376,16 @@ const InputDetectionPage: React.FC = () => {
     return (
       <div className="space-y-4">
         <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700">
-          每个开关对应一个 ClawAegisEx 内置防御模块。修改后点上方"下发到实例"即可热重载 — 无需重启 gateway。
-          <span className="ml-1 text-blue-900/70">Enforce</span> = 拦截 + 注入 LLM 提示词；
-          <span className="ml-1 text-blue-900/70">Observe</span> = 仅写告警，LLM 行为不变；
-          <span className="ml-1 text-blue-900/70">Off</span> = 整模块不跑。
+          {t('secplane.inputDetection.defenses.explainer')}
+          <span className="ml-1 text-blue-900/70">{t('secplane.inputDetection.defenses.enforceHelp')}</span> = {t('secplane.inputDetection.defenses.enforceHelp').includes('Enforce') ? 'block + LLM prompt' : ''};
+          <span className="ml-1 text-blue-900/70">{t('secplane.inputDetection.defenses.observeHelp')}</span> = {t('secplane.inputDetection.defenses.observeHelp').includes('Observe') ? 'log only' : ''};
+          <span className="ml-1 text-blue-900/70">{t('secplane.inputDetection.defenses.offHelp')}</span>.
         </div>
 
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">支持观测模式 · 8 个</div>
-            <div className="text-xs text-gray-500">这些防御可在 enforce / observe 两种强度之间切换</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">{t('secplane.inputDetection.defenses.modeSupporting')}</div>
+            <div className="text-xs text-gray-500">{t('secplane.inputDetection.defenses.modeSupportingSub')}</div>
           </div>
           <table className="min-w-full divide-y divide-gray-100">
             <tbody className="divide-y divide-gray-100">
@@ -471,8 +396,8 @@ const InputDetectionPage: React.FC = () => {
 
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">仅开关 · 6 个</div>
-            <div className="text-xs text-gray-500">这些防御没有 observe 中间态 — 要么开启，要么关闭</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">{t('secplane.inputDetection.defenses.booleanOnly')}</div>
+            <div className="text-xs text-gray-500">{t('secplane.inputDetection.defenses.booleanOnlySub')}</div>
           </div>
           <table className="min-w-full divide-y divide-gray-100">
             <tbody className="divide-y divide-gray-100">
@@ -485,16 +410,18 @@ const InputDetectionPage: React.FC = () => {
   };
 
   const renderFlagTab = (
-    title: string,
-    explainer: string,
-    flags: FlagSpec[],
     kind: 'user_risk_flag' | 'tool_result_flag',
+    flags: FlagSpec[],
     pool: SecplaneRule[],
   ) => {
+    const titleKey = kind === 'user_risk_flag' ? 'secplane.inputDetection.flag.userRiskTitle' : 'secplane.inputDetection.flag.toolResultTitle';
+    const explainerKey = kind === 'user_risk_flag' ? 'secplane.inputDetection.flag.userRiskExplainer' : 'secplane.inputDetection.flag.toolResultExplainer';
+    const flagKind = kind === 'user_risk_flag' ? 'userRiskFlag' : 'toolResultFlag';
+
     const seedFor = (s: FlagSpec, idx: number): SecplaneRule => ({
       rule_id: s.ruleID,
       kind,
-      display_name: s.display,
+      display_name: flagDisplay(s.i18nKey, flagKind as 'userRiskFlag' | 'toolResultFlag'),
       pattern: '',
       target: kind === 'user_risk_flag' ? 'user_input' : 'tool_output',
       severity: 'high',
@@ -503,36 +430,37 @@ const InputDetectionPage: React.FC = () => {
       is_enabled: true,
       sort_order: (kind === 'user_risk_flag' ? 300 : 500) + idx * 10,
     });
+
     return (
       <div className="space-y-3">
-        <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700">{explainer}</div>
+        <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700">{t(explainerKey)}</div>
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">{title}</th>
-                <th className="px-4 py-3 text-center">启用</th>
-                <th className="px-4 py-3 text-center">模式（三态）</th>
-                <th className="px-4 py-3 text-center">严重度</th>
+                <th className="px-4 py-3">{t(titleKey)}</th>
+                <th className="px-4 py-3 text-center">{t('secplane.inputDetection.flag.enabled')}</th>
+                <th className="px-4 py-3 text-center">{t('secplane.inputDetection.flag.mode')}</th>
+                <th className="px-4 py-3 text-center">{t('secplane.inputDetection.flag.severity')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {flags.map((f, idx) =>
                 renderToggleRow(
-                  { ruleID: f.ruleID, display: f.display, supportsMode: true, defaultSeverity: 'high' },
+                  { ruleID: f.ruleID, display: flagDisplay(f.i18nKey, flagKind as 'userRiskFlag' | 'toolResultFlag'), supportsMode: true, defaultSeverity: 'high' },
                   () => seedFor(f, idx),
                 ),
               )}
             </tbody>
           </table>
         </div>
-        <div className="text-xs text-gray-500">当前共 {pool.length} 条 {kind} 规则在数据库中。</div>
+        <div className="text-xs text-gray-500">{t('secplane.inputDetection.flag.ruleCount', { count: pool.length, kind })}</div>
       </div>
     );
   };
 
   const renderProtectedList = (
-    title: string,
+    titleKey: string,
     placeholder: string,
     pool: SecplaneRule[],
     kindShort: 'pp' | 'psk' | 'ppl',
@@ -546,16 +474,9 @@ const InputDetectionPage: React.FC = () => {
       if (!value) return;
       const ruleID = slugifyResource(kindShort, value);
       const next: SecplaneRule = {
-        rule_id: ruleID,
-        kind: kindLong,
-        display_name: value,
-        pattern: value,
-        target: 'user_input',
-        severity: 'high',
-        action: 'block',
-        mode: 'enforce',
-        is_enabled: true,
-        sort_order: 700,
+        rule_id: ruleID, kind: kindLong, display_name: value, pattern: value,
+        target: 'user_input', severity: 'high', action: 'block', mode: 'enforce',
+        is_enabled: true, sort_order: 700,
       };
       await persistRule(next);
       setDraft('');
@@ -563,40 +484,29 @@ const InputDetectionPage: React.FC = () => {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-800">{title}</div>
-          <span className="text-xs text-gray-500">{visible.length} 项生效</span>
+          <div className="text-sm font-semibold text-gray-800">{t(titleKey)}</div>
+          <span className="text-xs text-gray-500">{t('secplane.inputDetection.protected.activeCount', { count: visible.length })}</span>
         </div>
         <div className="mb-3 flex gap-2">
-          <input
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={placeholder}
-            className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm"
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-          />
-          <button
-            disabled={!draft.trim()}
-            onClick={handleAdd}
-            className="rounded bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60"
-          >
-            添加
+          <input type="text" value={draft} onChange={(e) => setDraft(e.target.value)}
+            placeholder={placeholder} className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm"
+            onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }} />
+          <button disabled={!draft.trim()} onClick={handleAdd}
+            className="rounded bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60">
+            {t('secplane.inputDetection.protected.addButton')}
           </button>
         </div>
         <ul className="space-y-1">
           {visible.map((r) => (
             <li key={r.rule_id} className="flex items-center gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-2">
               <code className="flex-1 truncate font-mono text-xs text-gray-700" title={r.pattern}>{r.pattern}</code>
-              <button
-                disabled={savingRuleID === r.rule_id}
-                onClick={() => hardDeleteRule(r.rule_id)}
-                className="text-xs text-rose-600 hover:text-rose-800 disabled:opacity-60"
-              >
-                {savingRuleID === r.rule_id ? '…' : '移除'}
+              <button disabled={savingRuleID === r.rule_id} onClick={() => hardDeleteRule(r.rule_id)}
+                className="text-xs text-rose-600 hover:text-rose-800 disabled:opacity-60">
+                {savingRuleID === r.rule_id ? '…' : t('secplane.inputDetection.protected.removeButton')}
               </button>
             </li>
           ))}
-          {visible.length === 0 && <li className="text-xs text-gray-500">无配置项。</li>}
+          {visible.length === 0 && <li className="text-xs text-gray-500">{t('secplane.inputDetection.protected.empty')}</li>}
         </ul>
       </div>
     );
@@ -604,9 +514,9 @@ const InputDetectionPage: React.FC = () => {
 
   const renderProtected = () => (
     <div className="grid gap-4 lg:grid-cols-3">
-      {renderProtectedList('受保护路径 (protectedPaths)', '/path/to/protect', protectedPaths, 'pp', 'protected_path')}
-      {renderProtectedList('受保护 Skills', 'release-guard', protectedSkills, 'psk', 'protected_skill')}
-      {renderProtectedList('受保护 Plugins', 'audit-guard', protectedPlugins, 'ppl', 'protected_plugin')}
+      {renderProtectedList('secplane.inputDetection.protected.pathTitle', '/path/to/protect', protectedPaths, 'pp', 'protected_path')}
+      {renderProtectedList('secplane.inputDetection.protected.skillTitle', 'release-guard', protectedSkills, 'psk', 'protected_skill')}
+      {renderProtectedList('secplane.inputDetection.protected.pluginTitle', 'audit-guard', protectedPlugins, 'ppl', 'protected_plugin')}
     </div>
   );
 
@@ -614,35 +524,28 @@ const InputDetectionPage: React.FC = () => {
     <div className="space-y-3">
       <div className="rounded-xl border border-gray-200 bg-white p-3">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="text-sm text-gray-700">来源
-            <select
-              value={alertFilter.source}
+          <label className="text-sm text-gray-700">{t('secplane.inputDetection.alerts.source')}
+            <select value={alertFilter.source}
               onChange={(e) => setAlertFilter({ ...alertFilter, source: e.target.value })}
-              className="ml-2 rounded border border-gray-300 px-2 py-1 text-sm"
-            >
-              <option value="">全部</option>
-              <option value="aegis">aegis（Pod 端 ClawAegisEx）</option>
-              <option value="platform">platform（平台测试）</option>
+              className="ml-2 rounded border border-gray-300 px-2 py-1 text-sm">
+              <option value="">{t('secplane.inputDetection.alerts.allSources')}</option>
+              <option value="aegis">aegis</option>
+              <option value="platform">platform</option>
               <option value="gateway">gateway</option>
               <option value="secureclaw">secureclaw</option>
               <option value="ksecure">ksecure</option>
               <option value="kubearmor">kubearmor</option>
             </select>
           </label>
-          <label className="text-sm text-gray-700">规则 ID
-            <input
-              type="text"
-              value={alertFilter.ruleID}
+          <label className="text-sm text-gray-700">{t('secplane.inputDetection.alerts.ruleId')}
+            <input type="text" value={alertFilter.ruleID}
               onChange={(e) => setAlertFilter({ ...alertFilter, ruleID: e.target.value })}
               placeholder="user_risk_scan / tool_result_scan / ..."
-              className="ml-2 w-64 rounded border border-gray-300 px-2 py-1 text-sm"
-            />
+              className="ml-2 w-64 rounded border border-gray-300 px-2 py-1 text-sm" />
           </label>
-          <button
-            onClick={loadAlerts}
-            className="ml-auto rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-          >
-            刷新
+          <button onClick={loadAlerts}
+            className="ml-auto rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+            {t('secplane.inputDetection.alerts.refresh')}
           </button>
         </div>
       </div>
@@ -651,12 +554,12 @@ const InputDetectionPage: React.FC = () => {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
             <tr>
-              <th className="px-4 py-3">时间</th>
-              <th className="px-4 py-3">来源</th>
-              <th className="px-4 py-3">规则 / Defense</th>
-              <th className="px-4 py-3">严重度</th>
-              <th className="px-4 py-3">动作</th>
-              <th className="px-4 py-3">证据</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.time')}</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.source')}</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.rule')}</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.severityCol')}</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.action')}</th>
+              <th className="px-4 py-3">{t('secplane.inputDetection.alerts.evidence')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -676,7 +579,7 @@ const InputDetectionPage: React.FC = () => {
               </tr>
             ))}
             {alerts.length === 0 && !alertsLoading && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">暂无告警事件</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">{t('secplane.inputDetection.alerts.noAlerts')}</td></tr>
             )}
           </tbody>
         </table>
@@ -684,26 +587,22 @@ const InputDetectionPage: React.FC = () => {
     </div>
   );
 
-  // ---- Top-level layout -------------------------------------------------
   return (
-    <AdminLayout title="智能安全防护 / Secplane Aegis">
+    <AdminLayout title={t('secplane.inputDetection.title')}>
       <div className="space-y-4">
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-indigo-600">clawaegisex · secplane</div>
-              <div className="mt-1 text-2xl font-semibold text-gray-900">智能安全防护</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-indigo-600">{t('secplane.inputDetection.eyebrow')}</div>
+              <div className="mt-1 text-2xl font-semibold text-gray-900">{t('secplane.inputDetection.heading')}</div>
               <div className="mt-1 text-sm text-gray-600">
-                统一管理 ClawAegisEx 14 个防御模块、{USER_RISK_FLAGS.length + TOOL_RESULT_FLAGS.length} 个内置 flag、受保护资源列表，以及来自 Pod 与平台的告警流。规则修改后点击右上"下发到实例"即可热重载至所有运行中的 OpenClaw 实例。
+                {t('secplane.inputDetection.description', { flagCount: USER_RISK_FLAGS.length + TOOL_RESULT_FLAGS.length })}
               </div>
             </div>
-            <button
-              onClick={() => setPickerOpen(true)}
-              disabled={dispatching}
+            <button onClick={() => setPickerOpen(true)} disabled={dispatching}
               className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-indigo-700 disabled:opacity-60"
-              title="选择目标实例并下发 ClawAegisEx user_config"
-            >
-              {dispatching ? '下发中…' : '下发到实例…'}
+              title={t('secplane.inputDetection.dispatchHint')}>
+              {dispatching ? t('secplane.inputDetection.dispatching') : t('secplane.inputDetection.dispatchButton')}
             </button>
           </div>
           {dispatchError && (
@@ -712,28 +611,28 @@ const InputDetectionPage: React.FC = () => {
           {dispatchResult && (
             <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <span className="font-medium text-emerald-800">下发完成</span>
-                <span className="text-gray-600">revision: <code>{dispatchResult.revision}</code></span>
-                <span className="text-gray-600">sha: <code>{dispatchResult.sha256.slice(0, 12)}…</code></span>
+                <span className="font-medium text-emerald-800">{t('secplane.inputDetection.dispatchComplete')}</span>
+                <span className="text-gray-600">{t('secplane.inputDetection.dispatchResult.revision')} <code>{dispatchResult.revision}</code></span>
+                <span className="text-gray-600">{t('secplane.inputDetection.dispatchResult.sha')} <code>{dispatchResult.sha256.slice(0, 12)}…</code></span>
                 {dispatchResult.skill_id !== undefined && (
                   <span className="text-gray-600">skill_id={dispatchResult.skill_id} v{dispatchResult.version_no}</span>
                 )}
               </div>
               <div className="mt-2 grid gap-1">
-                {dispatchResult.targets.map((t) => (
-                  <div key={t.instance_id} className="flex items-center gap-2">
-                    <span className="text-gray-500">实例 #{t.instance_id}</span>
-                    <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{t.command_type}</span>
-                    <span className={`rounded-full px-2 py-0.5 ${t.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : t.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {t.status}
+                {dispatchResult.targets.map((tgt) => (
+                  <div key={tgt.instance_id} className="flex items-center gap-2">
+                    <span className="text-gray-500">{t('secplane.inputDetection.dispatchResult.instance', { id: tgt.instance_id })}</span>
+                    <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{tgt.command_type}</span>
+                    <span className={`rounded-full px-2 py-0.5 ${tgt.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : tgt.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {tgt.status}
                     </span>
-                    {t.command_id && <span className="text-gray-500">cmd #{t.command_id}</span>}
-                    {t.error && <span className="text-rose-700">{t.error}</span>}
+                    {tgt.command_id && <span className="text-gray-500">cmd #{tgt.command_id}</span>}
+                    {tgt.error && <span className="text-rose-700">{tgt.error}</span>}
                   </div>
                 ))}
               </div>
               <div className="mt-2 text-gray-500">
-                ClawAegisEx 会在 ≤1s 自动 hot-reload 新 user_config（无需重启 OpenClaw）。
+                {t('secplane.inputDetection.dispatchResult.autoReload')}
               </div>
             </div>
           )}
@@ -742,39 +641,22 @@ const InputDetectionPage: React.FC = () => {
         {rulesError && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{rulesError}</div>}
 
         <div className="flex flex-wrap gap-1 border-b border-gray-200">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
+          {TAB_KEYS.map((key) => (
+            <button key={key} onClick={() => setTab(key)}
               className={`px-4 py-2 text-sm transition ${
-                tab === t.key
-                  ? 'border-b-2 border-indigo-500 text-indigo-600 font-medium'
-                  : 'text-gray-600 hover:text-gray-900'
+                tab === key ? 'border-b-2 border-indigo-500 text-indigo-600 font-medium' : 'text-gray-600 hover:text-gray-900'
               }`}
-              title={t.help}
-            >
-              {t.label}
+              title={t(`secplane.inputDetection.tabHelp.${key}`)}>
+              {t(`secplane.inputDetection.tab.${key}`)}
             </button>
           ))}
-          {rulesLoading && <span className="ml-auto self-center text-xs text-gray-500">加载中…</span>}
+          {rulesLoading && <span className="ml-auto self-center text-xs text-gray-500">{t('secplane.inputDetection.loading')}</span>}
         </div>
 
         <div>
           {tab === 'defenses' && renderDefenses()}
-          {tab === 'userRisk' && renderFlagTab(
-            'userRiskScan 内置 flag',
-            '每条 flag 三态：启用+enforce（默认，全力拦截+提示词加固）/ 启用+observe（仅记录告警，不影响 LLM）/ 关闭（完全屏蔽）。',
-            USER_RISK_FLAGS,
-            'user_risk_flag',
-            userRiskRules,
-          )}
-          {tab === 'toolResult' && renderFlagTab(
-            'toolResultScan 内置 flag',
-            '在 toolResult / 第三方网页内容 / 编码 payload 中匹配的 flag。三态语义同 userRiskScan。',
-            TOOL_RESULT_FLAGS,
-            'tool_result_flag',
-            toolResultRules,
-          )}
+          {tab === 'userRisk' && renderFlagTab('user_risk_flag', USER_RISK_FLAGS, userRiskRules)}
+          {tab === 'toolResult' && renderFlagTab('tool_result_flag', TOOL_RESULT_FLAGS, toolResultRules)}
           {tab === 'protected' && renderProtected()}
           {tab === 'alerts' && renderAlerts()}
         </div>
@@ -785,7 +667,7 @@ const InputDetectionPage: React.FC = () => {
         onClose={() => setPickerOpen(false)}
         onDispatch={runDispatch}
         dispatching={dispatching}
-        hint="把当前 ClawAegisEx 规则编译为 user_config 并通过 install_skill 推送到选中的 OpenClaw 实例。"
+        hint={t('secplane.inputDetection.dispatchHint')}
       />
     </AdminLayout>
   );

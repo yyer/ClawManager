@@ -12,6 +12,7 @@ import RuleDetailModal, { type RuleModalData } from './RuleDetailModal';
 import DispatchResultBanner from './DispatchResultBanner';
 import InstanceHealthPanel from './InstanceHealthPanel';
 import { useInstanceHealth } from './useInstanceHealth';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 // Shared scaffold for the runtime scenario pages. Renders crumb + hero +
 // defense toggles + (optional) extras + (optional) per-scenario alert stream
@@ -72,6 +73,7 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [openRuleModalFor, setOpenRuleModalFor] = useState<string | null>(null);
   const instanceHealth = useInstanceHealth();
+  const { t } = useI18n();
 
   const wantsAlerts = !!(meta.alertRuleIdPrefixes && meta.alertRuleIdPrefixes.length);
 
@@ -160,9 +162,9 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
   return (
     <div className="secp-scope space-y-6">
       <div className="crumb">
-        <Link to="/admin/secplane">安全防护</Link>
+        <Link to="/admin/secplane">{t('secplane.runtime.shared.crumbSecurity')}</Link>
         <span>/</span>
-        <Link to="/admin/secplane/runtime">智能体运行时安全</Link>
+        <Link to="/admin/secplane/runtime">{t('secplane.runtime.shared.crumbRuntime')}</Link>
         <span>/</span>
         <span className="crumb-current">{meta.title}</span>
       </div>
@@ -178,31 +180,31 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
             <ApplyDispatchButton
               onDispatch={doApply}
               busy={busy}
-              triggerLabel="应用到实例…"
+              triggerLabel={t('secplane.runtime.shared.applyToInstances')}
             />
             <button type="button" className="btn-secondary btn-sm" onClick={loadAll} disabled={busy}>
-              刷新
+              {t('secplane.runtime.shared.refresh')}
             </button>
           </div>
         </div>
         <div className="grid grid-cols-4 gap-3">
           <div className="stat-card">
-            <div className="stat-card-label">防御项</div>
+            <div className="stat-card-label">{t('secplane.runtime.shared.statDefenseCount')}</div>
             <div className="stat-card-value">{meta.defenses.length}</div>
-            <div className="stat-card-sub muted-strong">已映射至 ClawAegisEx</div>
+            <div className="stat-card-sub muted-strong">{t('secplane.runtime.shared.statDefenseCountSub')}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-card-label">已启用</div>
+            <div className="stat-card-label">{t('secplane.runtime.shared.statEnabled')}</div>
             <div className="stat-card-value tone-green">{enabledCount}</div>
-            <div className="stat-card-sub muted-strong">enforce 或 observe</div>
+            <div className="stat-card-sub muted-strong">{t('secplane.runtime.shared.statEnabledSub')}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-card-label">本场景告警</div>
+            <div className="stat-card-label">{t('secplane.runtime.shared.statAlerts')}</div>
             <div className="stat-card-value tone-red">{wantsAlerts ? filteredAlerts.length : '—'}</div>
-            <div className="stat-card-sub muted-strong">按 rule_id 前缀过滤</div>
+            <div className="stat-card-sub muted-strong">{t('secplane.runtime.shared.statAlertsSub')}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-card-label">下发通道</div>
+            <div className="stat-card-label">{t('secplane.runtime.shared.statChannel')}</div>
             <div className="stat-card-value tone-blue" style={{ fontSize: '1rem' }}>install_skill</div>
             <div className="stat-card-sub muted-strong">bundle → hot-reload</div>
           </div>
@@ -221,12 +223,12 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
       {dispatchResult && <DispatchResultBanner result={dispatchResult} />}
       {dispatchError && (
         <div className="alert alert-danger">
-          <span>下发失败：{dispatchError}</span>
+          <span>{t('secplane.runtime.shared.dispatchFailed')}{dispatchError}</span>
         </div>
       )}
 
       <div className="panel">
-        <div className="section-title-lg mb-4">防御开关</div>
+        <div className="section-title-lg mb-4">{t('secplane.runtime.scenarioShell.defenseToggle')}</div>
         <div className="space-y-3">
           {meta.defenses.map((def) => {
             const rule = ruleByDefense[def.ruleId];
@@ -238,7 +240,7 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-base font-semibold text-[#171212]">{def.name}</span>
                     {def.hook && <span className="tag">{def.hook}</span>}
-                    {!rule && <span className="badge badge-slate">未配置</span>}
+                    {!rule && <span className="badge badge-slate">{t('secplane.runtime.shared.notConfigured')}</span>}
                   </div>
                   <div className="muted text-xs mb-1">{def.desc}</div>
                   <div className="flex items-center gap-3">
@@ -250,14 +252,14 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
                         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}
                         onClick={() => setOpenRuleModalFor(def.ruleId)}
                       >
-                        查看规则 →
+                        {t('secplane.runtime.shared.viewRule')}
                       </button>
                     )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   {def.supportsMode ? (
-                    <div className="mode-selector" role="radiogroup" aria-label={`${def.name} 模式`}>
+                    <div className="mode-selector" role="radiogroup" aria-label={t('secplane.runtime.shared.modeLabel', { name: def.name })}>
                       {MODES.map((m) => (
                         <button
                           key={m}
@@ -266,13 +268,13 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
                           onClick={() => handleMode(def, m)}
                           disabled={busy || !rule}
                         >
-                          {m === 'enforce' ? '拦截' : m === 'observe' ? '观察' : '关闭'}
+                          {m === 'enforce' ? t('secplane.runtime.shared.modeEnforce') : m === 'observe' ? t('secplane.runtime.shared.modeObserve') : t('secplane.runtime.shared.modeOff')}
                         </button>
                       ))}
                     </div>
                   ) : (
                     <>
-                      <span className="muted text-xs">{enabled ? '已启用' : '已停用'}</span>
+                      <span className="muted text-xs">{enabled ? t('secplane.runtime.shared.enabled') : t('secplane.runtime.shared.disabled')}</span>
                       <button
                         type="button"
                         className={`toggle ${enabled ? 'toggle-on' : ''}`}
@@ -280,7 +282,7 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
                         disabled={busy || !rule}
                         role="switch"
                         aria-checked={enabled}
-                        aria-label={`${def.name} 开关`}
+                        aria-label={t('secplane.runtime.shared.toggleSwitch', { name: def.name })}
                       >
                         <span className="toggle-thumb" />
                       </button>
@@ -298,25 +300,25 @@ export const ScenarioShell: React.FC<{ meta: ScenarioMeta }> = ({ meta }) => {
       {wantsAlerts && (
         <div className="panel">
           <div className="flex items-center justify-between mb-4">
-            <div className="section-title-lg">本场景事件流</div>
-            <Link to="/admin/secplane/events" className="muted text-xs hover:underline">查看全部 →</Link>
+            <div className="section-title-lg">{t('secplane.runtime.scenarioShell.eventsTitle')}</div>
+            <Link to="/admin/secplane/events" className="muted text-xs hover:underline">{t('secplane.runtime.shared.viewAll')}</Link>
           </div>
           {filteredAlerts.length === 0 ? (
             <div className="muted text-sm py-6 text-center">
-              暂无匹配本场景规则的事件（前缀：
+              {t('secplane.runtime.scenarioShell.noEvents')}
               {meta.alertRuleIdPrefixes?.map((p) => <code key={p} className="font-mono mx-1">{p}*</code>)}
-              ）。
+              {t('secplane.runtime.scenarioShell.noEventsSuffix')}
             </div>
           ) : (
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>时间</th>
-                  <th>规则</th>
-                  <th>主体</th>
-                  <th>证据预览</th>
-                  <th>严重度</th>
-                  <th>动作</th>
+                  <th>{t('secplane.runtime.shared.colTime')}</th>
+                  <th>{t('secplane.runtime.shared.colRule')}</th>
+                  <th>{t('secplane.runtime.shared.colSubject')}</th>
+                  <th>{t('secplane.runtime.shared.colEvidence')}</th>
+                  <th>{t('secplane.runtime.shared.colSeverity')}</th>
+                  <th>{t('secplane.runtime.shared.colAction')}</th>
                 </tr>
               </thead>
               <tbody>

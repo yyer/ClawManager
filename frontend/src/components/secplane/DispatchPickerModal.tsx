@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { instanceService } from '../../services/instanceService';
 import type { Instance } from '../../types/instance';
+import { useI18n } from '../../contexts/I18nContext';
 
 // DispatchPickerModal is the shared instance picker UI used by every
 // secplane sub-page that needs to push config to running OpenClaw pods.
@@ -12,8 +13,8 @@ import type { Instance } from '../../types/instance';
 // Behavior:
 //   - Lazy-loads /instances on first open; cached for subsequent opens
 //   - Search filters across name / id / status / pod / type substring
-//   - "全选当前" only selects currently-filtered rows
-//   - "下发到全部" calls onDispatch(null), letting the backend resolve
+//   - "Select All Visible" only selects currently-filtered rows
+//   - "Dispatch to All" calls onDispatch(null), letting the backend resolve
 //   - Closing on backdrop / X / Esc / cancel; parent decides when to set
 //     `open` back to false after a successful dispatch (typically inside
 //     the parent's runDispatch handler).
@@ -32,9 +33,12 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
   onClose,
   onDispatch,
   dispatching,
-  title = '选择下发目标实例',
-  hint = '把当前规则编译并推送到选中的 OpenClaw 实例。',
+  title,
+  hint,
 }) => {
+  const { t } = useI18n();
+  const _title = title ?? t('secplane.runtime.dispatchPicker.defaultTitle');
+  const _hint = hint ?? t('secplane.runtime.dispatchPicker.defaultHint');
   const [instances, setInstances] = useState<Instance[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(false);
   const [instancesError, setInstancesError] = useState<string | null>(null);
@@ -103,13 +107,13 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
       <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
           <div>
-            <div className="text-base font-semibold text-gray-900">{title}</div>
-            <div className="text-xs text-gray-500">{hint}</div>
+            <div className="text-base font-semibold text-gray-900">{_title}</div>
+            <div className="text-xs text-gray-500">{_hint}</div>
           </div>
           <button
             onClick={onClose}
             className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-            aria-label="关闭"
+            aria-label={t('secplane.runtime.dispatchPicker.close') ?? 'Close'}
           >
             ✕
           </button>
@@ -122,7 +126,7 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
                 type="text"
                 value={instanceFilter}
                 onChange={(e) => setInstanceFilter(e.target.value)}
-                placeholder="按名称 / ID / 状态 / pod / 类型 过滤…"
+                placeholder={t('secplane.runtime.dispatchPicker.searchPlaceholder') ?? ''}
                 className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
@@ -131,35 +135,35 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
               disabled={filteredInstances.length === 0}
               className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
             >
-              全选当前 ({filteredInstances.length})
+              {t('secplane.runtime.dispatchPicker.selectAll')} ({filteredInstances.length})
             </button>
             <button
               onClick={clearSelection}
               disabled={selectedInstanceIDs.size === 0}
               className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
             >
-              清空 ({selectedInstanceIDs.size})
+              {t('secplane.runtime.dispatchPicker.clear')} ({selectedInstanceIDs.size})
             </button>
             <button
               onClick={loadInstances}
               className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
             >
-              刷新
+              {t('secplane.runtime.shared.refresh')}
             </button>
           </div>
           <div className="mt-2 text-xs text-gray-500">
-            共 {instances.length} 个实例；过滤命中 {filteredInstances.length}；已选 {selectedInstanceIDs.size}
+            {t('secplane.runtime.dispatchPicker.summary', { total: instances.length, filtered: filteredInstances.length, selected: selectedInstanceIDs.size })}
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {instancesLoading && <div className="p-6 text-center text-sm text-gray-500">加载中…</div>}
+          {instancesLoading && <div className="p-6 text-center text-sm text-gray-500">{t('secplane.runtime.dispatchPicker.loading')}</div>}
           {instancesError && (
             <div className="m-5 rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{instancesError}</div>
           )}
           {!instancesLoading && filteredInstances.length === 0 && (
             <div className="p-6 text-center text-sm text-gray-500">
-              {instances.length === 0 ? '暂无实例' : '当前过滤条件无匹配实例'}
+              {instances.length === 0 ? t('secplane.runtime.dispatchPicker.noInstances') : t('secplane.runtime.dispatchPicker.noMatch')}
             </div>
           )}
           <ul className="divide-y divide-gray-100">
@@ -189,7 +193,7 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
                         <span className="text-xs text-gray-500">#{inst.id}</span>
                         <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase ${tone}`}>{inst.status}</span>
                         <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">{inst.type}</span>
-                        {notRunning && <span className="text-[10px] text-amber-600" title="非 running 状态的实例下发后可能在启动后才应用">⚠ 未运行</span>}
+                        {notRunning && <span className="text-[10px] text-amber-600" title={t('secplane.runtime.dispatchPicker.notRunningTitle') ?? ''}>{t('secplane.runtime.dispatchPicker.notRunning')}</span>}
                       </div>
                       {inst.pod_name && (
                         <div className="mt-0.5 text-xs text-gray-500">
@@ -208,30 +212,30 @@ const DispatchPickerModal: React.FC<DispatchPickerModalProps> = ({
         <div className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
           <div className="text-xs text-gray-500">
             {selectedInstanceIDs.size > 0
-              ? `将下发到选中的 ${selectedInstanceIDs.size} 个实例`
-              : '未选择任何实例 — 可改为下发到全部'}
+              ? t('secplane.runtime.dispatchPicker.willDispatchSelected', { count: selectedInstanceIDs.size })
+              : t('secplane.runtime.dispatchPicker.noneSelectedHint')}
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
               className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
             >
-              取消
+              {t('secplane.runtime.dispatchPicker.cancel')}
             </button>
             <button
               onClick={() => onDispatch(null)}
               disabled={dispatching || instances.length === 0}
               className="rounded border border-indigo-300 bg-white px-3 py-1.5 text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
-              title="不带 instance_ids，由后端选取所有实例"
+              title={t('secplane.runtime.dispatchPicker.sendToAllTitle') ?? ''}
             >
-              {dispatching ? '下发中…' : `下发到全部 (${instances.length})`}
+              {dispatching ? t('secplane.runtime.dispatchPicker.busyLabel') : t('secplane.runtime.dispatchPicker.sendToAll', { count: instances.length })}
             </button>
             <button
               onClick={() => onDispatch(Array.from(selectedInstanceIDs))}
               disabled={dispatching || selectedInstanceIDs.size === 0}
               className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-60"
             >
-              {dispatching ? '下发中…' : `下发到选中 (${selectedInstanceIDs.size})`}
+              {dispatching ? t('secplane.runtime.dispatchPicker.busyLabel') : t('secplane.runtime.dispatchPicker.sendToSelected', { count: selectedInstanceIDs.size })}
             </button>
           </div>
         </div>

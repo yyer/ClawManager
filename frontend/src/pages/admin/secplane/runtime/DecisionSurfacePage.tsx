@@ -4,6 +4,7 @@ import AdminLayout from '../../../../components/AdminLayout';
 import ApplyDispatchButton from '../../../../components/secplane/ApplyDispatchButton';
 import { useInstanceHealth } from './useInstanceHealth';
 import { useSurfaceBackend } from './useSurfaceBackend';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 const SCENARIO_DEFENSES = [
   'defense.commandBlock',
@@ -13,19 +14,18 @@ const SCENARIO_DEFENSES = [
   'defense.exfiltrationGuard',
 ];
 
-// 决策面防护 (scenario c) — 对齐 KSecForAIDemo/scenario-c-decision.html
-// 接 backend：5 项 defense_toggle (commandBlock/loopGuard/encodingGuard/scriptProvenanceGuard/exfiltrationGuard)
-// + dispatchAegisApply + alerts 实时事件流
+// Decision Surface Protection (scenario c)
+// Backend: 5 defense_toggle items + dispatchAegisApply + alerts
 
 type Tone = 'red' | 'orange' | 'amber' | 'blue' | 'purple' | 'green' | 'slate';
 
-// 5 项危险类目 ←→ defense_toggle rule_id 映射
+// 5 danger categories mapped to defense_toggle rule_ids
 const DANGER_CATEGORIES: Array<[string, string, string, string, Tone]> = [
-  ['defense.commandBlock',          'shell 高危',         'commandBlockEnabled',          'rm -rf / dd / mkfs / fork bomb',          'red'],
-  ['defense.loopGuard',             '循环写入',           'loopGuardEnabled',             '同一可变工具高频重试 / 限额内反复 mutating', 'red'],
-  ['defense.encodingGuard',         '编码混淆',           'encodingGuardEnabled',         'base64 / hex / Unicode 转义绕过',         'red'],
-  ['defense.scriptProvenanceGuard', 'Write-then-Execute', 'scriptProvenanceGuardEnabled', 'curl|bash / wget|sh / 链式调用',          'red'],
-  ['defense.exfiltrationGuard',     'SSRF / 外渗',        'exfiltrationGuardEnabled',     '内网扫描 / 反向 shell / DNS 隧道',         'red'],
+  ['defense.commandBlock',          'commandBlock', 'commandBlockEnabled',          'rm -rf / dd / mkfs / fork bomb',          'red'],
+  ['defense.loopGuard',             'loopGuard', 'loopGuardEnabled',             'Same mutable tool high-frequency retry / repeated mutating within budget', 'red'],
+  ['defense.encodingGuard',         'encodingGuard', 'encodingGuardEnabled',         'base64 / hex / Unicode escape bypass',         'red'],
+  ['defense.scriptProvenanceGuard', 'scriptProvenanceGuard', 'scriptProvenanceGuardEnabled', 'curl|bash / wget|sh / chained calls',          'red'],
+  ['defense.exfiltrationGuard',     'exfiltrationGuard', 'exfiltrationGuardEnabled',     'Internal network scan / reverse shell / DNS tunnel',         'red'],
 ];
 
 const ALERT_PREFIXES = [
@@ -37,6 +37,7 @@ const ALERT_PREFIXES = [
 ];
 
 const DecisionSurfacePage: React.FC = () => {
+  const { t } = useI18n();
   const { rules, alerts, dispatching, dispatchMsg, modeOf, setMode: setRuleMode, dispatchApply } = useSurfaceBackend(ALERT_PREFIXES);
   const { instances, healthy } = useInstanceHealth();
   const enabledDefenseCount = rules.filter((r) => SCENARIO_DEFENSES.includes(r.rule_id) && r.is_enabled).length;
@@ -52,40 +53,40 @@ const DecisionSurfacePage: React.FC = () => {
   });
 
   return (
-    <AdminLayout title="安全防护">
+    <AdminLayout title={t('secplane.runtime.shared.crumbSecurity')}>
       <div className="cm-content space-y-6">
         <div className="crumb">
-          <Link to="/admin/secplane">安全防护</Link>
+          <Link to="/admin/secplane">{t('secplane.runtime.shared.crumbSecurity')}</Link>
           <span>/</span>
-          <Link to="/admin/secplane/runtime">智能体运行时安全</Link>
+          <Link to="/admin/secplane/runtime">{t('secplane.runtime.shared.crumbRuntime')}</Link>
           <span>/</span>
-          <span className="crumb-current">决策面防护</span>
+          <span className="crumb-current">{t('secplane.runtime.decisionSurface.crumbCurrent')}</span>
         </div>
 
         <div className="panel">
           <div className="hero-block">
-            <div className="h-eyebrow">危险工具调用管控</div>
-            <h2 className="h-title">决策面防护</h2>
-            <p className="h-subtitle">智能体工具调用执行前的静态扫描与决策对齐。命中高危模式或意图模糊触发二次确认或人工审批。</p>
+            <div className="h-eyebrow">{t('secplane.runtime.decisionSurface.heroEyebrow')}</div>
+            <h2 className="h-title">{t('secplane.runtime.decisionSurface.heroTitle')}</h2>
+            <p className="h-subtitle">{t('secplane.runtime.decisionSurface.heroSubtitle')}</p>
           </div>
           <div className="grid grid-cols-4 gap-3 mt-5">
             <div className="stat-card">
-              <div className="stat-card-label">防御开关</div>
+              <div className="stat-card-label">{t('secplane.runtime.shared.statToggle')}</div>
               <div className={`stat-card-value ${enabledDefenseCount === SCENARIO_DEFENSES.length ? 'tone-green' : 'tone-orange'}`}>{enabledDefenseCount}/{SCENARIO_DEFENSES.length}</div>
-              <div className="stat-card-sub muted-strong">5 类危险工具调用</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.runtime.decisionSurface.statDangerCount')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">近期告警</div>
+              <div className="stat-card-label">{t('secplane.runtime.shared.statAlerts')}</div>
               <div className={`stat-card-value ${alerts.length > 0 ? 'tone-red' : 'tone-green'}`}>{alerts.length}</div>
-              <div className="stat-card-sub muted-strong">最近 50 条 · aegis 来源</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.runtime.shared.statAlertsSub')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">在管实例</div>
+              <div className="stat-card-label">{t('secplane.runtime.shared.statInstances')}</div>
               <div className="stat-card-value">{instances.length}</div>
               <div className="stat-card-sub muted-strong">{healthy.length} running</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-label">{t('secplane.runtime.shared.statChannel')}</div>
               <div className="stat-card-value" style={{ fontSize: '1rem' }}>install_skill</div>
               <div className="stat-card-sub muted-strong">hot-reload via mtime</div>
             </div>
@@ -95,36 +96,36 @@ const DecisionSurfacePage: React.FC = () => {
         <div className="panel">
           <div className="flex items-center justify-between mb-4 gap-4">
             <div>
-              <div className="eyebrow">工具调用三态防护 · 5 项独立配置</div>
-              <h3 className="section-title-lg mt-1">工具调用防护配置</h3>
+              <div className="eyebrow">{t('secplane.runtime.decisionSurface.rulesEyebrow')}</div>
+              <h3 className="section-title-lg mt-1">{t('secplane.runtime.decisionSurface.rulesTitle')}</h3>
             </div>
-            <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel="保存并应用" />
+            <ApplyDispatchButton onDispatch={dispatchApply} busy={dispatching} className="btn-primary btn-sm" triggerLabel={t('secplane.runtime.shared.saveApply')} />
             {dispatchMsg && <span className="text-xs muted ml-2">{dispatchMsg}</span>}
           </div>
           <div className="space-y-2.5">
-            {DANGER_CATEGORIES.map(([ruleId, name, flag, desc, tone]) => {
+            {DANGER_CATEGORIES.map(([ruleId, catKey, flag, _desc, tone]) => {
               const curMode = modeOf(ruleId, 'enforce');
               const hitCount = alerts.filter((a) => a.rule_id?.startsWith(ruleId)).length;
               return (
                 <div key={ruleId} className="flex items-center gap-4 p-4 rounded-2xl border border-[#eadfd8] bg-white">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-semibold text-[#171212]">{name}</span>
+                      <span className="font-semibold text-[#171212]">{t(`secplane.runtime.decisionSurface.categories.${catKey}.name`)}</span>
                       <code className="text-[10px] muted-strong tracking-wider">{flag}</code>
                       <code className="text-[10px] text-[#7a4a30] bg-[#fdf6f1] px-1.5 py-0.5 rounded">before_tool_call</code>
                     </div>
-                    <div className="text-xs muted">{desc}</div>
+                    <div className="text-xs muted">{t(`secplane.runtime.decisionSurface.categories.${catKey}.desc`)}</div>
                   </div>
                   <div className="shrink-0">
                     <div className="mode-selector">
-                      <button className={curMode === 'enforce' ? 'active-enforce' : ''} onClick={() => setRuleMode(ruleId, 'enforce')}>拦截</button>
-                      <button className={curMode === 'observe' ? 'active-observe' : ''} onClick={() => setRuleMode(ruleId, 'observe')}>监控</button>
-                      <button className={curMode === 'off' ? 'active-off' : ''} onClick={() => setRuleMode(ruleId, 'off')}>停止</button>
+                      <button className={curMode === 'enforce' ? 'active-enforce' : ''} onClick={() => setRuleMode(ruleId, 'enforce')}>{t('secplane.runtime.shared.modeEnforce')}</button>
+                      <button className={curMode === 'observe' ? 'active-observe' : ''} onClick={() => setRuleMode(ruleId, 'observe')}>{t('secplane.runtime.shared.modeMonitor')}</button>
+                      <button className={curMode === 'off' ? 'active-off' : ''} onClick={() => setRuleMode(ruleId, 'off')}>{t('secplane.runtime.shared.modeStop')}</button>
                     </div>
                   </div>
                   <div className="text-right shrink-0" style={{ minWidth: 80 }}>
                     <div className={`text-lg font-bold leading-none ${hitCount > 0 ? `tone-${tone}` : 'muted-strong'}`}>{hitCount}</div>
-                    <div className="text-xs muted-strong mt-0.5">近期命中</div>
+                    <div className="text-xs muted-strong mt-0.5">{t('secplane.runtime.shared.recentHits')}</div>
                   </div>
                 </div>
               );
@@ -135,8 +136,8 @@ const DecisionSurfacePage: React.FC = () => {
         <div className="panel">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <div className="eyebrow">最近工具调用决策</div>
-              <h3 className="section-title-lg mt-1">工具调用防护日志</h3>
+              <div className="eyebrow">{t('secplane.runtime.decisionSurface.logEyebrow')}</div>
+              <h3 className="section-title-lg mt-1">{t('secplane.runtime.decisionSurface.logTitle')}</h3>
             </div>
             <div className="flex gap-2 items-center">
               <select
@@ -145,15 +146,15 @@ const DecisionSurfacePage: React.FC = () => {
                 value={actionFilter}
                 onChange={(e) => setActionFilter(e.target.value as typeof actionFilter)}
               >
-                <option value="all">全部动作</option>
-                <option value="block">拦截 (block)</option>
-                <option value="observe">监控 (observe)</option>
-                <option value="redact">脱敏 (redact)</option>
+                <option value="all">{t('secplane.runtime.shared.allActions')}</option>
+                <option value="block">{t('secplane.runtime.shared.blockAction')}</option>
+                <option value="observe">{t('secplane.runtime.shared.observeAction')}</option>
+                <option value="redact">{t('secplane.runtime.shared.redactAction')}</option>
               </select>
               <input
                 className="input"
                 style={{ width: 240 }}
-                placeholder="🔍 实例 / 规则 / 命令…"
+                placeholder={t('secplane.runtime.decisionSurface.searchPlaceholder') ?? ''}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -162,20 +163,20 @@ const DecisionSurfacePage: React.FC = () => {
           <table className="tbl">
             <thead>
               <tr>
-                <th style={{ width: 80 }}>时间</th>
-                <th>实例</th>
-                <th>规则</th>
-                <th>命令 / 证据</th>
-                <th>命中模式</th>
-                <th style={{ width: 80 }}>严重度</th>
-                <th style={{ width: 80 }}>动作</th>
+                <th style={{ width: 80 }}>{t('secplane.runtime.shared.colTime')}</th>
+                <th>{t('secplane.runtime.shared.colInstance')}</th>
+                <th>{t('secplane.runtime.shared.colRule')}</th>
+                <th>{t('secplane.runtime.shared.colCommand')}</th>
+                <th>{t('secplane.runtime.shared.colHitPattern')}</th>
+                <th style={{ width: 80 }}>{t('secplane.runtime.shared.colSeverity')}</th>
+                <th style={{ width: 80 }}>{t('secplane.runtime.shared.colAction')}</th>
               </tr>
             </thead>
             <tbody>
               {filteredAlerts.length === 0 && (
                 <tr>
                   <td colSpan={7} className="text-xs muted" style={{ textAlign: 'center', padding: 20 }}>
-                    {alerts.length === 0 ? '暂无防护事件' : '当前过滤条件无匹配事件'}
+                    {alerts.length === 0 ? t('secplane.runtime.shared.noAlertEvents') : t('secplane.runtime.shared.noMatchEvents')}
                   </td>
                 </tr>
               )}

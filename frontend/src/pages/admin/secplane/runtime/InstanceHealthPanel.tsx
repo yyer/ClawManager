@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import type { Instance } from '../../../../types/instance';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 interface Props {
   instances: Instance[];
@@ -21,6 +22,7 @@ const statusBadge = (status: Instance['status']): string => {
 };
 
 const InstanceHealthPanel: React.FC<Props> = ({ instances, loading, error, onReload }) => {
+  const { t } = useI18n();
   const total = instances.length;
   const healthy = instances.filter((i) => i.status === 'running').length;
   const unhealthy = total - healthy;
@@ -29,11 +31,11 @@ const InstanceHealthPanel: React.FC<Props> = ({ instances, loading, error, onRel
     <div className="panel-warm" style={{ padding: 18 }}>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="eyebrow">DISPATCH TARGETS · 目标实例健康</div>
+          <div className="eyebrow">{t('secplane.runtime.instanceHealthPanel.eyebrow')}</div>
           <div className="section-title mt-1">
-            {loading ? '加载中…' : (
+            {loading ? t('secplane.runtime.instanceHealthPanel.loading') : (
               <>
-                共 <strong>{total}</strong> 个实例
+                <span dangerouslySetInnerHTML={{ __html: t('secplane.runtime.instanceHealthPanel.totalInstances', { total }) ?? '' }} />
                 {total > 0 && (
                   <>
                     {' · '}
@@ -41,7 +43,7 @@ const InstanceHealthPanel: React.FC<Props> = ({ instances, loading, error, onRel
                     {unhealthy > 0 && (
                       <>
                         {' · '}
-                        <span className="tone-red">{unhealthy} 不健康</span>
+                        <span className="tone-red">{t('secplane.runtime.instanceHealthPanel.unhealthy', { count: unhealthy })}</span>
                       </>
                     )}
                   </>
@@ -51,19 +53,19 @@ const InstanceHealthPanel: React.FC<Props> = ({ instances, loading, error, onRel
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/admin/instances" className="muted text-xs hover:underline">实例管理 →</Link>
-          <button type="button" className="btn-secondary btn-sm" onClick={onReload} disabled={loading}>刷新</button>
+          <Link to="/admin/instances" className="muted text-xs hover:underline">{t('secplane.runtime.instanceHealthPanel.instanceManagement')}</Link>
+          <button type="button" className="btn-secondary btn-sm" onClick={onReload} disabled={loading}>{t('secplane.runtime.shared.refresh')}</button>
         </div>
       </div>
 
       {error && (
         <div className="alert alert-danger mb-2" style={{ padding: '8px 12px', fontSize: 12 }}>
-          实例列表加载失败：{error}
+          {t('secplane.runtime.instanceHealthPanel.loadFailed')}{error}
         </div>
       )}
 
       {!loading && total === 0 && !error && (
-        <div className="muted text-sm">无实例。请先在「实例管理」创建至少一个 OpenClaw 实例。</div>
+        <div className="muted text-sm">{t('secplane.runtime.instanceHealthPanel.noInstances')}</div>
       )}
 
       {total > 0 && (
