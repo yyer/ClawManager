@@ -13,6 +13,7 @@ const (
 var selkiesDesktopStreamEnvKeys = []string{
 	desktopStreamProfileEnvKey,
 	"SELKIES_ENCODER",
+	"SELKIES_USE_CSS_SCALING",
 	"SELKIES_FRAMERATE",
 	"SELKIES_H264_CRF",
 	"SELKIES_AUDIO_ENABLED",
@@ -49,7 +50,8 @@ func applyDesktopStreamProfileEnv(overrides map[string]string, profile string) m
 	}
 
 	overrides[desktopStreamProfileEnvKey] = normalized
-	overrides["SELKIES_ENCODER"] = "x264enc"
+	overrides["SELKIES_ENCODER"] = "x264enc,jpeg"
+	overrides["SELKIES_USE_CSS_SCALING"] = "true"
 	overrides["SELKIES_SECOND_SCREEN"] = "false"
 	overrides["SELKIES_AUDIO_ENABLED"] = "false"
 
@@ -66,6 +68,25 @@ func applyDesktopStreamProfileEnv(overrides map[string]string, profile string) m
 	}
 
 	return overrides
+}
+
+func ensureDesktopStreamProfileEnv(overrides map[string]string, runtimeType string) map[string]string {
+	if normalizeInstanceRuntimeType(runtimeType) != RuntimeBackendDesktop {
+		return overrides
+	}
+
+	profile := desktopStreamProfileFromEnv(overrides)
+	if profile != "" {
+		return applyDesktopStreamProfileEnv(overrides, profile)
+	}
+
+	for _, key := range selkiesDesktopStreamEnvKeys {
+		if _, ok := overrides[key]; ok {
+			return overrides
+		}
+	}
+
+	return applyDesktopStreamProfileEnv(overrides, DesktopStreamProfileStandard)
 }
 
 func desktopStreamProfileFromEnv(overrides map[string]string) string {

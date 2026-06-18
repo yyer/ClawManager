@@ -189,7 +189,7 @@ func TestProxyAccessTokenPrefersCookieOverRuntimeQueryToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accessService := services.NewInstanceAccessService()
 	defer accessService.Stop()
-	token, err := accessService.GenerateToken(1, 76, "hermes", "/api/v1/instances/76/proxy/chat/", 3000, time.Hour)
+	token, err := accessService.GenerateToken(1, 76, "hermes", "/api/v1/instances/76/proxy/chat/", "", 3000, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken returned error: %v", err)
 	}

@@ -55,6 +55,39 @@ func desktopProxyMode(directEnabled bool, upstream string) string {
 	return "direct"
 }
 
+func (h *InstanceHandler) desktopAccessUpstream(c *gin.Context, instance *models.Instance, targetPort int32) (string, bool) {
+	directProxyEnabled := desktopDirectProxyEnabled()
+	if !directProxyEnabled {
+		return "", false
+	}
+	if !h.proxyService.IsWebtopInstanceType(instance.Type) {
+		fmt.Printf("Desktop direct proxy fallback: unsupported desktop instance type instance=%d user=%d type=%s target_port=%d\n",
+			instance.ID, instance.UserID, instance.Type, targetPort)
+		return "", true
+	}
+
+	resolved, resolveErr := h.proxyService.ResolveUpstreamHostPort(
+		c.Request.Context(),
+		instance.UserID,
+		instance.ID,
+		targetPort,
+	)
+	if resolveErr != nil {
+		fmt.Printf("Desktop direct proxy fallback: failed to resolve upstream instance=%d user=%d type=%s target_port=%d error=%v\n",
+			instance.ID, instance.UserID, instance.Type, targetPort, resolveErr)
+		return "", true
+	}
+	if strings.TrimSpace(resolved) == "" {
+		fmt.Printf("Desktop direct proxy fallback: resolved empty upstream instance=%d user=%d type=%s target_port=%d\n",
+			instance.ID, instance.UserID, instance.Type, targetPort)
+		return "", true
+	}
+
+	fmt.Printf("Desktop direct proxy resolved: instance=%d user=%d type=%s target_port=%d upstream=%s\n",
+		instance.ID, instance.UserID, instance.Type, targetPort, resolved)
+	return resolved, true
+}
+
 func workspaceArchiveMaxMiB() int64 {
 	value := strings.TrimSpace(os.Getenv(workspaceArchiveMaxMiBEnv))
 	if value == "" {
@@ -880,32 +913,7 @@ func (h *InstanceHandler) GenerateAccessToken(c *gin.Context) {
 	// "host:port" into the token so the edge gateway can dial the instance
 	// directly. On any failure we fall back to an empty upstream, which keeps
 	// the request flowing through the in-process control-plane proxy.
-	upstream := ""
-	directProxyEnabled := desktopDirectProxyEnabled()
-	if directProxyEnabled {
-		if h.proxyService.IsWebtopInstanceType(instance.Type) {
-			resolved, resolveErr := h.proxyService.ResolveUpstreamHostPort(
-				c.Request.Context(),
-				instance.UserID,
-				instance.ID,
-				targetPort,
-			)
-			if resolveErr != nil {
-				fmt.Printf("Desktop direct proxy fallback: failed to resolve upstream instance=%d user=%d type=%s target_port=%d error=%v\n",
-					instance.ID, instance.UserID, instance.Type, targetPort, resolveErr)
-			} else if strings.TrimSpace(resolved) == "" {
-				fmt.Printf("Desktop direct proxy fallback: resolved empty upstream instance=%d user=%d type=%s target_port=%d\n",
-					instance.ID, instance.UserID, instance.Type, targetPort)
-			} else {
-				upstream = resolved
-				fmt.Printf("Desktop direct proxy resolved: instance=%d user=%d type=%s target_port=%d upstream=%s\n",
-					instance.ID, instance.UserID, instance.Type, targetPort, upstream)
-			}
-		} else {
-			fmt.Printf("Desktop direct proxy fallback: unsupported desktop instance type instance=%d user=%d type=%s target_port=%d\n",
-				instance.ID, instance.UserID, instance.Type, targetPort)
-		}
-	}
+	upstream, directProxyEnabled := h.desktopAccessUpstream(c, instance, targetPort)
 
 	// Generate access token (valid for 1 hour)
 	maxAgeSeconds := int(time.Hour.Seconds())
@@ -1605,12 +1613,15 @@ func (h *InstanceHandler) issueShortExternalAccessToken(c *gin.Context, instance
 		utils.Error(c, http.StatusServiceUnavailable, "Unable to generate access URL")
 		return nil, false
 	}
+	targetPort := h.proxyService.GetTargetPortForInstance(instance)
+	upstream, _ := h.desktopAccessUpstream(c, instance, targetPort)
 	instanceToken, err := h.accessService.GenerateToken(
 		instance.UserID,
 		instance.ID,
 		instance.Type,
 		accessURL,
-		h.proxyService.GetTargetPortForInstance(instance),
+		upstream,
+		targetPort,
 		1*time.Hour,
 	)
 	if err != nil {

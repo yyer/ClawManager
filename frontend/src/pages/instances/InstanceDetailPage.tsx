@@ -317,7 +317,7 @@ const InstanceDetailPage: React.FC = () => {
   const [desktopStreamProfile, setDesktopStreamProfile] =
     useState<DesktopStreamProfile>("standard");
   const [desktopStreamSavedProfile, setDesktopStreamSavedProfile] =
-    useState<DesktopStreamProfile>("standard");
+    useState<DesktopStreamProfile | "">("");
   const [desktopStreamMessage, setDesktopStreamMessage] = useState<string | null>(null);
 
   const fetchMeta = useCallback(
@@ -395,9 +395,9 @@ const InstanceDetailPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const profile = instance?.desktop_stream_profile || "standard";
-    setDesktopStreamProfile(profile);
-    setDesktopStreamSavedProfile(profile);
+    const savedProfile = instance?.desktop_stream_profile || "";
+    setDesktopStreamProfile(savedProfile || "standard");
+    setDesktopStreamSavedProfile(savedProfile);
     setDesktopStreamMessage(null);
   }, [instance?.desktop_stream_profile, instance?.id]);
 
