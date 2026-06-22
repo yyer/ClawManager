@@ -40,7 +40,7 @@ const RULES: Array<[string, string, string, string, string, Tone, number, string
   ['defense.selfProtection', 'selfProtection', 'selfProtectionEnabled + selfProtectionMode', 'selfProtection', 'before_tool_call', 'red', 7, 'skill ∈ {claude-skill-v2}; plugin ∈ {@openclaw/auth}'],
 ];
 
-const CORE_ASSETS: Array<[string, string, AssetKind, string, 'realtime' | 'install' | 'manual']> = [
+const CORE_ASSETS: Array<[string, string, AssetKind, 'realtime' | 'install' | 'manual']> = [
   ['skill:claude-skill-v2', 'skillClaude', 'skill', 'install'],
   ['plugin:@openclaw/auth', 'pluginAuth', 'plugin', 'manual'],
   ['memory_store/', 'memoryStore', 'memory', 'realtime'],
@@ -346,7 +346,7 @@ const AssetProtectionPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {CORE_ASSETS.map(([path, assetKey, kind, sec, auto]) => {
+              {CORE_ASSETS.map(([path, assetKey, kind, auto]) => {
                 const a = autoBadge(auto as 'realtime' | 'install' | 'manual');
                 return (
                   <tr key={path}>

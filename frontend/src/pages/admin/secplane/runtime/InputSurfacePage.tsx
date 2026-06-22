@@ -239,13 +239,6 @@ const InputSurfacePage: React.FC = () => {
     return items?.[idx] ?? itemKey;
   };
 
-  // Helper to get example text
-  const getExample = (key: string, idx: number): string => {
-    const examplesPath = `secplane.runtime.inputSurface.ruleModal.${key}.examples`;
-    const examples = t(examplesPath) as unknown as string[];
-    return examples?.[idx] ?? '';
-  };
-
   return (
     <AdminLayout title={t('secplane.runtime.shared.crumbSecurity')}>
       <div className="secp-scope space-y-6">

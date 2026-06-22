@@ -3,7 +3,7 @@
 export const DEFAULT_LOCALE: Locale = "en";
 
 export interface TranslationTree {
-  [key: string]: string | TranslationTree;
+  [key: string]: string | TranslationTree | string[];
 }
 
 export const localeOptions: Array<{ value: Locale; label: string }> = [
@@ -6945,10 +6945,10 @@ export const translations: Record<Locale, TranslationTree> = {
 
 export function translate(locale: Locale, key: string): string | undefined {
   const segments = key.split(".");
-  let current: string | TranslationTree | undefined = translations[locale];
+  let current: string | TranslationTree | string[] | undefined = translations[locale];
 
   for (const segment of segments) {
-    if (!current || typeof current === "string") {
+    if (!current || typeof current === "string" || Array.isArray(current)) {
       return undefined;
     }
     current = current[segment];

@@ -154,7 +154,6 @@ export const hostHardeningTranslations: Record<Locale, TranslationTree> = {
       colAction: 'Action',
       logTitle: 'Intrusion Detection Logs',
       colCategory: 'Category',
-      colDesc: 'Description',
       noLogs: 'No intrusion detection logs yet',
     },
     baseline: {
@@ -408,7 +407,6 @@ export const hostHardeningTranslations: Record<Locale, TranslationTree> = {
       colAction: '操作',
       logTitle: '入侵检测日志',
       colCategory: '类别',
-      colDesc: '描述',
       noLogs: '暂无入侵检测日志',
     },
     baseline: {
@@ -661,7 +659,6 @@ export const hostHardeningTranslations: Record<Locale, TranslationTree> = {
       colAction: '操作',
       logTitle: '侵入検出ログ',
       colCategory: 'カテゴリ',
-      colDesc: '説明',
       noLogs: '侵入検出ログはまだありません',
     },
     baseline: {
@@ -914,7 +911,6 @@ export const hostHardeningTranslations: Record<Locale, TranslationTree> = {
       colAction: '작업',
       logTitle: '침입 탐지 로그',
       colCategory: '카테고리',
-      colDesc: '설명',
       noLogs: '침입 탐지 로그가 아직 없습니다',
     },
     baseline: {
@@ -1167,7 +1163,6 @@ export const hostHardeningTranslations: Record<Locale, TranslationTree> = {
       colAction: 'Aktion',
       logTitle: 'Intrusion Detection-Protokolle',
       colCategory: 'Kategorie',
-      colDesc: 'Beschreibung',
       noLogs: 'Noch keine Intrusion Detection-Protokolle',
     },
     baseline: {

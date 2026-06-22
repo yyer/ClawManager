@@ -1902,7 +1902,7 @@ const HostHardeningPage: React.FC = () => {
                                 const before = d?.before ?? '-';
                                 const after = d?.after ?? '-';
                                 const result = catScanned ? (d?.result ?? (phase === 'scanned' ? 'security' : 'uncheck')) : 'uncheck';
-                                const label = phase ? baselineResultLabel(result, phase) : null;
+                                const label = phase ? baselineResultLabel(result, phase, t) : null;
                                 const valStr = String(it.value === true ? 'true' : it.value);
                                 return (
                                   <tr key={it.id}>

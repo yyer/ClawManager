@@ -305,40 +305,40 @@ const OutboundPage: React.FC = () => {
                   </td>
                 </tr>
               )}
-              {trusted.map((t) => (
-                <tr key={t.id}>
+              {trusted.map((ep) => (
+                <tr key={ep.id}>
                   <td>
-                    <span className={`badge badge-${t.status === 'active' ? 'green' : 'slate'}`}>{t.status}</span>
+                    <span className={`badge badge-${ep.status === 'active' ? 'green' : 'slate'}`}>{ep.status}</span>
                   </td>
                   <td>
-                    <code className="text-sm font-mono text-[#171212]">{t.domain_pattern}</code>
+                    <code className="text-sm font-mono text-[#171212]">{ep.domain_pattern}</code>
                   </td>
                   <td>
-                    {t.fingerprint_sha256 ? (
-                      <code className="text-[10px] muted-strong">{t.fingerprint_sha256.slice(0, 32)}…</code>
+                    {ep.fingerprint_sha256 ? (
+                      <code className="text-[10px] muted-strong">{ep.fingerprint_sha256.slice(0, 32)}…</code>
                     ) : (
                       <span className="text-xs muted italic">{t(`${o}.trust.onlyDomain`)}</span>
                     )}
                   </td>
                   <td>
-                    <span className="text-xs">{t.label ?? '—'}</span>
+                    <span className="text-xs">{ep.label ?? '—'}</span>
                   </td>
                   <td>
-                    <span className="text-xs muted">{t.created_at?.slice(0, 10)}</span>
+                    <span className="text-xs muted">{ep.created_at?.slice(0, 10)}</span>
                   </td>
                   <td>
                     <div className="flex gap-2 items-center">
-                      {!t.domain_pattern.includes('*') && (
+                      {!ep.domain_pattern.includes('*') && (
                         <button
                           className="text-xs text-[#0369a1] font-semibold hover:underline disabled:opacity-50"
-                          disabled={reprobingId === t.id}
-                          onClick={() => reprobeOne(t.id)}
+                          disabled={reprobingId === ep.id}
+                          onClick={() => reprobeOne(ep.id)}
                           title="Re-probe TLS handshake, compare with stored baseline; alert + auto-update baseline if mismatch"
                         >
-                          {reprobingId === t.id ? t(`${o}.trust.probing`) : t(`${o}.trust.reprobe`)}
+                          {reprobingId === ep.id ? t(`${o}.trust.probing`) : t(`${o}.trust.reprobe`)}
                         </button>
                       )}
-                      <button className="text-xs text-[#dc2626] font-semibold hover:underline" onClick={() => removeTrusted(t.id)}>
+                      <button className="text-xs text-[#dc2626] font-semibold hover:underline" onClick={() => removeTrusted(ep.id)}>
                         {t(`${o}.trust.delete`)}
                       </button>
                     </div>
