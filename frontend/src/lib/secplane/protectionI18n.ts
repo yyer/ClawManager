@@ -64,7 +64,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
     },
     section: {
       eyebrow: 'Risk Surfaces & Defense Scenarios',
-      title: '7 Risk Surfaces · 13 Defense Scenarios for AI Agents',
+      title: '7 Risk Surfaces · 15 Defense Scenarios for AI Agents',
       morePlanned: 'More defense scenarios planned',
     },
     views: {
@@ -104,7 +104,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: { footerNote: 'Runtime main chain', layerLabel: 'Runtime Layer' },
       cat6: { footerNote: 'Host-level fallback protection', layerLabel: 'Host Layer' },
       cat4: { footerNote: 'Component supply chain trust', layerLabel: 'Audit Layer' },
-      cat3: { footerNote: 'Coming in future versions', layerLabel: 'Planned' },
+      cat3: { footerNote: 'Collaboration governance & quota limits', layerLabel: 'Control Layer' },
       cat2: { footerNote: 'Control layer entry governance', layerLabel: 'Control Layer' },
       cat7: { footerNote: 'Regulatory governance synergy', layerLabel: 'Control Layer' },
       cat5: { footerNote: 'Policy template synergy', layerLabel: 'Control Layer' },
@@ -114,14 +114,14 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_3: 'Output Surface', cat1_4: 'Anti-tamper', cat1_5: 'Human Approval',
       cat6_0: 'Host Hardening', cat6_1: 'Container Isolation',
       cat4_0: 'SKILL Scan',
-      cat3_0: 'Resource Quotas', cat3_1: 'Rate Limiting', cat3_2: 'Comm Encryption',
+      cat3_0: 'Collaboration Governance', cat3_1: 'Quota Limit',
       cat2_0: 'Outbound Governance',
       cat7_0: 'Policy Governance',
       cat5_0: 'Circuit Breaker', cat5_1: 'Full-chain Audit',
     },
     ringShortLabel: {
       cat6: 'Env Isolation',
-      cat3: 'Collab Comm',
+      cat3: 'Collab & Quota',
     },
     layerCard: {
       planned: 'Planned',
@@ -133,7 +133,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: 'Covers input / state / decision / output / anti-tamper / human approval',
       cat6: 'Infrastructure fallback protection',
       cat4: 'Supply chain security · SKILL scan',
-      cat3: 'Multi-agent communication security',
+      cat3: 'Collaboration governance & quota limits',
     },
     layerSection: {
       runtime: 'Runtime Layer',
@@ -155,7 +155,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_0: 'Input', cat1_1: 'State', cat1_2: 'Decision',
       cat1_3: 'Output', cat1_4: 'Asset', cat1_5: 'Human',
       cat6_0: 'Host', cat6_1: 'Container',
-      cat3_0: 'Quota', cat3_1: 'Rate', cat3_2: 'Encrypt',
+      cat3_0: 'Collab', cat3_1: 'Quota',
       cat4_0: 'SKILL Scan',
       cat2_0: 'Outbound',
       cat7_0: 'Policy',
@@ -165,11 +165,11 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       runtimeTitle: 'Runtime Layer',
       runtimeDesc: '— Agent runtime security (6 scenarios) | Input/State/Decision/Output/Asset/Human Approval',
       hostTitle: 'Host Layer',
-      hostDesc: '— Environment isolation (2 scenarios) + Collaborative comm (planned) | Host hardening/Container isolation/Resource control',
+      hostDesc: '— Environment isolation (2 scenarios) | Host hardening/Container isolation',
       auditTitle: 'Audit Layer',
       auditDesc: '— Data & component trust (1 scenario) | SKILL Scan',
       controlTitle: 'Control Layer',
-      controlDesc: '— Identity + security policy + regulatory governance (4 scenarios) | Outbound/Policy/Breaker/Audit',
+      controlDesc: '— Identity + security policy + regulatory governance + collaboration (6 scenarios) | Outbound/Policy/Breaker/Audit/Collab/Quota',
     },
     eventTable: {
       eyebrow: 'Security Module Event Aggregation',
@@ -276,6 +276,12 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       // scenario J (Full-chain Audit)
       scenarioJ: 'Full-chain Audit',
       scenarioJSub: 'Event stream aggregation & retrospection',
+      // scenario N (Collaboration Governance)
+      scenarioN: 'Collaboration Governance',
+      scenarioNSub: 'Team Redis Stream / ACL / Relay / Audit',
+      // scenario O (Quota Limit)
+      scenarioO: 'Quota Limit',
+      scenarioOSub: 'AI Gateway tokens daily/weekly/monthly limits + 80% alert',
     },
   },
 
@@ -337,7 +343,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
     },
     section: {
       eyebrow: '风险面与防护场景',
-      title: '智能体的 7 大风险面 · 13 个防护场景全景',
+      title: '智能体的 7 大风险面 · 15 个防护场景全景',
       morePlanned: '更多防护场景规划中',
     },
     views: {
@@ -377,7 +383,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: { footerNote: '运行时主链路', layerLabel: '运行时层' },
       cat6: { footerNote: '主机层兜底防护', layerLabel: '主机层' },
       cat4: { footerNote: '组件供应链可信', layerLabel: '审计层' },
-      cat3: { footerNote: '后续版本开放', layerLabel: '规划中' },
+      cat3: { footerNote: '协同治理与配额限制', layerLabel: '控制层' },
       cat2: { footerNote: '控制层入口管控', layerLabel: '控制层' },
       cat7: { footerNote: '与监管治理协同', layerLabel: '控制层' },
       cat5: { footerNote: '与策略模板协同', layerLabel: '控制层' },
@@ -387,14 +393,14 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_3: '输出面防护', cat1_4: '资产防篡改', cat1_5: '人因审批',
       cat6_0: '宿主加固', cat6_1: '容器隔离',
       cat4_0: 'SKILL 技能扫描',
-      cat3_0: '资源配额', cat3_1: '速率限制', cat3_2: '通信加密',
+      cat3_0: '协同治理', cat3_1: '配额限制',
       cat2_0: '出站治理',
       cat7_0: '策略治理',
       cat5_0: '应急熔断', cat5_1: '全链路审计',
     },
     ringShortLabel: {
       cat6: '环境隔离',
-      cat3: '协同通信',
+      cat3: '协同与配额',
     },
     layerCard: {
       planned: '规划中',
@@ -406,7 +412,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: '覆盖输入面 / 状态面 / 决策面 / 输出面 / 资产防篡改 / 人因审批',
       cat6: '基础设施兜底防护',
       cat4: '供应链安全 · SKILL 技能扫描',
-      cat3: '多智能体通信安全',
+      cat3: '协同治理与配额限制',
     },
     layerSection: {
       runtime: '运行时层',
@@ -428,7 +434,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_0: '输入', cat1_1: '状态', cat1_2: '决策',
       cat1_3: '输出', cat1_4: '资产', cat1_5: '人因',
       cat6_0: '宿主', cat6_1: '容器',
-      cat3_0: '配额', cat3_1: '限速', cat3_2: '加密',
+      cat3_0: '协同', cat3_1: '配额',
       cat4_0: 'SKILL 技能扫描',
       cat2_0: '出站',
       cat7_0: '策略',
@@ -438,11 +444,11 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       runtimeTitle: '运行时层',
       runtimeDesc: '— 智能体运行时安全（6 场景）| 输入/状态/决策/输出/资产/人因审批',
       hostTitle: '主机层',
-      hostDesc: '— 环境隔离（2 场景）+ 协同通信（规划中）| 宿主加固/容器隔离/资源管控',
+      hostDesc: '— 环境隔离（2 场景）| 宿主加固/容器隔离',
       auditTitle: '审计层',
       auditDesc: '— 数据与组件可信（1 场景）| SKILL 技能扫描',
       controlTitle: '控制层',
-      controlDesc: '— 身份权限 + 安全策略 + 监管治理（4 场景）| 出站/策略/熔断/审计',
+      controlDesc: '— 身份权限 + 安全策略 + 监管治理 + 协同（6 场景）| 出站/策略/熔断/审计/协同/配额',
     },
     eventTable: {
       eyebrow: '安全模块事件聚合',
@@ -549,6 +555,12 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       // scenario J (Full-chain Audit)
       scenarioJ: '全链路审计',
       scenarioJSub: '事件流聚合与回溯',
+      // scenario N (Collaboration Governance)
+      scenarioN: '协同治理',
+      scenarioNSub: 'Team Redis Stream / ACL / Relay / 审计',
+      // scenario O (Quota Limit)
+      scenarioO: '配额限制',
+      scenarioOSub: 'AI Gateway tokens 日/周/月限额 + 80% 告警',
     },
   },
 
@@ -610,7 +622,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
     },
     section: {
       eyebrow: 'リスク面と防御シナリオ',
-      title: 'AIエージェントの7つのリスク面 · 13の防御シナリオパノラマ',
+      title: 'AIエージェントの7つのリスク面 · 15の防御シナリオパノラマ',
       morePlanned: 'さらなる防御シナリオを計画中',
     },
     views: {
@@ -650,7 +662,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: { footerNote: 'ランタイムメインチェーン', layerLabel: 'ランタイム層' },
       cat6: { footerNote: 'ホストレイヤーフォールバック', layerLabel: 'ホスト層' },
       cat4: { footerNote: 'コンポーネントサプライチェーン信頼', layerLabel: '監査層' },
-      cat3: { footerNote: '将来のバージョンで提供', layerLabel: '計画中' },
+      cat3: { footerNote: 'コラボガバナンスとクォータ制限', layerLabel: '制御層' },
       cat2: { footerNote: '制御層エントリー管理', layerLabel: '制御層' },
       cat7: { footerNote: '規制ガバナンス連携', layerLabel: '制御層' },
       cat5: { footerNote: 'ポリシーテンプレート連携', layerLabel: '制御層' },
@@ -660,14 +672,14 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_3: '出力面防御', cat1_4: '改ざん防止', cat1_5: 'ヒューマン承認',
       cat6_0: 'ホスト強化', cat6_1: 'コンテナ分離',
       cat4_0: 'SKILLスキャン',
-      cat3_0: 'リソースクォータ', cat3_1: 'レート制限', cat3_2: '通信暗号化',
+      cat3_0: 'コラボガバナンス', cat3_1: 'クォータ制限',
       cat2_0: 'アウトバウンドガバナンス',
       cat7_0: 'ポリシーガバナンス',
       cat5_0: 'サーキットブレーカー', cat5_1: 'フルチェーン監査',
     },
     ringShortLabel: {
       cat6: '環境分離',
-      cat3: 'コラボ通信',
+      cat3: 'コラボ・クォータ',
     },
     layerCard: {
       planned: '計画中',
@@ -679,7 +691,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: '入力面 / 状態面 / 意思決定面 / 出力面 / 改ざん防止 / ヒューマン承認をカバー',
       cat6: 'インフラストラクチャフォールバック保護',
       cat4: 'サプライチェーンセキュリティ · SKILLスキャン',
-      cat3: 'マルチエージェント通信セキュリティ',
+      cat3: 'コラボガバナンスとクォータ制限',
     },
     layerSection: {
       runtime: 'ランタイム層',
@@ -701,7 +713,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_0: '入力', cat1_1: '状態', cat1_2: '決定',
       cat1_3: '出力', cat1_4: '資産', cat1_5: '承認',
       cat6_0: 'ホスト', cat6_1: 'コンテナ',
-      cat3_0: 'クォータ', cat3_1: '制限', cat3_2: '暗号化',
+      cat3_0: 'コラボ', cat3_1: 'クォータ',
       cat4_0: 'SKILL',
       cat2_0: '外部',
       cat7_0: 'ポリシー',
@@ -711,11 +723,11 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       runtimeTitle: 'ランタイム層',
       runtimeDesc: '— エージェントランタイムセキュリティ（6シナリオ）| 入力/状態/決定/出力/資産/承認',
       hostTitle: 'ホスト層',
-      hostDesc: '— 環境分離（2シナリオ）+ コラボ通信（計画中）| ホスト強化/コンテナ分離/リソース管理',
+      hostDesc: '— 環境分離（2シナリオ）| ホスト強化/コンテナ分離',
       auditTitle: '監査層',
       auditDesc: '— データ & コンポーネント信頼（1シナリオ）| SKILLスキャン',
       controlTitle: '制御層',
-      controlDesc: '— アイデンティティ + セキュリティポリシー + 規制ガバナンス（4シナリオ）| 外部/ポリシー/遮断/監査',
+      controlDesc: '— アイデンティティ + セキュリティポリシー + 規制ガバナンス + コラボ（6シナリオ）| 外部/ポリシー/遮断/監査/コラボ/クォータ',
     },
     eventTable: {
       eyebrow: 'セキュリティモジュールイベント集約',
@@ -819,6 +831,12 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       // scenario J (Full-chain Audit)
       scenarioJ: 'フルチェーン監査',
       scenarioJSub: 'イベントストリーム集約と遡及',
+      // scenario N (Collaboration Governance)
+      scenarioN: 'コラボガバナンス',
+      scenarioNSub: 'Team Redis Stream / ACL / Relay / 監査',
+      // scenario O (Quota Limit)
+      scenarioO: 'クォータ制限',
+      scenarioOSub: 'AI Gateway tokens 日/週/月限度 + 80% アラート',
     },
   },
 
@@ -880,7 +898,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
     },
     section: {
       eyebrow: '리스크 면 및 방어 시나리오',
-      title: 'AI 에이전트의 7대 리스크 면 · 13개 방어 시나리오 파노라마',
+      title: 'AI 에이전트의 7대 리스크 면 · 15개 방어 시나리오 파노라마',
       morePlanned: '추가 방어 시나리오 계획 중',
     },
     views: {
@@ -920,7 +938,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: { footerNote: '런타임 메인 체인', layerLabel: '런타임 계층' },
       cat6: { footerNote: '호스트 레이어 폴백 보호', layerLabel: '호스트 계층' },
       cat4: { footerNote: '컴포넌트 공급망 신뢰', layerLabel: '감사 계층' },
-      cat3: { footerNote: '향후 버전에서 제공', layerLabel: '계획 중' },
+      cat3: { footerNote: '협업 거버넌스 및 할당량 제한', layerLabel: '제어 계층' },
       cat2: { footerNote: '제어 계층 진입 관리', layerLabel: '제어 계층' },
       cat7: { footerNote: '규제 거버넌스 연계', layerLabel: '제어 계층' },
       cat5: { footerNote: '정책 템플릿 연계', layerLabel: '제어 계층' },
@@ -930,14 +948,14 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_3: '출력면 방어', cat1_4: '변조 방지', cat1_5: '휴먼 승인',
       cat6_0: '호스트 강화', cat6_1: '컨테이너 격리',
       cat4_0: 'SKILL 스캔',
-      cat3_0: '리소스 쿼터', cat3_1: '속도 제한', cat3_2: '통신 암호화',
+      cat3_0: '협업 거버넌스', cat3_1: '할당량 제한',
       cat2_0: '아웃바운드 거버넌스',
       cat7_0: '정책 거버넌스',
       cat5_0: '서킷 브레이커', cat5_1: '전체 체인 감사',
     },
     ringShortLabel: {
       cat6: '환경 격리',
-      cat3: '협업 통신',
+      cat3: '협업·할당량',
     },
     layerCard: {
       planned: '계획 중',
@@ -949,7 +967,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: '입력면 / 상태면 / 의사결정면 / 출력면 / 변조 방지 / 휴먼 승인 커버',
       cat6: '인프라 폴백 보호',
       cat4: '공급망 보안 · SKILL 스캔',
-      cat3: '멀티 에이전트 통신 보안',
+      cat3: '협업 거버넌스 및 할당량 제한',
     },
     layerSection: {
       runtime: '런타임 계층',
@@ -971,7 +989,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_0: '입력', cat1_1: '상태', cat1_2: '결정',
       cat1_3: '출력', cat1_4: '자산', cat1_5: '승인',
       cat6_0: '호스트', cat6_1: '컨테이너',
-      cat3_0: '쿼터', cat3_1: '제한', cat3_2: '암호화',
+      cat3_0: '협업', cat3_1: '할당',
       cat4_0: 'SKILL',
       cat2_0: '아웃바운드',
       cat7_0: '정책',
@@ -981,11 +999,11 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       runtimeTitle: '런타임 계층',
       runtimeDesc: '— 에이전트 런타임 보안(6 시나리오) | 입력/상태/결정/출력/자산/승인',
       hostTitle: '호스트 계층',
-      hostDesc: '— 환경 격리(2 시나리오) + 협업 통신(계획 중) | 호스트 강화/컨테이너 격리/리소스 관리',
+      hostDesc: '— 환경 격리(2 시나리오) | 호스트 강화/컨테이너 격리',
       auditTitle: '감사 계층',
       auditDesc: '— 데이터 및 컴포넌트 신뢰(1 시나리오) | SKILL 스캔',
       controlTitle: '제어 계층',
-      controlDesc: '— ID + 보안 정책 + 규제 거버넌스(4 시나리오) | 아웃바운드/정책/차단/감사',
+      controlDesc: '— ID + 보안 정책 + 규제 거버넌스 + 협업(6 시나리오) | 아웃바운드/정책/차단/감사/협업/할당량',
     },
     eventTable: {
       eyebrow: '보안 모듈 이벤트 집계',
@@ -1089,6 +1107,12 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       // scenario J (Full-chain Audit)
       scenarioJ: '전체 체인 감사',
       scenarioJSub: '이벤트 스트림 집계 및 소급',
+      // scenario N (Collaboration Governance)
+      scenarioN: '협업 거버넌스',
+      scenarioNSub: 'Team Redis Stream / ACL / Relay / 감사',
+      // scenario O (Quota Limit)
+      scenarioO: '할당량 제한',
+      scenarioOSub: 'AI Gateway tokens 일/주/월 한도 + 80% 알림',
     },
   },
 
@@ -1150,7 +1174,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
     },
     section: {
       eyebrow: 'Risikooberflächen & Verteidigungsszenarien',
-      title: '7 Risikooberflächen · 13 Verteidigungsszenarien für KI-Agenten',
+      title: '7 Risikooberflächen · 15 Verteidigungsszenarien für KI-Agenten',
       morePlanned: 'Weitere Verteidigungsszenarien geplant',
     },
     views: {
@@ -1190,7 +1214,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: { footerNote: 'Runtime-Hauptkette', layerLabel: 'Runtime-Ebene' },
       cat6: { footerNote: 'Host-Ebene-Fallback-Schutz', layerLabel: 'Host-Ebene' },
       cat4: { footerNote: 'Komponenten-Lieferkettenvertrauen', layerLabel: 'Audit-Ebene' },
-      cat3: { footerNote: 'In zukünftigen Versionen', layerLabel: 'Geplant' },
+      cat3: { footerNote: 'Kollaborations-Governance & Kontingentlimits', layerLabel: 'Steuerungsebene' },
       cat2: { footerNote: 'Steuerungsebene-Eingangsverwaltung', layerLabel: 'Steuerungsebene' },
       cat7: { footerNote: 'Regulatorische Governance-Synergie', layerLabel: 'Steuerungsebene' },
       cat5: { footerNote: 'Richtlinienvorlagen-Synergie', layerLabel: 'Steuerungsebene' },
@@ -1200,14 +1224,14 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_3: 'Ausgabeoberflächenschutz', cat1_4: 'Manipulationsschutz', cat1_5: 'Menschliche Genehmigung',
       cat6_0: 'Host-Härtung', cat6_1: 'Container-Isolierung',
       cat4_0: 'SKILL-Scan',
-      cat3_0: 'Ressourcenkontingente', cat3_1: 'Ratenbegrenzung', cat3_2: 'Kommunikationsverschlüsselung',
+      cat3_0: 'Kollaborations-Governance', cat3_1: 'Kontingentlimit',
       cat2_0: 'Outbound-Governance',
       cat7_0: 'Policy-Governance',
       cat5_0: 'Circuit Breaker', cat5_1: 'Full-Chain-Audit',
     },
     ringShortLabel: {
       cat6: 'Umgebungsisolierung',
-      cat3: 'Kollaborationskommunikation',
+      cat3: 'Kollaboration & Kontingent',
     },
     layerCard: {
       planned: 'Geplant',
@@ -1219,7 +1243,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1: 'Eingabe-/Zustands-/Entscheidungs-/Ausgabeoberfläche / Manipulationsschutz / Menschliche Genehmigung',
       cat6: 'Infrastruktur-Fallback-Schutz',
       cat4: 'Lieferkettensicherheit · SKILL-Scan',
-      cat3: 'Multi-Agenten-Kommunikationssicherheit',
+      cat3: 'Kollaborations-Governance & Kontingentlimits',
     },
     layerSection: {
       runtime: 'Runtime-Ebene',
@@ -1241,7 +1265,7 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       cat1_0: 'Eingabe', cat1_1: 'Zustand', cat1_2: 'Entscheidung',
       cat1_3: 'Ausgabe', cat1_4: 'Asset', cat1_5: 'Genehmigung',
       cat6_0: 'Host', cat6_1: 'Container',
-      cat3_0: 'Kontingent', cat3_1: 'Limit', cat3_2: 'Verschl.',
+      cat3_0: 'Kollab.', cat3_1: 'Kontingent',
       cat4_0: 'SKILL',
       cat2_0: 'Outbound',
       cat7_0: 'Policy',
@@ -1251,11 +1275,11 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       runtimeTitle: 'Runtime-Ebene',
       runtimeDesc: '— Agenten-Runtime-Sicherheit (6 Szenarien) | Eingabe/Zustand/Entscheidung/Ausgabe/Asset/Genehmigung',
       hostTitle: 'Host-Ebene',
-      hostDesc: '— Umgebungsisolierung (2 Szenarien) + Kollaborationskommunikation (geplant) | Host-Härtung/Container-Isolierung/Ressourcenverwaltung',
+      hostDesc: '— Umgebungsisolierung (2 Szenarien) | Host-Härtung/Container-Isolierung',
       auditTitle: 'Audit-Ebene',
       auditDesc: '— Daten- & Komponentenvertrauen (1 Szenario) | SKILL-Scan',
       controlTitle: 'Steuerungsebene',
-      controlDesc: '— Identität + Sicherheitsrichtlinien + Regulatorische Governance (4 Szenarien) | Outbound/Policy/Breaker/Audit',
+      controlDesc: '— Identität + Sicherheitsrichtlinien + Regulatorische Governance + Kollaboration (6 Szenarien) | Outbound/Policy/Breaker/Audit/Kollab/Kontingent',
     },
     eventTable: {
       eyebrow: 'Sicherheitsmodul-Ereignisaggregation',
@@ -1359,6 +1383,12 @@ export const protectionTranslations: Record<Locale, TranslationTree> = {
       // scenario J (Full-chain Audit)
       scenarioJ: 'Full-Chain-Audit',
       scenarioJSub: 'Ereignisstrom-Aggregation und Retrospektion',
+      // scenario N (Collaboration Governance)
+      scenarioN: 'Kollaborations-Governance',
+      scenarioNSub: 'Team Redis Stream / ACL / Relay / Audit',
+      // scenario O (Quota Limit)
+      scenarioO: 'Kontingentlimit',
+      scenarioOSub: 'AI Gateway tokens Tages-/Wochen-/Monatslimits + 80% Warnung',
     },
   },
 };

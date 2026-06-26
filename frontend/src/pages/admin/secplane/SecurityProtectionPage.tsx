@@ -98,7 +98,7 @@ const RING_SHORT_LABEL_KEYS: Record<string, string> = {
 const RING_BUBBLE_KEYS: Record<string, string[]> = {
   'cat-1': ['cat1_0', 'cat1_1', 'cat1_2', 'cat1_3', 'cat1_4', 'cat1_5'],
   'cat-6': ['cat6_0', 'cat6_1'],
-  'cat-3': ['cat3_0', 'cat3_1', 'cat3_2'],
+  'cat-3': ['cat3_0', 'cat3_1'],
   'cat-4': ['cat4_0'],
   'cat-2': ['cat2_0'],
   'cat-7': ['cat7_0'],
@@ -467,7 +467,7 @@ const SecurityProtectionPage: React.FC = () => {
             <div className="ksecure-banner-sub">{t('secplane.protection.banner.subtitle')}</div>
             <div className="ksecure-banner-stats">
               <div className="ksecure-stat"><div className="ksecure-stat-num">7</div><div className="ksecure-stat-label">{t('secplane.protection.banner.riskSurfaces')}</div></div>
-              <div className="ksecure-stat"><div className="ksecure-stat-num">13</div><div className="ksecure-stat-label">{t('secplane.protection.banner.scenarios')}</div></div>
+              <div className="ksecure-stat"><div className="ksecure-stat-num">15</div><div className="ksecure-stat-label">{t('secplane.protection.banner.scenarios')}</div></div>
               <div className="ksecure-stat"><div className="ksecure-stat-num">4</div><div className="ksecure-stat-label">{t('secplane.protection.banner.layers')}</div></div>
             </div>
           </div>
@@ -594,7 +594,7 @@ const SecurityProtectionPage: React.FC = () => {
 
                 <RingCard catId="cat-1" t={t} style={{ top: 8, left: '50%', transform: 'translateX(-50%)', width: 180 }} bubbleKeys={RING_BUBBLE_KEYS['cat-1']} />
                 <RingCard catId="cat-6" t={t} style={{ bottom: 70, right: 38, width: 170 }} bubbleKeys={RING_BUBBLE_KEYS['cat-6']} />
-                <RingCard catId="cat-3" t={t} style={{ top: '50%', right: 18, transform: 'translateY(-50%)', width: 150, opacity: 0.7 }} bubbleKeys={RING_BUBBLE_KEYS['cat-3']} bubbleOpacity={0.5} />
+                <RingCard catId="cat-3" t={t} style={{ top: '50%', right: 18, transform: 'translateY(-50%)', width: 150 }} bubbleKeys={RING_BUBBLE_KEYS['cat-3']} />
                 <RingCard catId="cat-4" t={t} style={{ top: '50%', left: 18, transform: 'translateY(-50%)', width: 165 }} bubbleKeys={RING_BUBBLE_KEYS['cat-4']} />
                 <RingCard catId="cat-2" t={t} style={{ top: 115, left: 48, width: 155 }} bubbleKeys={RING_BUBBLE_KEYS['cat-2']} />
                 <RingCard catId="cat-7" t={t} style={{ top: 115, right: 48, width: 155 }} bubbleKeys={RING_BUBBLE_KEYS['cat-7']} />
@@ -629,9 +629,9 @@ const SecurityProtectionPage: React.FC = () => {
           {viewMode === 'layer' && (
             <div className="space-y-5">
               <LayerSection title={t('secplane.protection.layerSection.runtime')} dotColor="#ef4444" rows={[['cat-1']]} t={t} />
-              <LayerSection title={t('secplane.protection.layerSection.host')} dotColor="#1d4ed8" rows={[['cat-6', 'cat-3']]} t={t} />
+              <LayerSection title={t('secplane.protection.layerSection.host')} dotColor="#1d4ed8" rows={[['cat-6']]} t={t} />
               <LayerSection title={t('secplane.protection.layerSection.audit')} dotColor="#6b21a8" rows={[['cat-4']]} t={t} />
-              <LayerSection title={t('secplane.protection.layerSection.control')} dotColor="#b45309" rows={[['cat-2', 'cat-7', 'cat-5']]} t={t} />
+              <LayerSection title={t('secplane.protection.layerSection.control')} dotColor="#b45309" rows={[['cat-2', 'cat-7', 'cat-5', 'cat-3']]} t={t} />
             </div>
           )}
         </div>
