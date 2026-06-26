@@ -68,6 +68,8 @@ type Service interface {
 	// RecordExternalAlert persists an Alert produced by an external emitter
 	// (clawaegisex JSONL ingest, secureclaw, ksecure relay, ...).
 	RecordExternalAlert(alert *Alert) error
+	// GetByRuleID returns a single rule by RuleID, or nil if not found.
+	GetByRuleID(ruleID string) (*Rule, error)
 }
 
 type service struct {
@@ -82,6 +84,10 @@ func NewService(rules RuleRepository, alerts AlertRepository) Service {
 
 func (s *service) List(kind string) ([]Rule, error) {
 	return s.rules.List(kind)
+}
+
+func (s *service) GetByRuleID(ruleID string) (*Rule, error) {
+	return s.rules.GetByRuleID(ruleID)
 }
 
 func (s *service) Save(in SaveRuleInput) (*Rule, error) {

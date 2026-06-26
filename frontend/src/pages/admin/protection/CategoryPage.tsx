@@ -73,10 +73,10 @@ const CAT_STATS: Record<string, { label: string; value: string; tone?: string; s
     { label: '配置版本', value: 'r4', tone: 'tone-green', sub: '最新策略修订' },
   ],
   'cat-3': [
-    { label: '场景数', value: '0', sub: '协同接入与通信' },
-    { label: '当前状态', value: '本期未开放', tone: 'tone-muted', sub: '后续版本规划' },
-    { label: '替代承接', value: 'AI 网关', sub: '资源配额 + 速率' },
-    { label: '路线图', value: '2026 H2', sub: '多智能体协作' },
+    { label: '场景数', value: '2', sub: '协同治理 + 配额限制' },
+    { label: '当前总线', value: 'Redis Stream', tone: 'tone-orange', sub: 'leader_mediated Team' },
+    { label: '关键风险', value: '4', tone: 'tone-red', sub: '伪造 / 窃听 / DoS / 额度失控' },
+    { label: '治理目标', value: 'ACL + Quota', tone: 'tone-green', sub: '最小权限 + Tokens 治理' },
   ],
 };
 
@@ -86,7 +86,7 @@ const CAT_DESC: Record<string, string> = {
   'cat-2': '智能体身份签发、调用授权、最小权限策略；agent token 生命周期管理，强制最小权限访问。',
   'cat-5': '面向运营与合规的审计回溯与应急处置：全链路事件聚合、风险评分、熔断处置、运营驾驶舱。',
   'cat-7': '统一策略中心：策略模板、版本管理、灰度发布与回滚；批量应用到实例与命名空间。',
-  'cat-3': '多智能体协作、对等接入、消息总线鉴权与速率治理。本期由 AI 网关 承担资源配额与速率限制，独立"协同接入"模块将在后续版本开放。',
+  'cat-3': '面向 Team 多智能体协作链路与 AI Gateway 通信平面：围绕 Redis Stream 与网关 tokens 使用补齐接入认证、ACL、Relay 中转、配额限制、禁言熔断与审计回放，避免“内部成员默认互信 + tokens 无限消耗”的治理空洞。',
 };
 
 export type CategoryPageProps = { catId: string };

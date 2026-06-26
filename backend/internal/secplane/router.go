@@ -130,6 +130,12 @@ func (m *Module) Register(api *gin.RouterGroup, userRepo repository.UserReposito
 		admin.GET("/instances/:id/effective-config", m.dispatchHandler.GetInstanceEffectiveConfig)
 		admin.GET("/instances/:id/aegis/live-config", m.dispatchHandler.GetInstanceLiveConfig)
 
+		collab := admin.Group("/collab")
+		{
+			collab.GET("/policy", m.policyHandler.GetCollabPolicy)
+			collab.PUT("/policy", m.policyHandler.UpsertCollabPolicy)
+		}
+
 		outboundGrp := admin.Group("/outbound/trusted")
 		{
 			outboundGrp.GET("", m.outboundHandler.List)

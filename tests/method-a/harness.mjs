@@ -27,7 +27,7 @@ function makeRuntime(userConfig, caseLabel, apiOverride) {
   const fakeApi = {
     rootDir,
     pluginConfig: {},
-    config: { plugins: { entries: { "clawaegisex": { enabled: true } } } },
+    config: { plugins: { entries: { "clawaegisex": { enabled: true, hooks: { allowPromptInjection: true, allowConversationAccess: true } } } } },
     logger: {
       debug: (m, meta) => logs.push(["debug", m, meta]),
       info:  (m, meta) => logs.push(["info",  m, meta]),

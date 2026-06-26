@@ -46,6 +46,13 @@ const (
 	// finding (use KindSecureClawAuditCheck to suppress the finding).
 	KindSecureClawHardening = "secureclaw_hardening"
 
+	// Collaboration governance policy. One singleton row with RuleID
+	// "collab.policy"; Pattern stores the full JSON policy (teamId, modes,
+	// thresholds, ACL preview). compile.go applies it to ClawAegis
+	// UserConfig.CollabGuard* fields.
+	KindCollabPolicy   = "collab_policy"
+	CollabPolicyRuleID = "collab.policy"
+
 	// SecureClaw skill-layer data files. These 4 JSON files live in
 	// secureclaw/skill/configs/ and are consumed by skill/scripts/*.sh.
 	// secplane mirrors them as rule rows so the admin UI can edit
@@ -80,6 +87,28 @@ const (
 	ModeObserve = "observe"
 	ModeOff     = "off"
 )
+
+// CollabPolicyPayload mirrors the JSON stored in the KindCollabPolicy row's
+// Pattern field. Used by compile.applyCollabPolicy (aegis dispatch) and by
+// services/team_collab.go (runtime DispatchTask check). Keep field tags in
+// sync with collabPolicyResponse in handler.go.
+type CollabPolicyPayload struct {
+	TeamId            string `json:"teamId"`
+	CommunicationMode string `json:"communicationMode"`
+	RedisAclMode      string `json:"redisAclMode"`
+	RelayRequired     bool   `json:"relayRequired"`
+	IdentityMode      string `json:"identityMode"`
+	SchemaMode        string `json:"schemaMode"`
+	QuotaMode         string `json:"quotaMode"`
+	ApprovalMode      string `json:"approvalMode"`
+	MuteOnAnomaly     bool   `json:"muteOnAnomaly"`
+	AuditReplay       bool   `json:"auditReplay"`
+	XaddRps           int    `json:"xaddRps"`
+	XaddWindowSeconds int    `json:"xaddWindowSeconds"`
+	StreamMaxLen      int    `json:"streamMaxLen"`
+	ApprovalThreshold int    `json:"approvalThreshold"`
+	RedisAclPreview   string `json:"redisAclPreview"`
+}
 
 // Rule is a single secplane policy rule. The kind discriminator lets the
 // table host all enforcement primitives (prompt_filter, tool_control, ...).

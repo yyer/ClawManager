@@ -110,10 +110,18 @@ func main() {
 	instanceRuntimeStatusService := services.NewInstanceRuntimeStatusService(instanceRuntimeStatusRepo, instanceAgentRepo, instanceDesiredStateRepo)
 	instanceCommandService := services.NewInstanceCommandService(instanceCommandRepo, instanceRuntimeStatusRepo, instanceDesiredStateRepo)
 	instanceConfigRevisionService := services.NewInstanceConfigRevisionService(instanceConfigRevisionRepo)
-	teamService := services.NewTeamService(teamRepo, instanceService)
 	skillService := services.NewSkillService(skillRepo, instanceRepo, instanceCommandService, objectStorageService, skillScannerClient)
 	securityScanService := services.NewSecurityScanService(securityScanRepo, skillRepo, objectStorageService, skillScannerClient)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
+
+	// Initialize secplane (security protection platform) module. Keeps all of
+	// its routes, services and tables behind a single facade so the rest of
+	// the codebase stays unaware of its internals. Must be constructed before
+	// teamService so DispatchTask can check collab policy on every XAdd.
+	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
+	secplaneModule.StartBackgroundWorkers(context.Background())
+
+	teamService := services.NewTeamService(teamRepo, instanceService, secplaneModule.PolicyService)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
@@ -135,12 +143,6 @@ func main() {
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
 	wsHandler := handlers.NewWebSocketHandler(wsHub)
-
-	// Initialize secplane (security protection platform) module. Keeps all of
-	// its routes, services and tables behind a single facade so the rest of
-	// the codebase stays unaware of its internals.
-	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
-	secplaneModule.StartBackgroundWorkers(context.Background())
 
 	// Start sync service to keep instance status in sync with K8s
 	syncService := services.NewSyncService(instanceRepo, instanceRuntimeStatusService)

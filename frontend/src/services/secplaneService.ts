@@ -19,7 +19,8 @@ export type AlertSource =
   | 'aegis'
   | 'secureclaw'
   | 'ksecure'
-  | 'kubearmor';
+  | 'kubearmor'
+  | 'collab_governance';
 
 export interface SecplaneRule {
   id?: number;
@@ -102,6 +103,33 @@ export interface DispatchResult {
   targets: DispatchTarget[];
 }
 
+// Collaboration governance policy — singleton row driving the ClawAegis
+// collab_guard defense. Mirrors backend collabPolicyResponse. The 4 sub-mode
+// fields (identityMode/schemaMode/quotaMode/approvalMode) each control one
+// rule inside detectCollabGuardViolation; the master collabGuardMode is
+// derived from identityMode on the backend (enforce if any sub-rule enforces).
+export type CollabCommunicationMode = 'leader_mediated' | 'relay_only' | 'peer_limited';
+export type CollabRedisAclMode = 'password_only' | 'per_team' | 'per_member';
+
+export interface CollaborationPolicy {
+  teamId: string;
+  communicationMode: CollabCommunicationMode;
+  redisAclMode: CollabRedisAclMode;
+  relayRequired: boolean;
+  identityMode: RuleMode;
+  schemaMode: RuleMode;
+  quotaMode: RuleMode;
+  approvalMode: RuleMode;
+  muteOnAnomaly: boolean;
+  auditReplay: boolean;
+  xaddRps: number;
+  xaddWindowSeconds: number;
+  streamMaxLen: number;
+  approvalThreshold: number;
+  redisAclPreview: string;
+  updatedAt?: string;
+}
+
 export const secplaneService = {
   listRules: async (kind = 'prompt_filter'): Promise<SecplaneRule[]> => {
     const response = await api.get('/secplane/policy/rules', {
@@ -170,6 +198,38 @@ export const secplaneService = {
     const body = instanceIds && instanceIds.length > 0 ? { instance_ids: instanceIds } : {};
     const response = await api.post('/secplane/dispatch/secureclaw', body);
     return response.data.data;
+  },
+
+  // Collaboration governance policy — singleton row in secplane_policy_rule
+  // (Kind="collab_policy", RuleID="collab.policy"). GET returns the default
+  // policy if no row exists yet; PUT upserts. The policy is compiled into
+  // ClawAegis UserConfig.CollabGuard* fields by aegis.Compile and flows
+  // through the normal install_skill dispatch pipeline.
+  getCollabPolicy: async (): Promise<CollaborationPolicy> => {
+    const response = await api.get('/secplane/collab/policy');
+    return response.data.data;
+  },
+
+  saveCollabPolicy: async (policy: CollaborationPolicy): Promise<CollaborationPolicy> => {
+    const response = await api.put('/secplane/collab/policy', policy);
+    return response.data.data;
+  },
+
+  // dispatchCollabPolicy is a thin wrapper over dispatchAegisApply — the
+  // collab_policy row flows through aegis.Compile automatically alongside
+  // other rule kinds. Kept as a named method so the frontend doesn't need
+  // to know the dispatch endpoint shape.
+  dispatchCollabPolicy: async (instanceIds?: number[]): Promise<DispatchResult> => {
+    const body = instanceIds && instanceIds.length > 0 ? { instance_ids: instanceIds } : {};
+    const response = await api.post('/secplane/dispatch/aegis-apply', body);
+    return response.data.data;
+  },
+
+  listCollabAlerts: async (limit = 50): Promise<SecplaneAlert[]> => {
+    const response = await api.get('/secplane/alerts', {
+      params: { source: 'collab_governance', limit },
+    });
+    return response.data.data?.items ?? [];
   },
 
   // 拉取 pod 实时 user_config.json（从最近一次 agent 上传的 skill_blob 解出）

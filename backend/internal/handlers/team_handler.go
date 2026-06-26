@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -123,6 +124,20 @@ func (h *TeamHandler) DispatchTask(c *gin.Context) {
 	}
 	task, err := h.teamService.DispatchTask(userID.(int), teamID, req)
 	if err != nil {
+		var ce *services.CollabViolationError
+		if errors.As(err, &ce) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   ce.Error(),
+				"data": gin.H{
+					"rule_id":  ce.RuleID,
+					"severity": ce.Severity,
+					"mode":     ce.Mode,
+					"reason":   ce.Reason,
+				},
+			})
+			return
+		}
 		utils.HandleError(c, err)
 		return
 	}

@@ -365,8 +365,10 @@ const getLiveConfig = () => {
 
 ### 10.1 ClawAegis 源 → backend embed
 1. 修改 `ClawAegis/src/{config,rules,handlers}.{ts,js}`（**.ts 和 .js 都要改**，因为 index.ts import 的是 .js）
-2. 重打 `claw-aegis-base.zip`：把整个 `ClawAegis/` 目录（除 node_modules / web / package.json 等）压缩
+2. 重打 `claw-aegis-base.zip`：把整个 `ClawAegis/` 目录（除 node_modules / web / package.json 等）压缩，**顶层目录名为 `clawaegisex/`**
 3. 替换 `backend/internal/secplane/aegis_assets/claw-aegis-base.zip`
+
+> ⚠️ **base zip 必须含 `clawaegisex/SKILL.md`**：dispatch 走 `skill_service.ImportArchiveBytes`，自 commit 95d6faa 起导入强制校验每个 skill 目录根存在 `SKILL.md`，否则 `aegis-apply` 返回 500（`skill directory clawaegisex must contain SKILL.md`）。源文件在 `ClawAegis/SKILL.md`，重打包时务必带上。`secureclaw-base.zip` 同理含 `secureclaw/SKILL.md`。
 4. `go build` backend，docker build 出新镜像
 5. minikube：`minikube image load <image>` + `kubectl set image`
 6. rollout 后下次 dispatch 会带新 plugin code

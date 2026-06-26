@@ -32,7 +32,7 @@ export const CATEGORIES: ProtectionCategory[] = [
   { id: 'cat-6', code: '4', label: '环境隔离与安全增强', labelKey: 'secplane.protection.category.isolate', sub: 'ISOLATE', path: '/admin/secplane/cat-isolate', color: '#0f766e', count: 2 },
   { id: 'cat-5', code: '5', label: '监管与运营治理', labelKey: 'secplane.protection.category.govern', sub: 'GOVERN', path: '/admin/secplane/cat-govern', color: '#b45309', count: 2 },
   { id: 'cat-7', code: '6', label: '安全策略与模板', labelKey: 'secplane.protection.category.policy', sub: 'POLICY', path: '/admin/secplane/cat-policy', color: '#7d5744', count: 1 },
-  { id: 'cat-3', code: '7', label: '协同接入与通信', labelKey: 'secplane.protection.category.comm', sub: 'COMM', path: '/admin/secplane/cat-comm', color: '#94a3b8', count: 0, disabled: true },
+  { id: 'cat-3', code: '7', label: '协同接入与通信', labelKey: 'secplane.protection.category.comm', sub: 'COMM', path: '/admin/secplane/cat-comm', color: '#64748b', count: 2 },
   { id: 'events', code: '事件', label: '安全事件', labelKey: 'secplane.protection.category.events', sub: 'EVENTS', path: '/admin/secplane/events', color: '#dc2626' },
 ];
 
@@ -50,6 +50,8 @@ export const SCENARIOS: ProtectionScenario[] = [
   { id: 'l', code: 'L', label: '宿主加固', subtitle: '主机防护 + 勒索防护 + 入侵检测 + 合规检测', labelKey: 'secplane.protection.category.scenarioL', subtitleKey: 'secplane.protection.category.scenarioLSub', path: '/admin/secplane/isolate/host', cat: 'cat-6' },
   { id: 'k', code: 'K', label: '容器隔离', subtitle: '容器策略与防逃逸', labelKey: 'secplane.protection.category.scenarioK', subtitleKey: 'secplane.protection.category.scenarioKSub', path: '/admin/secplane/isolate/container', cat: 'cat-6' },
   { id: 'm', code: 'M', label: '策略治理', subtitle: '统一策略中心+模板', labelKey: 'secplane.protection.category.scenarioM', subtitleKey: 'secplane.protection.category.scenarioMSub', path: '/admin/secplane/policy/governance', cat: 'cat-7' },
+  { id: 'n', code: 'N', label: '协同治理', subtitle: 'Team Redis Stream / ACL / Relay / 审计', path: '/admin/secplane/comm/governance', cat: 'cat-3' },
+  { id: 'o', code: 'O', label: '配额限制', subtitle: 'AI Gateway tokens 日/周/月限额 + 80% 告警', path: '/admin/secplane/comm/quota', cat: 'cat-3' },
 ];
 
 // 类目对应的场景列表

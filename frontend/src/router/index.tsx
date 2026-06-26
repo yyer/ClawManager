@@ -43,6 +43,8 @@ import ContainerPage from '../pages/admin/protection/scenarios/ContainerPage';
 import PolicyPage from '../pages/admin/protection/scenarios/PolicyPage';
 import BreakerPage from '../pages/admin/protection/scenarios/BreakerPage';
 import HostHardeningPage from '../pages/admin/protection/scenarios/HostHardeningPage';
+import CollaborationGovernancePage from '../pages/admin/protection/scenarios/CollaborationGovernancePage';
+import CollaborationQuotaPage from '../pages/admin/protection/scenarios/CollaborationQuotaPage';
 
 // Instance Pages
 import InstanceListPage from '../pages/instances/InstanceListPage';
@@ -433,6 +435,8 @@ function AppRoutes() {
       <Route path="/admin/secplane/isolate/container" element={<AdminRoute><ContainerPage /></AdminRoute>} />
       <Route path="/admin/secplane/isolate/host" element={<AdminRoute><HostHardeningPage /></AdminRoute>} />
       <Route path="/admin/secplane/policy/governance" element={<AdminRoute><PolicyPage /></AdminRoute>} />
+      <Route path="/admin/secplane/comm/governance" element={<AdminRoute><CollaborationGovernancePage /></AdminRoute>} />
+      <Route path="/admin/secplane/comm/quota" element={<AdminRoute><CollaborationQuotaPage /></AdminRoute>} />
       <Route
         path="/admin/models"
         element={

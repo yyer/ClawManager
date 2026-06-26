@@ -79,6 +79,26 @@ type UserConfig struct {
 	ObserveOnlyUserRiskFlags   []string `json:"observeOnlyUserRiskFlags,omitempty"`
 	DisabledToolResultFlags    []string `json:"disabledToolResultFlags,omitempty"`
 	ObserveOnlyToolResultFlags []string `json:"observeOnlyToolResultFlags,omitempty"`
+
+	// Collaboration governance (collab_guard). Driven by a single
+	// KindCollabPolicy rule row whose Pattern is the full policy JSON.
+	// CollabGuardMode is the master switch (off disables the whole defense);
+	// the four sub-mode fields (Identity/Schema/Quota/Approval) each control
+	// one rule inside detectCollabGuardViolation.
+	CollabGuardEnabled    bool   `json:"collabGuardEnabled,omitempty"`
+	CollabGuardMode       string `json:"collabGuardMode,omitempty"`
+	CollabTeamId          string `json:"collabTeamId,omitempty"`
+	CollabIdentityMode    string `json:"collabIdentityMode,omitempty"`
+	CollabSchemaMode      string `json:"collabSchemaMode,omitempty"`
+	CollabQuotaMode       string `json:"collabQuotaMode,omitempty"`
+	CollabApprovalMode    string `json:"collabApprovalMode,omitempty"`
+	CollabXaddRps         int    `json:"collabXaddRps,omitempty"`
+	CollabXaddWindowSecs  int    `json:"collabXaddWindowSecs,omitempty"`
+	CollabStreamMaxLen    int    `json:"collabStreamMaxLen,omitempty"`
+	CollabMuteOnAnomaly   bool   `json:"collabMuteOnAnomaly,omitempty"`
+	CollabAuditReplay     bool   `json:"collabAuditReplay,omitempty"`
+	CollabApprovalThreshold int  `json:"collabApprovalThreshold,omitempty"`
+	CollabRedisAclPreview string `json:"collabRedisAclPreview,omitempty"`
 }
 
 // Bundle is the full payload shipped via InstanceCommand. Revision + Sha256
@@ -139,6 +159,23 @@ func Compile(rules []policy.Rule, revision string) (Bundle, error) {
 		OutboundTrustEnabled:         true,
 		OutboundTrustMode:            modeEnforce,
 		StartupSkillScan:             true,
+
+		// Collab guard defaults: defense on but in observe mode (safe default —
+		// logs violations without blocking Redis Stream tool calls). Sub-rules
+		// also default to observe. Zero teamId means the defense is inert
+		// until a policy is dispatched.
+		CollabGuardEnabled:          true,
+		CollabGuardMode:             modeObserve,
+		CollabIdentityMode:          modeObserve,
+		CollabSchemaMode:            modeObserve,
+		CollabQuotaMode:             modeObserve,
+		CollabApprovalMode:          modeObserve,
+		CollabXaddRps:               5,
+		CollabXaddWindowSecs:         1,
+		CollabStreamMaxLen:           1000,
+		CollabMuteOnAnomaly:         true,
+		CollabAuditReplay:            true,
+		CollabApprovalThreshold:     85,
 	}
 
 	pathSet := map[string]struct{}{}
@@ -170,6 +207,8 @@ func Compile(rules []policy.Rule, revision string) (Bundle, error) {
 			if p := normalizedPattern(r); p != "" {
 				pluginSet[p] = struct{}{}
 			}
+		case policy.KindCollabPolicy:
+			applyCollabPolicy(&cfg, r)
 		}
 	}
 
@@ -270,6 +309,67 @@ func normalizedPattern(r policy.Rule) string {
 		return ""
 	}
 	return strings.TrimSpace(r.Pattern)
+}
+
+// applyCollabPolicy parses the JSON policy stored in r.Pattern and maps it
+// onto UserConfig.CollabGuard* fields. The master CollabGuardMode follows
+// r.Mode (off/observe/enforce); sub-rules (identity/schema/quota/approval)
+// get their own mode from the JSON payload so operators can tune each rule
+// independently. Missing fields fall back to safe observe defaults.
+func applyCollabPolicy(cfg *UserConfig, r policy.Rule) {
+	if !r.IsEnabled || r.Mode == policy.ModeOff {
+		cfg.CollabGuardEnabled = false
+		cfg.CollabGuardMode = modeOff
+		return
+	}
+	cfg.CollabGuardEnabled = true
+	cfg.CollabGuardMode = normalizeMode(r.Mode)
+
+	payload := policy.CollabPolicyPayload{}
+	if strings.TrimSpace(r.Pattern) != "" {
+		if err := json.Unmarshal([]byte(r.Pattern), &payload); err != nil {
+			// Malformed JSON — keep defaults, do not wipe config.
+			return
+		}
+	}
+	cfg.CollabTeamId = payload.TeamId
+	cfg.CollabIdentityMode = normalizeCollabSubMode(payload.IdentityMode, modeObserve)
+	cfg.CollabSchemaMode = normalizeCollabSubMode(payload.SchemaMode, modeObserve)
+	cfg.CollabQuotaMode = normalizeCollabSubMode(payload.QuotaMode, modeObserve)
+	cfg.CollabApprovalMode = normalizeCollabSubMode(payload.ApprovalMode, modeObserve)
+	if payload.XaddRps > 0 {
+		cfg.CollabXaddRps = payload.XaddRps
+	}
+	if payload.XaddWindowSeconds > 0 {
+		cfg.CollabXaddWindowSecs = payload.XaddWindowSeconds
+	}
+	if payload.StreamMaxLen > 0 {
+		cfg.CollabStreamMaxLen = payload.StreamMaxLen
+	}
+	if payload.ApprovalThreshold > 0 {
+		cfg.CollabApprovalThreshold = payload.ApprovalThreshold
+	}
+	cfg.CollabMuteOnAnomaly = payload.MuteOnAnomaly
+	cfg.CollabAuditReplay = payload.AuditReplay
+	cfg.CollabRedisAclPreview = payload.RedisAclPreview
+}
+
+// normalizeCollabSubMode coerces a frontend RuleMode ("enforce"/"observe"/"off")
+// into the canonical short form used by compile.go. Empty falls back to the
+// provided default (typically modeObserve for safe rollout).
+func normalizeCollabSubMode(in string, fallback string) string {
+	switch in {
+	case modeEnforce:
+		return modeEnforce
+	case modeObserve:
+		return modeObserve
+	case modeOff:
+		return modeOff
+	case "":
+		return fallback
+	default:
+		return fallback
+	}
 }
 
 const (

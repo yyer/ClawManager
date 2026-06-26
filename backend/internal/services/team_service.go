@@ -13,6 +13,7 @@ import (
 
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
+	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services/k8s"
 )
 
@@ -130,6 +131,16 @@ type teamService struct {
 	secretService    *k8s.SecretService
 	configMapService *k8s.ConfigMapService
 
+	// collab governance. collabSvc is nil when secplane module is not wired
+	// (back-compat); checkCollabTask becomes a no-op. collabPolicyCache is a
+	// 10s TTL cache of the collab.policy row. collabQuotaWindows is the
+	// per-(teamId:member) XADD timestamp log for the 1s sliding window.
+	collabSvc          policy.Service
+	collabPolicyCache  *collabPolicyEntry
+	collabCacheMu      sync.Mutex
+	collabQuotaWindows map[string][]int64
+	collabQuotaMu      sync.Mutex
+
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	mu                  sync.Mutex
@@ -146,17 +157,19 @@ type plannedTeamMember struct {
 	IsLeader    bool
 }
 
-func NewTeamService(repo repository.TeamRepository, instanceService InstanceService) TeamService {
+func NewTeamService(repo repository.TeamRepository, instanceService InstanceService, collabSvc policy.Service) TeamService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &teamService{
-		repo:             repo,
-		instanceService:  instanceService,
-		pvcService:       k8s.NewPVCService(),
-		secretService:    k8s.NewSecretService(),
-		configMapService: k8s.NewConfigMapService(),
-		ctx:              ctx,
-		cancel:           cancel,
-		consumers:        map[int]struct{}{},
+		repo:              repo,
+		instanceService:   instanceService,
+		pvcService:        k8s.NewPVCService(),
+		secretService:     k8s.NewSecretService(),
+		configMapService:  k8s.NewConfigMapService(),
+		collabSvc:         collabSvc,
+		collabQuotaWindows: map[string][]int64{},
+		ctx:               ctx,
+		cancel:            cancel,
+		consumers:         map[int]struct{}{},
 	}
 }
 
@@ -679,6 +692,15 @@ func (s *teamService) DispatchTask(userID, teamID int, req DispatchTeamTaskReque
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode task envelope: %w", err)
 	}
+
+	// collab governance check — runs identity/schema/quota/approval rules.
+	// Returns *CollabViolationError on enforce-mode hit (caller blocks XAdd
+	// with 403). Observe-mode violations are recorded as alerts but do not
+	// block. If collabSvc is nil (back-compat), checkCollabTask is a no-op.
+	if violation := s.checkCollabTask(team, member, envelope, envelopeJSON); violation != nil {
+		return nil, violation
+	}
+
 	streamID, err := bus.XAdd(context.Background(), teamInboxKey(team.ID, member.MemberKey), map[string]string{
 		"payload":    envelopeJSON,
 		"team_id":    strconv.Itoa(team.ID),
