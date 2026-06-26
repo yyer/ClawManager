@@ -1,12 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 interface Scenario {
   letter: string;
-  label: string;
+  labelKey: string;
   sub: string;
-  desc: string;
+  descKey: string;
   route: string;
   defenses: string;
 }
@@ -14,88 +15,89 @@ interface Scenario {
 const SCENARIOS: Scenario[] = [
   {
     letter: 'A',
-    label: '输入面防护',
+    labelKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.input.label',
     sub: 'INPUT SURFACE',
-    desc: '面向用户输入与工具结果，检测注入模式、越狱、二级注入。',
+    descKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.input.desc',
     route: '/admin/secplane/runtime/input',
     defenses: 'UserRiskScan · PromptGuard · ToolCallEnforcement · ToolResultScan',
   },
   {
     letter: 'B',
-    label: '状态面防护',
+    labelKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.state.label',
     sub: 'STATE SURFACE',
-    desc: '内存路径保护、完整性 Hash 校验、会话隔离。',
+    descKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.state.desc',
     route: '/admin/secplane/runtime/state',
     defenses: 'MemoryGuard · SelfProtection',
   },
   {
     letter: 'C',
-    label: '决策面防护',
+    labelKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.decision.label',
     sub: 'DECISION SURFACE',
-    desc: '工具调用前静态扫描危险命令、编码混淆、来源不可信脚本。',
+    descKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.decision.desc',
     route: '/admin/secplane/runtime/decision',
     defenses: 'CommandBlock · EncodingGuard · ScriptProvenanceGuard',
   },
   {
     letter: 'D',
-    label: '输出面防护',
+    labelKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.output.label',
     sub: 'OUTPUT SURFACE',
-    desc: '出栈自动脱敏：API Key/JWT/邮箱/电话/身份证等 9 类隐私规则。',
+    descKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.output.desc',
     route: '/admin/secplane/runtime/output',
     defenses: 'OutputRedaction',
   },
   {
     letter: 'F',
-    label: '资产防篡改',
+    labelKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.asset.label',
     sub: 'ASSET PROTECTION',
-    desc: '受保护路径/技能/插件清单，运行时层拦截写入与篡改。',
+    descKey: 'secplane.runtime.runtimeSecurityCategory.scenarios.asset.desc',
     route: '/admin/secplane/runtime/asset',
     defenses: 'SelfProtection · ProtectedPaths/Skills/Plugins',
   },
 ];
 
 const RuntimeSecurityCategoryPage: React.FC = () => {
+  const { t } = useI18n();
   return (
-    <AdminLayout title="安全防护">
+    <AdminLayout title={t('secplane.runtime.shared.crumbSecurity')}>
       <div className="secp-scope space-y-6">
         <div className="crumb">
-          <Link to="/admin/secplane">安全防护</Link>
+          <Link to="/admin/secplane">{t('secplane.runtime.shared.crumbSecurity')}</Link>
           <span>/</span>
-          <span className="crumb-current">智能体运行时安全</span>
+          <span className="crumb-current">{t('secplane.runtime.runtimeSecurityCategory.crumbCurrent')}</span>
         </div>
 
         {/* Hero */}
         <div className="panel">
           <div className="hero-block mb-5">
-            <div className="h-eyebrow">AGENT RUNTIME SECURITY</div>
-            <h2 className="h-title">智能体运行时安全</h2>
+            <div className="h-eyebrow">{t('secplane.runtime.runtimeSecurityCategory.heroEyebrow')}</div>
+            <h2 className="h-title">{t('secplane.runtime.runtimeSecurityCategory.heroTitle')}</h2>
             <p className="h-subtitle">
-              面向单智能体从初始化、输入、推理、决策到执行的完整运行时链路，覆盖输入面、状态面、决策面、输出面、资产保护
-              5 个场景，构建运行时层纵深防御主链路。底层由 ClawAegisEx 插件强制执行，配置变更通过
+              {t('secplane.runtime.runtimeSecurityCategory.heroSubtitle1')}
+              {t('secplane.runtime.runtimeSecurityCategory.heroSubtitle2')}
               <code className="mx-1 px-1 py-0.5 rounded bg-[#fdf6f1] text-[#7a4a30] text-xs">install_skill</code>
-              下发到 pod，插件在 ≤1s 内 hot-reload user_config.json 生效。
+              {t('secplane.runtime.runtimeSecurityCategory.heroSubtitle3')}
             </p>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div className="stat-card">
-              <div className="stat-card-label">场景数</div>
+              <div className="stat-card-label">{t('secplane.runtime.runtimeSecurityCategory.statScenarios')}</div>
               <div className="stat-card-value">{SCENARIOS.length}</div>
-              <div className="stat-card-sub muted-strong">五个攻击面</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.runtime.runtimeSecurityCategory.statScenariosSub')}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">支撑防御</div>
+              <div className="stat-card-label">{t('secplane.runtime.runtimeSecurityCategory.statDefenses')}</div>
               <div className="stat-card-value">14</div>
               <div className="stat-card-sub muted-strong">ClawAegisEx defense</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">下发通道</div>
+              <div className="stat-card-label">{t('secplane.runtime.shared.statChannel')}</div>
               <div className="stat-card-value tone-green">install_skill</div>
               <div className="stat-card-sub muted-strong">bundle → workspace → hot-reload</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">规则覆盖</div>
+              <div className="stat-card-label">{t('secplane.runtime.runtimeSecurityCategory.statCoverage')}</div>
               <div className="stat-card-value tone-green">100%</div>
-              <div className="stat-card-sub muted-strong">运行时全链路</div>
+              <div className="stat-card-sub muted-strong">{t('secplane.runtime.runtimeSecurityCategory.statCoverageSub')}</div>
             </div>
           </div>
         </div>
@@ -125,8 +127,8 @@ const RuntimeSecurityCategoryPage: React.FC = () => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="eyebrow" style={{ color: '#ef6b4a' }}>{s.sub}</div>
-                  <div className="text-lg font-bold text-[#171212]">{s.label}</div>
-                  <div className="text-xs muted mt-1">{s.desc}</div>
+                  <div className="text-lg font-bold text-[#171212]">{t(s.labelKey)}</div>
+                  <div className="text-xs muted mt-1">{t(s.descKey)}</div>
                 </div>
               </div>
               <div className="divider"></div>
@@ -134,7 +136,7 @@ const RuntimeSecurityCategoryPage: React.FC = () => {
                 <span className="muted-strong" style={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.6875rem' }}>
                   {s.defenses}
                 </span>
-                <span style={{ color: '#ef6b4a', fontWeight: 600 }}>查看 →</span>
+                <span style={{ color: '#ef6b4a', fontWeight: 600 }}>{t('secplane.runtime.runtimeSecurityCategory.viewDetail')}</span>
               </div>
             </Link>
           ))}

@@ -49,7 +49,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
     { path: '/admin/instances', label: t('nav.instances'), icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
     // "安全中心"（/admin/security 一组）已挪到「安全防护 → 数据与组件可信 → SKILL 技能扫描」。
     // 原路由保留可访问，仅从 nav 里隐藏。
-    { path: '/admin/secplane', label: '安全防护', icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm', '/admin/security', '/admin/assets', '/admin/skills'], hasPopup: true },
+    { path: '/admin/secplane', label: t('nav.secplane'), icon: 'M12 2l8 4.5v5c0 5.8-3.6 10.8-8 12.5-4.4-1.7-8-6.7-8-12.5v-5L12 2z', matchPaths: ['/admin/secplane/runtime', '/admin/secplane/events', '/admin/secplane/cat-trust', '/admin/secplane/cat-identity', '/admin/secplane/cat-isolate', '/admin/secplane/cat-govern', '/admin/secplane/cat-policy', '/admin/secplane/cat-comm', '/admin/security', '/admin/assets', '/admin/skills'], hasPopup: true },
     // 暂时隐藏：'输入检测 / ClawAegisEx' (/admin/secplane/input-detection) 与
     // '审计加固 / SecureClaw' (/admin/secplane/secureclaw)。路由仍在，直接
     // 访问 URL 可达；只是从左侧 nav 暂时隐藏。恢复时把下面两行的注释去掉即可。
@@ -216,7 +216,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
                         onMouseLeave={() => setPopoverItemPath(null)}
                       >
                         <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-[#b46c50]">
-                          7 大类别
+                          {t('adminLayout.protectionCats')}
                         </div>
                         {PROTECTION_POPUP_CATS.map((cat) => (
                           <Link
@@ -236,11 +236,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
                               className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
                               style={{ background: cat.color }}
                             />
-                            <span className="flex-1 truncate font-medium">{cat.label}</span>
+                            <span className="flex-1 truncate font-medium">{cat.labelKey ? t(cat.labelKey) : cat.label}</span>
                             {cat.count !== undefined && !cat.disabled && (
-                              <span className="text-[10px] muted-strong">{cat.count} 场景</span>
+                              <span className="text-[10px] muted-strong">{t('adminLayout.sceneCount', { count: cat.count })}</span>
                             )}
-                            {cat.disabled && <span className="badge badge-slate text-[10px]">规划中</span>}
+                            {cat.disabled && <span className="badge badge-slate text-[10px]">{t('adminLayout.planned')}</span>}
                           </Link>
                         ))}
                       </div>
@@ -331,7 +331,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
             <div className={`${shellContainerClass} flex h-[104px] items-center`}>
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#b46c50]">
-                  Admin Workspace
+                  {t('adminLayout.adminWorkspace')}
                 </div>
                 <h1 className="mt-1 text-[1.8rem] font-bold tracking-[-0.04em] text-[#171212]">{title}</h1>
               </div>

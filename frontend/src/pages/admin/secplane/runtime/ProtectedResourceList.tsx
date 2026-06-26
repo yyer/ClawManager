@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { secplaneService, type SecplaneRule } from '../../../../services/secplaneService';
+import { useI18n } from '../../../../contexts/I18nContext';
 
 // Manages add / remove for one kind of protected_* rule (path / skill / plugin).
 // Backed by the existing /policy/rules endpoints — same shape as the old
@@ -33,6 +34,7 @@ interface Props {
 }
 
 const ProtectedResourceList: React.FC<Props> = ({ kind, title, placeholder, helpText }) => {
+  const { t } = useI18n();
   const [rules, setRules] = useState<SecplaneRule[]>([]);
   const [draft, setDraft] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -104,7 +106,7 @@ const ProtectedResourceList: React.FC<Props> = ({ kind, title, placeholder, help
     <div className="panel-warm" style={{ padding: 18 }}>
       <div className="flex items-center justify-between mb-2">
         <div className="section-title">{title}</div>
-        <span className="muted text-xs">{visible.length} 项生效</span>
+        <span className="muted text-xs">{t('secplane.runtime.shared.effectiveItems', { count: visible.length })}</span>
       </div>
       {helpText && <div className="muted text-xs mb-3">{helpText}</div>}
       <div className="flex gap-2 mb-3">
@@ -124,7 +126,7 @@ const ProtectedResourceList: React.FC<Props> = ({ kind, title, placeholder, help
           disabled={!draft.trim() || busyId !== null}
           onClick={handleAdd}
         >
-          添加
+          {t('secplane.runtime.protectedResourceList.add')}
         </button>
       </div>
       {error && (
@@ -148,14 +150,14 @@ const ProtectedResourceList: React.FC<Props> = ({ kind, title, placeholder, help
               disabled={busyId === r.rule_id}
               onClick={() => handleRemove(r.rule_id)}
             >
-              {busyId === r.rule_id ? '…' : '移除'}
+              {busyId === r.rule_id ? t('secplane.runtime.protectedResourceList.removing') : t('secplane.runtime.protectedResourceList.remove')}
             </button>
           </li>
         ))}
-        {visible.length === 0 && <li className="muted text-xs">无配置项。</li>}
+        {visible.length === 0 && <li className="muted text-xs">{t('secplane.runtime.protectedResourceList.noItems')}</li>}
       </ul>
       <div className="muted-strong text-xs mt-3" style={{ fontFamily: 'ui-monospace, monospace' }}>
-        rule_id 前缀：<code>{prefix}.*</code>
+        {t('secplane.runtime.protectedResourceList.ruleIdPrefix')}<code>{prefix}.*</code>
       </div>
     </div>
   );

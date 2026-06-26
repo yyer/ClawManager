@@ -82,19 +82,67 @@ export const DEFAULT_FILE_POLICY: FilePolicy = {
 
 /**
  * Intrusion-detection policy — mirrors bridge `InvasionPolicy`.
- * Only `programWhitelist` is user-editable; `rules` is read-only.
+ * 与 KSecGUI/components/Invasion.vue 对齐：
+ *   - 'switch-on'            → KSec.yaml.intrusion_detection 主开关
+ *   - whitelistProgram/File/IP → ids.yaml 中 3 个 list 块（whitelist_program_path 等）
+ *   - enabledRuleNames        → ids.yaml 中存在的 `- rule: <name>` 名称集合
+ *                              （前端 INVASION_RULES_TEMPLATE 据此勾选每条 Toggle）
  */
 export interface InvasionPolicy {
   'switch-on': boolean;
-  programWhitelist: string[];
-  rules: Array<{ name: string; desc?: string }>;
+  whitelistProgram: string[];
+  whitelistFile: string[];
+  whitelistIP: string[];
+  enabledRuleNames: string[];
 }
 
 export const DEFAULT_INVASION_POLICY: InvasionPolicy = {
   'switch-on': false,
-  programWhitelist: [],
-  rules: [],
+  whitelistProgram: [],
+  whitelistFile: [],
+  whitelistIP: [],
+  enabledRuleNames: [],
 };
+
+// ----- 合规检测 / CIS baseline -----
+
+/** baseline.yaml 中单条检测项 */
+export interface BaselineItem {
+  id: string;
+  name: string;
+  value: string | number | boolean;
+  desp?: string;
+  remark?: string;
+}
+
+/** baseline.yaml 中一个大类（口令复杂度管理 / 登录策略管理 / ...） */
+export interface BaselineCategory {
+  type: string;
+  description: string;
+  items: BaselineItem[];
+}
+
+/** scan/repair/rollback 报告里的一行（id-粒度的 before/after/result） */
+export interface BaselineDetail {
+  id: string;
+  before: string;
+  after: string;
+  /** scan: success/fail/uncheck/security  repair: 同上 + 不支持  rollback: 同 repair */
+  result: string;
+}
+
+export interface BaselineReport {
+  /** 中文 key/value，因动作不同会变体（检测时间/不通过项/成功项/失败项 等） */
+  overview: Record<string, string | number>;
+  details: BaselineDetail[];
+}
+
+export interface BaselineStatus {
+  status: 'home' | 'scanned' | 'repaired' | 'rollbacked';
+  report?: BaselineReport;
+  /** 最近一次扫描覆盖到的 item id 集合，前端据此区分"已检测大类"vs"未检测大类" */
+  scannedItemIds?: string[];
+}
 
 export interface LogEntry {
   // KSec SecLog passthrough (ransom + access_control, see KSecMain/types/types.go:215)

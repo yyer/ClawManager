@@ -1,6 +1,7 @@
 import React from 'react';
+import { useI18n } from '../../../../contexts/I18nContext';
 
-// Static reference data for the "查看规则" modal. The actual regexes live in
+// Static reference data for the "View Rule" modal. The actual regexes live in
 // the ClawAegisEx plugin source (rules.ts etc.); we surface representative
 // samples here so operators can see what each defense matches. Kept in sync
 // with the plugin manually — when a new rule is added there, update the
@@ -40,17 +41,19 @@ interface Props {
 }
 
 const RuleDetailModal: React.FC<Props> = ({ data, onClose }) => {
+  const { t } = useI18n();
+
   return (
     <div className="secp-modal-root">
       <div className="secp-modal-backdrop" onClick={onClose} />
       <div className="secp-modal-content">
         <div className="secp-modal-header">
           <div>
-            <div className="eyebrow">RULE LIBRARY</div>
+            <div className="eyebrow">{t('secplane.runtime.ruleDetailModal.eyebrow')}</div>
             <h3 className="secp-modal-title">{data.title}</h3>
             <div className="muted text-xs mt-1">{data.subtitle}</div>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('secplane.runtime.ruleDetailModal.close') ?? 'Close'}>
             ×
           </button>
         </div>
@@ -67,7 +70,7 @@ const RuleDetailModal: React.FC<Props> = ({ data, onClose }) => {
                       <span className={`badge ${TONE_TO_BADGE[c.tone]}`}>{c.hits} hits / 24h</span>
                     )}
                   </div>
-                  <div className="muted-strong text-xs mb-1">代表正则（节选 {c.regex.length} 条）</div>
+                  <div className="muted-strong text-xs mb-1">{t('secplane.runtime.ruleDetailModal.regexLabel', { count: c.regex.length })}</div>
                   <div className="flex flex-col gap-1 mb-3">
                     {c.regex.map((r, i) => (
                       <code
@@ -81,7 +84,7 @@ const RuleDetailModal: React.FC<Props> = ({ data, onClose }) => {
                   </div>
                   {c.maskExample && (
                     <>
-                      <div className="muted-strong text-xs mb-1">脱敏示例</div>
+                      <div className="muted-strong text-xs mb-1">{t('secplane.runtime.ruleDetailModal.maskExample')}</div>
                       <code
                         className="block text-xs rounded-md px-3 py-1.5 mb-3"
                         style={{ background: '#fdf6f1', color: '#171212' }}
@@ -92,7 +95,7 @@ const RuleDetailModal: React.FC<Props> = ({ data, onClose }) => {
                   )}
                   {c.examples && c.examples.length > 0 && (
                     <>
-                      <div className="muted-strong text-xs mb-1">命中示例</div>
+                      <div className="muted-strong text-xs mb-1">{t('secplane.runtime.ruleDetailModal.hitExample')}</div>
                       <div className="flex flex-col gap-1">
                         {c.examples.map((e, i) => (
                           <div
@@ -129,7 +132,7 @@ const RuleDetailModal: React.FC<Props> = ({ data, onClose }) => {
         </div>
         <div className="secp-modal-footer">
           <button type="button" className="btn-secondary btn-sm" onClick={onClose}>
-            关闭
+            {t('secplane.runtime.ruleDetailModal.close')}
           </button>
         </div>
       </div>

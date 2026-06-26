@@ -1,5 +1,7 @@
 import type {
   AgentStatus,
+  BaselineCategory,
+  BaselineStatus,
   FilePolicy,
   InvasionPolicy,
   LogEntry,
@@ -65,12 +67,20 @@ export async function getInvasionPolicy(): Promise<InvasionPolicy> {
   return jsonOrThrow(await fetch(`${base}/policy/invasion`));
 }
 
-export async function putInvasionPolicy(pol: InvasionPolicy): Promise<PutResult> {
+/**
+ * PUT /policy/invasion — 与 KSecGUI Invasion.vue setPolicy() 对齐：
+ * 前端用 invasionPolicy.ts 模板 + 当前 state 构造完整 Falco YAML body 后发送，
+ * 后端 yaml.dump 整文件落盘到 /opt/KSec/policy/ids.yaml。
+ */
+export async function putInvasionPolicy(payload: {
+  'switch-on': boolean;
+  ymlBody: unknown[];
+}): Promise<PutResult> {
   return jsonOrThrow<PutResult>(
     await fetch(`${base}/policy/invasion`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pol),
+      body: JSON.stringify(payload),
     }),
   );
 }
@@ -86,4 +96,43 @@ export async function getLogs(module: string, limit = 50): Promise<LogEntry[]> {
 /** Open an EventSource on `/api/host/logs/stream`. Caller must `close()` on unmount. */
 export function openLogStream(module: string): EventSource {
   return new EventSource(`${base}/logs/stream?module=${encodeURIComponent(module)}`);
+}
+
+// ===== 合规检测 (CIS baseline) =====
+
+export async function getBaselinePolicy(): Promise<BaselineCategory[]> {
+  return jsonOrThrow(await fetch(`${base}/policy/baseline`));
+}
+
+export async function getBaselineStatus(): Promise<BaselineStatus> {
+  return jsonOrThrow(await fetch(`${base}/baseline/status`));
+}
+
+export async function scanBaseline(itemIds: string[]): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemIds }),
+    }),
+  );
+}
+
+export async function repairBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/repair`, { method: 'POST' }),
+  );
+}
+
+export async function rollbackBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/rollback`, { method: 'POST' }),
+  );
+}
+
+/** 把状态机重置回 'home'（清空 /opt/KSec/compliance/log），用于"重新检测" */
+export async function resetBaseline(): Promise<void> {
+  await jsonOrThrow(
+    await fetch(`${base}/baseline/reset`, { method: 'POST' }),
+  );
 }

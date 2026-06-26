@@ -1,20 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../../../components/AdminLayout';
+import { useI18n } from '../../../../contexts/I18nContext';
 import {
+  getBaselinePolicy,
+  getBaselineStatus,
   getFilePolicy,
   getInvasionPolicy,
   getLogs,
   getRansomPolicy,
+  getStatus,
   openLogStream,
   putFilePolicy,
   putInvasionPolicy,
   putRansomPolicy,
+  repairBaseline,
+  resetBaseline,
+  rollbackBaseline,
+  scanBaseline,
 } from '../../../../services/hostHardening';
 import {
   DEFAULT_FILE_POLICY,
   DEFAULT_INVASION_POLICY,
   DEFAULT_RANSOM_POLICY,
+  type AgentStatus,
+  type BaselineCategory,
+  type BaselineReport,
   type FilePolicy,
   type FileRule as ServerFileRule,
   type InvasionPolicy,
@@ -22,6 +33,8 @@ import {
   type RansomPolicy,
 } from '../../../../types/hostHardening';
 import { BUILTIN_PREFILE_TEMPLATE } from '../../../../data/builtinPreFileRules';
+import { INVASION_RULES_META, INVASION_PRISTINE_BODY } from '../../../../data/invasionPolicy';
+import { enrichInvasionLog, type InvasionLogRow } from '../../../../data/invasionLogMap';
 
 // 宿主加固 (scenario L) — 对齐 specs/001-clawmanager-hardening/prototypes/scenario-l-host.html
 // 3 个 tab：主机防护 / 勒索防护 / 入侵检测
@@ -191,48 +204,43 @@ function fileRuleFromServer(s: ServerFileRule): CustomFileRule {
   };
 }
 /**
- * KSec SecLog.Operation 中文化（与 KSecGUI/components/FileProtectLog.vue getOerationDesc 对齐）。
- * 注意：write / create / move or rename 三者底层同属"写"权限（mode token wcm），
- * 日志层仍保留细粒度 syscall 标签，便于排查具体行为。
+ * KSec SecLog.Operation i18n.
  */
-function operationToChinese(op: string | undefined): string {
+function operationI18n(op: string | undefined, t: (key: string) => string): string {
   if (!op) return '-';
   const map: Record<string, string> = {
-    chmod: '修改权限',
-    read: '读文件',
-    write: '写文件',
-    execute: '执行进程',
-    delete: '删除文件',
-    create: '创建文件',
-    kill: '终止进程',
-    'move or rename': '移动或重命名文件',
+    chmod: t('secplane.protection.hostHardening.operation.chmod'),
+    read: t('secplane.protection.hostHardening.operation.read'),
+    write: t('secplane.protection.hostHardening.operation.write'),
+    execute: t('secplane.protection.hostHardening.operation.execute'),
+    delete: t('secplane.protection.hostHardening.operation.delete'),
+    create: t('secplane.protection.hostHardening.operation.create'),
+    kill: t('secplane.protection.hostHardening.operation.kill'),
+    'move or rename': t('secplane.protection.hostHardening.operation.moveOrRename'),
   };
   return map[op] ?? op;
 }
 
-/** KSec SecLog.Action（命中后的处理结果）中文化。
- *  只有两种：BLOCK→阻断（拦截模式命中），MONITOR→放行（监控模式命中）。 */
-function actionToChinese(action: string | undefined): string {
+/** KSec SecLog.Action i18n. */
+function actionI18n(action: string | undefined, t: (key: string) => string): string {
   if (!action) return '-';
   const key = action.toUpperCase();
-  if (key === 'BLOCK') return '阻断';
-  if (key === 'MONITOR') return '放行';
+  if (key === 'BLOCK') return t('secplane.protection.hostHardening.action.block');
+  if (key === 'MONITOR') return t('secplane.protection.hostHardening.action.monitor');
   return action;
 }
 
 /**
- * KSec mode 字符串中文化。token 边界：r / wcm / x / d / all。
- * "wcm" 是"写"权限的整体编码（写/创建/移动或重命名 3 个 syscall 一组），不能按字符拆。
- * 与 KSecGUI/components/FileProtect.vue strModeToArr 一致。
+ * KSec mode string i18n.
  */
-function modeToChinese(mode: string | undefined): string {
+function modeI18n(mode: string | undefined, t: (key: string) => string): string {
   if (!mode) return '-';
-  if (mode === 'all') return '全部';
+  if (mode === 'all') return t('secplane.protection.hostHardening.mode.all');
   const parts: string[] = [];
-  if (mode.includes('r')) parts.push('读');
-  if (mode.includes('wcm')) parts.push('写');
-  if (mode.includes('x')) parts.push('执行');
-  if (mode.includes('d')) parts.push('删除');
+  if (mode.includes('r')) parts.push(t('secplane.protection.hostHardening.mode.read'));
+  if (mode.includes('wcm')) parts.push(t('secplane.protection.hostHardening.mode.write'));
+  if (mode.includes('x')) parts.push(t('secplane.protection.hostHardening.mode.execute'));
+  if (mode.includes('d')) parts.push(t('secplane.protection.hostHardening.mode.delete'));
   return parts.length > 0 ? parts.join(' / ') : mode;
 }
 
@@ -262,6 +270,47 @@ function fileRuleToServer(u: CustomFileRule): ServerFileRule {
 /** UI process rule: tagged variant of server's processBlackList + processProtectList. */
 type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
 
+/**
+ * Falco 兼容的入侵检测白名单字段校验，与 KSecGUI/utils/check.js 对齐：
+ *  - 路径（程序 / 文件）：绝对路径，段内只接受 [a-zA-Z0-9._-]
+ *  - IP：dotted-quad IPv4 字面量（不接受 CIDR；Falco 的 fd.cip 不识别 /N，
+ *        否则 Falco 加载 ids.yaml 时报 "unrecognized IPv4 address"）
+ */
+const IDS_PATH_RE = /^([/]|([/][a-zA-Z0-9._-]{1,255})+)$/;
+const IDS_IPV4_RE = /^(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])$/;
+
+function validateInvasionEntries(
+  lines: string[],
+  kind: 'path' | 'ip',
+): { ok: string[]; bad: string[] } {
+  const re = kind === 'ip' ? IDS_IPV4_RE : IDS_PATH_RE;
+  const ok: string[] = [];
+  const bad: string[] = [];
+  for (const raw of lines) {
+    const s = raw.trim();
+    if (!s) continue;
+    if (s.length > 255) bad.push(s);
+    else if (!re.test(s)) bad.push(s);
+    else ok.push(s);
+  }
+  return { ok, bad };
+}
+
+/**
+ * 合并新行进白名单（与 KSecGUI Invasion.vue handleConfirm 一致）：
+ * - 新行按出现顺序去重
+ * - 旧值中已被新行包含的剔除，让新行排在最上面
+ * - 超过 max 截断，返回 dropped 数量供 UI 提示
+ */
+function mergeUnique(prev: string[], lines: string[], max: number): { merged: string[]; dropped: number } {
+  const fresh = Array.from(new Set(lines.map((s) => s.trim()).filter(Boolean)));
+  const freshSet = new Set(fresh);
+  const oldKept = prev.filter((v) => !freshSet.has(v));
+  const combined = [...fresh, ...oldKept];
+  const dropped = Math.max(0, combined.length - max);
+  return { merged: combined.slice(0, max), dropped };
+}
+
 
 // 数据迁移：勒索防护 + 主机防护 + 入侵检测均已接 ksec-bridge
 //   /api/host/policy/{ransome,file,invasion} + /api/host/logs/stream?module={ransome,file,invasion}
@@ -270,15 +319,87 @@ type ProcRule = { path: string; type: '进程保护' | '进程黑名单' };
 // 主页
 // ===========================
 
-type MainTab = 'file' | 'ransome' | 'invasion';
+type MainTab = 'file' | 'ransome' | 'invasion' | 'baseline';
+
+// ===== 合规检测 / CIS baseline（与 KSecGUI/components/Compliance.vue 对齐） =====
+// 注：KSec 实际扫的 ID 集合由 bridge 读 /opt/KSec/compliance/template/basic 得到，
+// 前端不再硬编码白名单。getBaselinePolicy() 返回的就已经是过滤后的 29 条（Ubuntu 适配）。
+
+/** UI 侧状态机；KSecGUI 同名（roolbacking 是上游拼写笔误，沿用以便对照） */
+type BaselineUiStatus =
+  | 'home'
+  | 'scanning'
+  | 'scanned'
+  | 'repairing'
+  | 'repaired'
+  | 'roolbacking'
+  | 'rollbacked';
+
+/** repair / rollback result label i18n */
+function baselineResultLabel(
+  result: string,
+  phase: 'scanned' | 'repaired' | 'rollbacked',
+  t: (key: string) => string,
+): { text: string; color: string } {
+  const b = 'secplane.protection.hostHardening.baseline.';
+  if (result === 'uncheck') {
+    if (phase === 'repaired') return { text: t(`${b}safe`), color: '#00c63c' };
+    if (phase === 'rollbacked') return { text: '-', color: '#6b7280' };
+    return { text: t(`${b}notChecked`), color: '#989cb2' };
+  }
+  if (phase === 'scanned') {
+    if (result === 'success' || result === 'security') return { text: t(`${b}safe`), color: '#00c63c' };
+    return { text: t(`${b}atRisk`), color: '#ff830c' };
+  }
+  if (phase === 'repaired') {
+    if (result === 'security') return { text: t(`${b}safe`), color: '#00c63c' };
+    if (result === 'success') return { text: t(`${b}repaired`), color: '#0da3df' };
+    if (result === 'fail') return { text: t(`${b}repairFailed`), color: '#ff830c' };
+    if (result === '不支持') return { text: t(`${b}manualRepair`), color: '#6b7280' };
+    return { text: result, color: '#6b7280' };
+  }
+  // rollbacked
+  if (result === 'security') return { text: '-', color: '#6b7280' };
+  if (result === 'success') return { text: t(`${b}rolledBack`), color: '#0da3df' };
+  if (result === 'fail') return { text: t(`${b}rollbackFailed`), color: '#ff830c' };
+  if (result === '不支持') return { text: t(`${b}notSupported`), color: '#6b7280' };
+  return { text: result, color: '#6b7280' };
+}
 type FileSubTab = 'builtin' | 'fileprot' | 'procprot';
 type RansomeSubTab = 'decoy' | 'whitelist';
-type InvasionSubTab = 'rules' | 'wl-prog';
+type InvasionSubTab = 'rules' | 'wl-prog' | 'wl-file' | 'wl-ip';
 
 const HostHardeningPage: React.FC = () => {
+  const { t } = useI18n();
+  // i18n key prefix shorthand
+  const h = 'secplane.protection.hostHardening';
   const [mainTab, setMainTab] = useState<MainTab>('file');
   const [toast, setToast] = useState<ToastState>(null);
   const fireToast = (message: string, kind: ToastKind = 'info') => setToast({ message, kind });
+
+  // bridge /agent/v1/status —— 驱动 hero 第 1 张卡（加固代理状态）
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [agentStatusErr, setAgentStatusErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchStatus = (): void => {
+      getStatus()
+        .then((s) => {
+          if (cancelled) return;
+          setAgentStatus(s);
+          setAgentStatusErr(null);
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setAgentStatusErr(err.message);
+        });
+    };
+    fetchStatus();
+    const id = setInterval(fetchStatus, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // === 主机防护 state（接 ksec-bridge）===
   const [serverFilePolicy, setServerFilePolicy] = useState<FilePolicy | null>(null);
@@ -312,7 +433,7 @@ const HostHardeningPage: React.FC = () => {
         if (!cancelled) setServerPolicy(p);
       })
       .catch((err: Error) => {
-        if (!cancelled) fireToast(`加载策略失败：${err.message}`, 'warning');
+        if (!cancelled) fireToast(t(`${h}.toast.loadPolicyFailed`, { msg: err.message }), 'warning');
       });
     return () => {
       cancelled = true;
@@ -377,15 +498,15 @@ const HostHardeningPage: React.FC = () => {
     // 立即弹一条 info，让用户知道点击已收到——尤其首次 master switch 翻转
     // 时 daemon 重启会让 PUT 拖到 3+ 秒。
     const isMasterFlip = policyDraft['switch-on'] !== serverPolicy?.['switch-on'];
-    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    fireToast(isMasterFlip ? t(`${h}.toast.applying`) : t(`${h}.common.saving`), 'info');
     try {
       const res = await putRansomPolicy(policyDraft);
       setServerPolicy(policyDraft);
       setPolicyDraft(null);
       if (res.warning) fireToast(res.warning, 'warning');
-      else fireToast('配置已保存', 'success');
+      else fireToast(t(`${h}.toast.saved`), 'success');
     } catch (err) {
-      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+      fireToast(t(`${h}.toast.saveFailed`, { msg: (err as Error).message }), 'warning');
     } finally {
       setSaving(false);
     }
@@ -400,7 +521,7 @@ const HostHardeningPage: React.FC = () => {
         setServerFilePolicy(p);
       })
       .catch((err: Error) => {
-        if (!cancelled) fireToast(`加载主机防护策略失败：${err.message}`, 'warning');
+        if (!cancelled) fireToast(t(`${h}.toast.loadFilePolicyFailed`, { msg: err.message }), 'warning');
       });
     return () => {
       cancelled = true;
@@ -508,15 +629,15 @@ const HostHardeningPage: React.FC = () => {
     if (!fileDraft) return;
     setSavingFile(true);
     const isMasterFlip = fileDraft['switch-on'] !== serverFilePolicy?.['switch-on'];
-    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    fireToast(isMasterFlip ? t(`${h}.toast.applying`) : t(`${h}.common.saving`), 'info');
     try {
       const res = await putFilePolicy(fileDraft);
       setServerFilePolicy(fileDraft);
       setFileDraft(null);
       if (res.warning) fireToast(res.warning, 'warning');
-      else fireToast('主机防护已保存', 'success');
+      else fireToast(t(`${h}.toast.filePolicySaved`), 'success');
     } catch (err) {
-      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+      fireToast(t(`${h}.toast.saveFailed`, { msg: (err as Error).message }), 'warning');
     } finally {
       setSavingFile(false);
     }
@@ -529,6 +650,123 @@ const HostHardeningPage: React.FC = () => {
   const effectiveInvasion: InvasionPolicy = invasionDraft ?? serverInvasion ?? DEFAULT_INVASION_POLICY;
   const [invasionSub, setInvasionSub] = useState<InvasionSubTab>('rules');
   const [invasionLogs, setInvasionLogs] = useState<LogEntry[]>([]);
+  const [invasionExpanded, setInvasionExpanded] = useState<Set<string>>(new Set());
+  const toggleInvasionExpand = (key: string): void => {
+    setInvasionExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // === 合规检测 state（接 ksec-bridge baseline 路由）===
+  const [baselineStatus, setBaselineStatus] = useState<BaselineUiStatus>('home');
+  const [baselineCats, setBaselineCats] = useState<BaselineCategory[]>([]);
+  const [baselineReport, setBaselineReport] = useState<BaselineReport | null>(null);
+  const [baselineScannedIds, setBaselineScannedIds] = useState<Set<string>>(new Set());
+  /** home 状态下勾选的大类（type 名集合）。其他状态下无意义。 */
+  const [baselineChecked, setBaselineChecked] = useState<Set<string>>(new Set());
+  const [baselineExpanded, setBaselineExpanded] = useState<Set<string>>(new Set());
+  const toggleBaselineExpand = (catType: string): void => {
+    setBaselineExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(catType)) next.delete(catType);
+      else next.add(catType);
+      return next;
+    });
+  };
+  const toggleBaselineChecked = (catType: string): void => {
+    setBaselineChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(catType)) next.delete(catType);
+      else next.add(catType);
+      return next;
+    });
+  };
+
+  /** 初次加载策略 + 状态。Tab 切到 baseline 时也再拉一次，保持新鲜。
+   *  bridge 已按 `/opt/KSec/compliance/template/basic` 过滤好 29 条，前端零硬编码。 */
+  const refreshBaseline = async (): Promise<void> => {
+    try {
+      const [cats, st] = await Promise.all([getBaselinePolicy(), getBaselineStatus()]);
+      setBaselineCats(cats);
+      // 首次默认勾全部大类（KSecGUI 行为）
+      setBaselineChecked((prev) => (prev.size === 0 ? new Set(cats.map((c) => c.type)) : prev));
+      setBaselineStatus(st.status);
+      setBaselineReport(st.report ?? null);
+      setBaselineScannedIds(new Set(st.scannedItemIds ?? []));
+    } catch (err) {
+      fireToast(t(`${h}.toast.loadBaselinePolicyFailed`, { msg: (err as Error).message }), 'warning');
+    }
+  };
+
+  useEffect(() => {
+    void refreshBaseline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (mainTab === 'baseline') void refreshBaseline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
+
+  /** 当前各 detail 的 id → BaselineDetail 索引（O(1) lookup） */
+  const baselineDetailMap = new Map(
+    (baselineReport?.details ?? []).map((d) => [d.id, d]),
+  );
+
+  // ====== 合规检测动作 ======
+  const runBaselineScan = async (): Promise<void> => {
+    const ids: string[] = [];
+    for (const c of baselineCats) {
+      if (!baselineChecked.has(c.type)) continue;
+      for (const it of c.items) ids.push(it.id);
+    }
+    if (ids.length === 0) {
+      fireToast(t(`${h}.toast.selectOneCategory`), 'warning');
+      return;
+    }
+    setBaselineStatus('scanning');
+    try {
+      await scanBaseline(ids);
+      await refreshBaseline();
+      fireToast(t(`${h}.toast.baselineScanComplete`), 'success');
+    } catch (err) {
+      fireToast(t(`${h}.toast.baselineScanFailed`, { msg: (err as Error).message }), 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineRepair = async (): Promise<void> => {
+    setBaselineStatus('repairing');
+    try {
+      await repairBaseline();
+      await refreshBaseline();
+      fireToast(t(`${h}.toast.repairComplete`), 'success');
+    } catch (err) {
+      fireToast(t(`${h}.toast.repairFailed`, { msg: (err as Error).message }), 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineRollback = async (): Promise<void> => {
+    setBaselineStatus('roolbacking');
+    try {
+      await rollbackBaseline();
+      await refreshBaseline();
+      fireToast(t(`${h}.toast.rollbackSuccess`), 'success');
+    } catch (err) {
+      fireToast(t(`${h}.toast.rollbackFailed`, { msg: (err as Error).message }), 'warning');
+      await refreshBaseline();
+    }
+  };
+  const runBaselineReset = async (): Promise<void> => {
+    try {
+      await resetBaseline();
+      await refreshBaseline();
+    } catch (err) {
+      fireToast(t(`${h}.toast.resetFailed`, { msg: (err as Error).message }), 'warning');
+    }
+  };
 
   // === 入侵检测：load + SSE + setters + save ===
   useEffect(() => {
@@ -538,7 +776,7 @@ const HostHardeningPage: React.FC = () => {
         if (!cancelled) setServerInvasion(p);
       })
       .catch((err: Error) => {
-        if (!cancelled) fireToast(`加载入侵检测策略失败：${err.message}`, 'warning');
+        if (!cancelled) fireToast(t(`${h}.toast.loadInvasionPolicyFailed`, { msg: err.message }), 'warning');
       });
     return () => {
       cancelled = true;
@@ -572,28 +810,130 @@ const HostHardeningPage: React.FC = () => {
     setInvasionDraft({ ...effectiveInvasion, ...next });
   };
   const invasionMaster = effectiveInvasion['switch-on'];
-  const wlProg = effectiveInvasion.programWhitelist;
-  const invasionRulesRO = effectiveInvasion.rules;
+  const wlProg = effectiveInvasion.whitelistProgram;
+  const wlFile = effectiveInvasion.whitelistFile;
+  const wlIP = effectiveInvasion.whitelistIP;
+  const enabledRuleNames = new Set(effectiveInvasion.enabledRuleNames);
+  const invasionRules = INVASION_RULES_META; // 17 条展示元数据
+  const enabledRulesCount = invasionRules.filter((r) => enabledRuleNames.has(r.ruleName)).length;
+
   const setInvasionMaster = (v: boolean): void => invasionPatch({ 'switch-on': v });
-  const setWlProg = (next: string[]): void => invasionPatch({ programWhitelist: next });
+  const toggleInvasionRule = (ruleName: string, on: boolean): void => {
+    const next = on
+      ? [...effectiveInvasion.enabledRuleNames, ruleName]
+      : effectiveInvasion.enabledRuleNames.filter((n) => n !== ruleName);
+    invasionPatch({ enabledRuleNames: Array.from(new Set(next)) });
+  };
+  const setWlProg = (next: string[]): void => invasionPatch({ whitelistProgram: next });
+  const setWlFile = (next: string[]): void => invasionPatch({ whitelistFile: next });
+  const setWlIP = (next: string[]): void => invasionPatch({ whitelistIP: next });
+
+  /**
+   * 构造完整 Falco YAML body —— ids-template.yaml 是 KSec 工作版镜像：
+   *
+   *   [3 个用户 whitelist 块]
+   *   + INVASION_PRISTINE_BODY 中所有非 rule 块（macro / 其他 list，原样保留）
+   *   + INVASION_PRISTINE_BODY 中按 enabledRuleNames 过滤后的 rule 块（原样保留）
+   *
+   * ids-template.yaml 已经是经 KSec 开发员验证、Falco 能正常 load 的版本——
+   * container.* 字段早已从模板里删干净，前端不再做任何字段净化。
+   */
+  const buildInvasionYmlBody = (pol: InvasionPolicy): unknown[] => {
+    const whitelistBlocks = [
+      { list: 'whitelist_program_path', items: pol.whitelistProgram },
+      { list: 'whitelist_file_path', items: pol.whitelistFile },
+      { list: 'whitelist_ip_address', items: pol.whitelistIP },
+    ];
+    const enabled = new Set(pol.enabledRuleNames);
+    const rest = INVASION_PRISTINE_BODY.filter((b) => {
+      if (b && typeof b === 'object' && 'rule' in b && typeof (b as { rule: unknown }).rule === 'string') {
+        return enabled.has((b as { rule: string }).rule);
+      }
+      return true; // macro / 其他 list 一律保留（出厂顺序）
+    });
+    return [...whitelistBlocks, ...rest];
+  };
 
   const saveInvasionPolicy = async (): Promise<void> => {
     if (!invasionDraft) return;
     setSavingInvasion(true);
     const isMasterFlip = invasionDraft['switch-on'] !== serverInvasion?.['switch-on'];
-    fireToast(isMasterFlip ? '正在应用… 涉及 KSec daemon 重启，约 3-5 秒' : '保存中…', 'info');
+    fireToast(isMasterFlip ? t(`${h}.toast.applying`) : t(`${h}.common.saving`), 'info');
     try {
-      const res = await putInvasionPolicy(invasionDraft);
+      const ymlBody = buildInvasionYmlBody(invasionDraft);
+      const res = await putInvasionPolicy({ 'switch-on': invasionDraft['switch-on'], ymlBody });
       setServerInvasion(invasionDraft);
       setInvasionDraft(null);
       if (res.warning) fireToast(res.warning, 'warning');
-      else fireToast('入侵检测已保存', 'success');
+      else fireToast(t(`${h}.toast.invasionPolicySaved`), 'success');
     } catch (err) {
-      fireToast(`保存失败：${(err as Error).message}`, 'warning');
+      fireToast(t(`${h}.toast.saveFailed`, { msg: (err as Error).message }), 'warning');
     } finally {
       setSavingInvasion(false);
     }
   };
+
+  // === Hero stat cards 派生 ===
+  const last24h = (logs: LogEntry[]): LogEntry[] => {
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    return logs.filter((l) => {
+      if (!l.time) return true;
+      const parsed = Date.parse(l.time);
+      return Number.isNaN(parsed) ? true : parsed >= cutoff;
+    });
+  };
+
+  const fileLogs24 = last24h(fileLogs);
+  // KSec fileprotect.getActionForLog: kill → 进程拦截; 其他都算文件拦截
+  const fileKill = fileLogs24.filter((l) => l.operation === 'kill').length;
+  const fileFile = fileLogs24.length - fileKill;
+
+  const ransomLogs24 = last24h(liveLogs);
+  const ransomKill = ransomLogs24.filter((l) => (l.action ?? '').toUpperCase() === 'KILL').length;
+  const ransomBlock = ransomLogs24.length - ransomKill;
+
+  const invasionLogs24 = last24h(invasionLogs);
+  // 用 ruleName → type 映射对入侵告警归类（INVASION_TEMPLATE.rules 已含 type）
+  const ruleNameToType = new Map(invasionRules.map((r) => [r.ruleName, r.type]));
+  const invasionByType = new Map<string, number>();
+  for (const log of invasionLogs24) {
+    if (typeof log.rule === 'string') {
+      const t2 = ruleNameToType.get(log.rule) ?? 'Other';
+      invasionByType.set(t2, (invasionByType.get(t2) ?? 0) + 1);
+    }
+  }
+  const invasionTopTypes = [...invasionByType.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([t, n]) => `${t} ${n}`)
+    .join(' · ');
+
+  // 第 1 张卡：加固代理 (bridge) 状态
+  const agentStatusView = ((): { value: string; tone: 'green' | 'orange' | 'red'; sub: string } => {
+    if (agentStatusErr) {
+      return { value: t(`${h}.agent.offline`), tone: 'red', sub: t(`${h}.agent.bridgeUnreachable`, { msg: agentStatusErr.slice(0, 28) }) };
+    }
+    if (!agentStatus) {
+      return { value: t(`${h}.agent.loading`), tone: 'orange', sub: t(`${h}.agent.loadingSub`) };
+    }
+    if (agentStatus.ready) {
+      return {
+        value: t(`${h}.agent.ready`),
+        tone: 'green',
+        sub: agentStatus.ksecDaemonRunning ? t(`${h}.agent.readyDaemon`) : t(`${h}.agent.readyBridge`),
+      };
+    }
+    const issues: string[] = [];
+    if (!agentStatus.ksecDaemonRunning) issues.push(t(`${h}.agent.ksecNotRunning`));
+    if (!agentStatus.ksecBinOK) issues.push(t(`${h}.agent.ksecBinMissing`));
+    if (!agentStatus.policyDirOK) issues.push(t(`${h}.agent.policyDirError`));
+    if (!agentStatus.logDirOK) issues.push(t(`${h}.agent.logDirError`));
+    return {
+      value: t(`${h}.agent.notReady`),
+      tone: 'orange',
+      sub: issues.length > 0 ? issues.join(' · ') : t(`${h}.agent.partialNotReady`),
+    };
+  })();
 
   // Modal state
   type ModalState =
@@ -609,42 +949,48 @@ const HostHardeningPage: React.FC = () => {
       <SpinnerStyle />
       <div className="secp-scope space-y-6">
         <div className="crumb">
-          <Link to="/admin/secplane">安全防护</Link>
+          <Link to="/admin/secplane">{t(`${h}.breadcrumb.secplane`)}</Link>
           <span>/</span>
-          <Link to="/admin/secplane/cat-isolate">环境隔离与安全增强</Link>
+          <Link to="/admin/secplane/cat-isolate">{t(`${h}.breadcrumb.isolate`)}</Link>
           <span>/</span>
-          <span className="crumb-current">宿主加固</span>
+          <span className="crumb-current">{t(`${h}.breadcrumb.current`)}</span>
         </div>
 
         {/* Hero */}
         <div className="panel">
           <div className="flex items-start justify-between gap-6 mb-5">
             <div className="hero-block flex-1">
-              <div className="h-eyebrow">主机层加固 · 运行时异常行为检测</div>
-              <h2 className="h-title">宿主加固中心</h2>
-              <p className="h-subtitle">3 个运行时安全模块（主机防护 / 勒索防护 / 入侵检测）— 守护 ClawManager 所在宿主机安全。</p>
+              <div className="h-eyebrow">{t(`${h}.hero.eyebrow`)}</div>
+              <h2 className="h-title">{t(`${h}.hero.title`)}</h2>
+              <p className="h-subtitle">{t(`${h}.hero.subtitle`)}</p>
             </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div className="stat-card">
-              <div className="stat-card-label">加固代理状态</div>
-              <div className="stat-card-value tone-green">就绪</div>
-              <div className="stat-card-sub muted-strong">连接正常 · 策略已下发</div>
+              <div className="stat-card-label">{t(`${h}.stats.agentStatus`)}</div>
+              <div className={`stat-card-value tone-${agentStatusView.tone}`}>{agentStatusView.value}</div>
+              <div className="stat-card-sub muted-strong">{agentStatusView.sub}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 主机防护告警</div>
-              <div className="stat-card-value tone-red">5</div>
-              <div className="stat-card-sub muted-strong">文件拦截 4 · 进程拦截 1</div>
+              <div className="stat-card-label">{t(`${h}.stats.fileAlerts`)}</div>
+              <div className={`stat-card-value tone-${fileLogs24.length > 0 ? 'red' : 'green'}`}>{fileLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {fileLogs24.length === 0 ? t(`${h}.stats.noFileLogs`) : t(`${h}.stats.fileIntercept`, { file: fileFile, proc: fileKill })}
+              </div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 勒索防护告警</div>
-              <div className="stat-card-value tone-red">3</div>
-              <div className="stat-card-sub muted-strong">诱饵触发 + 终止进程</div>
+              <div className="stat-card-label">{t(`${h}.stats.ransomAlerts`)}</div>
+              <div className={`stat-card-value tone-${ransomLogs24.length > 0 ? 'red' : 'green'}`}>{ransomLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {ransomLogs24.length === 0 ? t(`${h}.stats.noRansomLogs`) : t(`${h}.stats.ransomIntercept`, { block: ransomBlock, kill: ransomKill })}
+              </div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">24h 入侵检测告警</div>
-              <div className="stat-card-value tone-red">3</div>
-              <div className="stat-card-sub muted-strong">本地提权 2 · 反弹shell 1</div>
+              <div className="stat-card-label">{t(`${h}.stats.invasionAlerts`)}</div>
+              <div className={`stat-card-value tone-${invasionLogs24.length > 0 ? 'red' : 'green'}`}>{invasionLogs24.length}</div>
+              <div className="stat-card-sub muted-strong">
+                {invasionLogs24.length === 0 ? t(`${h}.stats.noInvasionLogs`) : (invasionTopTypes || t(`${h}.stats.invasionTotal`, { count: invasionLogs24.length }))}
+              </div>
             </div>
           </div>
         </div>
@@ -652,9 +998,10 @@ const HostHardeningPage: React.FC = () => {
         {/* Tabs */}
         <div className="panel" style={{ paddingBottom: 0 }}>
           <div className="tabs">
-            <button className={`tab${mainTab === 'file' ? ' tab-active' : ''}`} onClick={() => setMainTab('file')}>主机防护</button>
-            <button className={`tab${mainTab === 'ransome' ? ' tab-active' : ''}`} onClick={() => setMainTab('ransome')}>勒索防护</button>
-            <button className={`tab${mainTab === 'invasion' ? ' tab-active' : ''}`} onClick={() => setMainTab('invasion')}>入侵检测</button>
+            <button className={`tab${mainTab === 'file' ? ' tab-active' : ''}`} onClick={() => setMainTab('file')}>{t(`${h}.tabs.file`)}</button>
+            <button className={`tab${mainTab === 'ransome' ? ' tab-active' : ''}`} onClick={() => setMainTab('ransome')}>{t(`${h}.tabs.ransom`)}</button>
+            <button className={`tab${mainTab === 'invasion' ? ' tab-active' : ''}`} onClick={() => setMainTab('invasion')}>{t(`${h}.tabs.invasion`)}</button>
+            <button className={`tab${mainTab === 'baseline' ? ' tab-active' : ''}`} onClick={() => setMainTab('baseline')}>{t(`${h}.tabs.baseline`)}</button>
           </div>
         </div>
 
@@ -663,11 +1010,11 @@ const HostHardeningPage: React.FC = () => {
           <div className="panel">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="eyebrow">主机防护 · 文件 + 进程 双轨</div>
-                <h3 className="section-title-lg mt-1">关键文件与进程防护</h3>
+                <div className="eyebrow">{t(`${h}.file.eyebrow`)}</div>
+                <h3 className="section-title-lg mt-1">{t(`${h}.file.title`)}</h3>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs muted-strong">总开关</span>
+                <span className="text-xs muted-strong">{t(`${h}.common.masterSwitch`)}</span>
                 <Toggle on={fileMaster} onChange={(v) => { setFileMaster(v); }} />
                 <button
                   className="btn-primary btn-sm"
@@ -676,12 +1023,12 @@ const HostHardeningPage: React.FC = () => {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   {savingFile && <Spinner />}
-                  {savingFile ? '保存中…' : '保存并应用'}
+                  {savingFile ? t(`${h}.common.saving`) : t(`${h}.common.saveApply`)}
                 </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
-              保护系统关键文件、进程，防止被篡改和删除。支持文件级权限控制（读/写/执行/删除）+ 进程白名单/黑名单双重控制。
+              {t(`${h}.file.desc`)}
             </div>
 
             {/* 防御模式 */}
@@ -697,21 +1044,21 @@ const HostHardeningPage: React.FC = () => {
                 marginBottom: 18,
               }}
             >
-              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>防御模式 ⓘ</span>
-              <RadioBtn selected={defenseMode === 'block'} onClick={() => setDefenseMode('block')} label="拦截模式 · 命中即阻断" />
-              <RadioBtn selected={defenseMode === 'monitor'} onClick={() => setDefenseMode('monitor')} label="监控模式 · 仅告警不阻断" />
+              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>{t(`${h}.file.defenseMode`)}</span>
+              <RadioBtn selected={defenseMode === 'block'} onClick={() => setDefenseMode('block')} label={t(`${h}.file.blockMode`)} />
+              <RadioBtn selected={defenseMode === 'monitor'} onClick={() => setDefenseMode('monitor')} label={t(`${h}.file.monitorMode`)} />
             </div>
 
             {/* Sub-tabs */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${fileSub === 'builtin' ? ' tab-active' : ''}`} onClick={() => setFileSub('builtin')}>
-                内置规则 {builtinEnabledPaths.size}/{builtinTemplate.length}
+                {t(`${h}.file.builtinRules`)} {builtinEnabledPaths.size}/{builtinTemplate.length}
               </button>
               <button className={`tab${fileSub === 'fileprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('fileprot')}>
-                文件防护 ({customFileRules.length})
+                {t(`${h}.file.fileProtect`)} ({customFileRules.length})
               </button>
               <button className={`tab${fileSub === 'procprot' ? ' tab-active' : ''}`} onClick={() => setFileSub('procprot')}>
-                进程防护 {procRules.filter((p) => p.type === '进程保护').length} | {procRules.filter((p) => p.type === '进程黑名单').length}
+                {t(`${h}.file.processProtect`)} {procRules.filter((p) => p.type === '进程保护').length} | {procRules.filter((p) => p.type === '进程黑名单').length}
               </button>
             </div>
 
@@ -719,11 +1066,10 @@ const HostHardeningPage: React.FC = () => {
               <>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs muted">
-                    共 {builtinTemplate.length} 条出厂内置防护规则。可逐条启停——
-                    关闭的规则不会写入 ac.yaml，KSec 也不会下发。
+                    {t(`${h}.file.builtinDesc`, { count: builtinTemplate.length })}
                   </span>
                   <label className="flex items-center gap-2 text-xs muted-strong cursor-pointer">
-                    <span>预定义规则总开关</span>
+                    <span>{t(`${h}.file.preFileMaster`)}</span>
                     <Toggle
                       on={effectiveFilePolicy.preFileList['switch-on']}
                       onChange={togglePreFileMaster}
@@ -734,10 +1080,10 @@ const HostHardeningPage: React.FC = () => {
                   <table className="tbl" style={{ margin: 0 }}>
                     <thead style={{ position: 'sticky', top: 0, background: '#fdfaf7', zIndex: 1 }}>
                       <tr>
-                        <th>保护对象</th>
-                        <th>说明</th>
-                        <th style={{ width: 90 }}>权限</th>
-                        <th style={{ width: 90 }}>状态</th>
+                        <th>{t(`${h}.file.colObject`)}</th>
+                        <th>{t(`${h}.file.colDesc`)}</th>
+                        <th style={{ width: 90 }}>{t(`${h}.file.colPermission`)}</th>
+                        <th style={{ width: 90 }}>{t(`${h}.file.colStatus`)}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -745,7 +1091,7 @@ const HostHardeningPage: React.FC = () => {
                         <tr key={rule.path}>
                           <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
                           <td><span className="text-xs muted">{rule.desc ?? '-'}</span></td>
-                          <td><span className="badge badge-slate text-[10px]">{modeToChinese(rule.mode)}</span></td>
+                          <td><span className="badge badge-slate text-[10px]">{modeI18n(rule.mode, t)}</span></td>
                           <td>
                             <Toggle
                               on={builtinEnabledPaths.has(rule.path)}
@@ -763,7 +1109,7 @@ const HostHardeningPage: React.FC = () => {
             {fileSub === 'fileprot' && (
               <>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs muted">最多支持 20 条文件防护规则。每条可独立配置 读 / 写 / 执行 / 删除 四种权限。</span>
+                  <span className="text-xs muted">{t(`${h}.file.customDesc`)}</span>
                   <button
                     className="btn-primary btn-sm"
                     disabled={customFileRules.length >= 20}
@@ -773,24 +1119,24 @@ const HostHardeningPage: React.FC = () => {
                         onConfirm: (rule) => {
                           addCustomFileRule(rule);
                           closeModal();
-                          fireToast('已添加文件防护规则', 'success');
+                          fireToast(t(`${h}.file.addedRule`), 'success');
                         },
                       })
                     }
                   >
-                    + 添加
+                    {t(`${h}.common.add`)}
                   </button>
                 </div>
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>保护文件/目录</th>
-                      <th>信任进程</th>
-                      <th style={{ width: 50, textAlign: 'center' }}>读</th>
-                      <th style={{ width: 50, textAlign: 'center' }}>写</th>
-                      <th style={{ width: 50, textAlign: 'center' }}>执行</th>
-                      <th style={{ width: 50, textAlign: 'center' }}>删除</th>
-                      <th style={{ width: 80 }}>操作</th>
+                      <th>{t(`${h}.file.colFileDir`)}</th>
+                      <th>{t(`${h}.file.colTrust`)}</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>{t(`${h}.file.read`)}</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>{t(`${h}.file.write`)}</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>{t(`${h}.file.execute`)}</th>
+                      <th style={{ width: 50, textAlign: 'center' }}>{t(`${h}.file.deleteLabel`)}</th>
+                      <th style={{ width: 80 }}>{t(`${h}.common.operation`)}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -810,10 +1156,10 @@ const HostHardeningPage: React.FC = () => {
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
                               removeCustomFileRule(i);
-                              fireToast('已删除规则', 'success');
+                              fireToast(t(`${h}.file.ruleDeleted`), 'success');
                             }}
                           >
-                            删除
+                            {t(`${h}.common.delete`)}
                           </button>
                         </td>
                       </tr>
@@ -825,9 +1171,9 @@ const HostHardeningPage: React.FC = () => {
 
             {fileSub === 'procprot' && (
               <>
-                <div className="text-xs muted mb-3">最多支持 20 条进程保护规则、20 条进程黑名单规则。</div>
+                <div className="text-xs muted mb-3">{t(`${h}.file.procDesc`)}</div>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="font-semibold text-[#171212] text-sm">进程保护 / 黑名单</span>
+                  <span className="font-semibold text-[#171212] text-sm">{t(`${h}.file.procProtectBlacklist`)}</span>
                   <button
                     className="btn-primary btn-sm"
                     disabled={procRules.length >= 40}
@@ -837,20 +1183,20 @@ const HostHardeningPage: React.FC = () => {
                         onConfirm: (rule) => {
                           addProcRule(rule);
                           closeModal();
-                          fireToast('已添加进程防护规则', 'success');
+                          fireToast(t(`${h}.file.procRuleAdded`), 'success');
                         },
                       })
                     }
                   >
-                    + 添加
+                    {t(`${h}.common.add`)}
                   </button>
                 </div>
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>进程路径</th>
-                      <th style={{ width: 130 }}>规则类型</th>
-                      <th style={{ width: 100 }}>操作</th>
+                      <th>{t(`${h}.file.colProcPath`)}</th>
+                      <th style={{ width: 130 }}>{t(`${h}.file.colRuleType`)}</th>
+                      <th style={{ width: 100 }}>{t(`${h}.common.operation`)}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -859,7 +1205,7 @@ const HostHardeningPage: React.FC = () => {
                         <td><code className="text-sm font-mono text-[#171212]">{rule.path}</code></td>
                         <td>
                           <span className={`badge badge-${rule.type === '进程保护' ? 'red' : 'orange'}`}>
-                            {rule.type}
+                            {rule.type === '进程保护' ? t(`${h}.file.processProtectLabel`) : t(`${h}.file.processBlacklist`)}
                           </span>
                         </td>
                         <td>
@@ -867,10 +1213,10 @@ const HostHardeningPage: React.FC = () => {
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
                               removeProcRule(i);
-                              fireToast('已删除规则', 'success');
+                              fireToast(t(`${h}.file.ruleDeleted`), 'success');
                             }}
                           >
-                            删除
+                            {t(`${h}.common.delete`)}
                           </button>
                         </td>
                       </tr>
@@ -883,23 +1229,23 @@ const HostHardeningPage: React.FC = () => {
             {/* 主机防护日志 */}
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-[#171212] text-sm">主机防护日志</h4>
-                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+                <h4 className="font-semibold text-[#171212] text-sm">{t(`${h}.file.logTitle`)}</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast(t(`${h}.file.logRefreshed`), 'info')}>{t(`${h}.common.refresh`)}</button>
               </div>
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 160 }}>时间</th>
-                    <th style={{ width: 120 }}>进程用户</th>
-                    <th>进程</th>
-                    <th>保护对象</th>
-                    <th style={{ width: 80 }}>动作</th>
-                    <th style={{ width: 100 }}>处理结果</th>
+                    <th style={{ width: 160 }}>{t(`${h}.common.time`)}</th>
+                    <th style={{ width: 120 }}>{t(`${h}.common.processUser`)}</th>
+                    <th>{t(`${h}.common.process`)}</th>
+                    <th>{t(`${h}.file.colProtectedObject`)}</th>
+                    <th style={{ width: 80 }}>{t(`${h}.file.colAction`)}</th>
+                    <th style={{ width: 100 }}>{t(`${h}.file.colResult`)}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {fileLogs.length === 0 && (
-                    <tr><td colSpan={6} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无主机防护日志</td></tr>
+                    <tr><td colSpan={6} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>{t(`${h}.file.noLogs`)}</td></tr>
                   )}
                   {fileLogs.map((row, i) => {
                     const a = (row.action ?? '').toUpperCase();
@@ -910,8 +1256,8 @@ const HostHardeningPage: React.FC = () => {
                         <td><span className="text-xs">{row.user ?? '-'}</span></td>
                         <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
                         <td><code className="text-xs font-mono">{row.path ?? '-'}</code></td>
-                        <td><span className="badge badge-slate text-[10px]">{operationToChinese(row.operation)}</span></td>
-                        <td><span className={`badge badge-${tone}`}>{actionToChinese(row.action)}</span></td>
+                        <td><span className="badge badge-slate text-[10px]">{operationI18n(row.operation, t)}</span></td>
+                        <td><span className={`badge badge-${tone}`}>{actionI18n(row.action, t)}</span></td>
                       </tr>
                     );
                   })}
@@ -926,11 +1272,11 @@ const HostHardeningPage: React.FC = () => {
           <div className="panel">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="eyebrow">勒索病毒防护 · 诱饵文件 + 行为分析</div>
-                <h3 className="section-title-lg mt-1">勒索防护</h3>
+                <div className="eyebrow">{t(`${h}.ransom.eyebrow`)}</div>
+                <h3 className="section-title-lg mt-1">{t(`${h}.ransom.title`)}</h3>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs muted-strong">总开关</span>
+                <span className="text-xs muted-strong">{t(`${h}.common.masterSwitch`)}</span>
                 <Toggle on={ransomMaster} onChange={(v) => { setRansomMaster(v); }} />
                 <button
                   className="btn-primary btn-sm"
@@ -939,12 +1285,12 @@ const HostHardeningPage: React.FC = () => {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   {saving && <Spinner />}
-                  {saving ? '保存中…' : '保存并应用'}
+                  {saving ? t(`${h}.common.saving`) : t(`${h}.common.saveApply`)}
                 </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
-              实时监测潜在的勒索病毒威胁，及时发现和阻止恶意软件的入侵。在系统关键位置投放诱饵文件，结合行为分析识别勒索家族。
+              {t(`${h}.ransom.desc`)}
             </div>
 
             {/* 关键开关 */}
@@ -960,68 +1306,68 @@ const HostHardeningPage: React.FC = () => {
                 marginBottom: 18,
               }}
             >
-              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>终止可疑进程</span>
+              <span className="text-xs muted-strong" style={{ whiteSpace: 'nowrap' }}>{t(`${h}.ransom.killSuspicious`)}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <RadioBtn selected={killProcess === true} onClick={() => setKillProcess(true)} label="是 · 命中后自动 kill" />
-                <RadioBtn selected={killProcess === false} onClick={() => setKillProcess(false)} label="否 · 仅告警，由运维处置" />
+                <RadioBtn selected={killProcess === true} onClick={() => setKillProcess(true)} label={t(`${h}.ransom.killYes`)} />
+                <RadioBtn selected={killProcess === false} onClick={() => setKillProcess(false)} label={t(`${h}.ransom.killNo`)} />
               </div>
-              <span className="text-xs muted ml-auto">⚠ 启用后将自动终止可疑进程，建议确认无误报后再开</span>
+              <span className="text-xs muted ml-auto">{t(`${h}.ransom.killWarning`)}</span>
             </div>
 
             {/* Sub-tabs */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${ransomSub === 'decoy' ? ' tab-active' : ''}`} onClick={() => setRansomSub('decoy')}>
-                自定义诱饵目录 ({baits.length})
+                {t(`${h}.ransom.decoyDir`)} ({baits.length})
               </button>
               <button className={`tab${ransomSub === 'whitelist' ? ' tab-active' : ''}`} onClick={() => setRansomSub('whitelist')}>
-                白名单程序 ({ransomWhite.length})
+                {t(`${h}.ransom.whitelist`)} ({ransomWhite.length})
               </button>
             </div>
 
             {ransomSub === 'decoy' && (
               <>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs muted">默认在系统关键位置投放诱饵文件，并支持增加诱饵目录。最多支持 20 条自定义诱饵目录。</span>
+                  <span className="text-xs muted">{t(`${h}.ransom.decoyDesc`)}</span>
                   <button
                     className="btn-primary btn-sm"
                     onClick={() =>
                       setModal({
                         kind: 'batch-path',
-                        title: '添加自定义诱饵目录',
-                        placeholder: '支持输入单条/多条目录，每行填写一条，最多支持 20 条目录',
+                        title: t(`${h}.ransom.addDecoyTitle`),
+                        placeholder: t(`${h}.ransom.addDecoyPlaceholder`),
                         onConfirm: (lines) => {
                           setBaits([...baits, ...lines].slice(0, 20));
                           closeModal();
-                          fireToast('已添加诱饵目录', 'success');
+                          fireToast(t(`${h}.ransom.decoyAdded`), 'success');
                         },
                       })
                     }
                   >
-                    + 添加
+                    {t(`${h}.common.add`)}
                   </button>
                 </div>
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>诱饵目录</th>
-                      <th style={{ width: 120 }}>投放状态</th>
-                      <th style={{ width: 100 }}>操作</th>
+                      <th>{t(`${h}.ransom.colDecoyDir`)}</th>
+                      <th style={{ width: 120 }}>{t(`${h}.ransom.colDeployStatus`)}</th>
+                      <th style={{ width: 100 }}>{t(`${h}.common.operation`)}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {baits.map((p, i) => (
                       <tr key={i}>
                         <td><code className="text-sm font-mono text-[#171212]">{p}</code></td>
-                        <td><span className="badge badge-green">已投放</span></td>
+                        <td><span className="badge badge-green">{t(`${h}.ransom.deployed`)}</span></td>
                         <td>
                           <button
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
                               setBaits(baits.filter((_, idx) => idx !== i));
-                              fireToast('已删除诱饵目录', 'success');
+                              fireToast(t(`${h}.ransom.decoyDeleted`), 'success');
                             }}
                           >
-                            删除
+                            {t(`${h}.common.delete`)}
                           </button>
                         </td>
                       </tr>
@@ -1034,30 +1380,30 @@ const HostHardeningPage: React.FC = () => {
             {ransomSub === 'whitelist' && (
               <>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs muted">白名单程序在触发诱饵时不会被判定为勒索行为（如备份程序）。最多支持 20 条。</span>
+                  <span className="text-xs muted">{t(`${h}.ransom.whitelistDesc`)}</span>
                   <button
                     className="btn-primary btn-sm"
                     onClick={() =>
                       setModal({
                         kind: 'batch-path',
-                        title: '添加白名单程序路径',
-                        placeholder: '支持输入单条/多条路径，每行填写一条，最多支持 20 条路径',
+                        title: t(`${h}.ransom.addWhitelistTitle`),
+                        placeholder: t(`${h}.ransom.addWhitelistPlaceholder`),
                         onConfirm: (lines) => {
                           setRansomWhite([...ransomWhite, ...lines].slice(0, 20));
                           closeModal();
-                          fireToast('已添加白名单', 'success');
+                          fireToast(t(`${h}.ransom.whitelistAdded`), 'success');
                         },
                       })
                     }
                   >
-                    + 添加
+                    {t(`${h}.common.add`)}
                   </button>
                 </div>
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>程序路径</th>
-                      <th style={{ width: 100 }}>操作</th>
+                      <th>{t(`${h}.ransom.colProgramPath`)}</th>
+                      <th style={{ width: 100 }}>{t(`${h}.common.operation`)}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1069,10 +1415,10 @@ const HostHardeningPage: React.FC = () => {
                             className="text-xs text-[#dc2626] font-semibold hover:underline"
                             onClick={() => {
                               setRansomWhite(ransomWhite.filter((_, idx) => idx !== i));
-                              fireToast('已删除白名单', 'success');
+                              fireToast(t(`${h}.ransom.whitelistDeleted`), 'success');
                             }}
                           >
-                            删除
+                            {t(`${h}.common.delete`)}
                           </button>
                         </td>
                       </tr>
@@ -1085,33 +1431,33 @@ const HostHardeningPage: React.FC = () => {
             {/* 勒索防护日志 */}
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-[#171212] text-sm">勒索防护日志</h4>
-                <button className="btn-secondary btn-sm" onClick={() => fireToast('已刷新日志', 'info')}>刷新</button>
+                <h4 className="font-semibold text-[#171212] text-sm">{t(`${h}.ransom.logTitle`)}</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast(t(`${h}.file.logRefreshed`), 'info')}>{t(`${h}.common.refresh`)}</button>
               </div>
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 140 }}>时间</th>
-                    <th>进程</th>
-                    <th style={{ width: 120 }}>进程用户</th>
-                    <th style={{ width: 130 }}>终止进程</th>
+                    <th style={{ width: 140 }}>{t(`${h}.common.time`)}</th>
+                    <th>{t(`${h}.common.process`)}</th>
+                    <th style={{ width: 120 }}>{t(`${h}.common.processUser`)}</th>
+                    <th style={{ width: 130 }}>{t(`${h}.ransom.colKillProcess`)}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {liveLogs.length === 0 && (
                     <tr>
                       <td colSpan={4} className="text-center py-6 text-xs muted">
-                        暂无日志
+                        {t(`${h}.ransom.noLogs`)}
                       </td>
                     </tr>
                   )}
                   {liveLogs.map((entry, i) => {
                     // 勒索防护日志的 action 只有 BLOCK / KILL 两种：
-                    //   KILL  → 进程已被终止 → 是 (红)
-                    //   BLOCK → 仅拦截未终止 → 否 (橙)
+                    //   KILL  → 进程已被终止 → 终止 (红)
+                    //   BLOCK → 仅拦截未终止 → 阻断 (橙)
                     const a = (entry.action ?? '').toUpperCase();
                     const killed = a === 'KILL';
-                    const label = a === 'KILL' ? '是' : a === 'BLOCK' ? '否' : (entry.action ?? '-');
+                    const label = a === 'KILL' ? t(`${h}.ransom.terminated`) : a === 'BLOCK' ? t(`${h}.ransom.blocked`) : (entry.action ?? '-');
                     return (
                       <tr key={i}>
                         <td><span className="text-xs muted-strong font-mono">{entry.time ?? '-'}</span></td>
@@ -1132,11 +1478,11 @@ const HostHardeningPage: React.FC = () => {
           <div className="panel">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="eyebrow">入侵检测 · ATT&amp;CK 框架</div>
-                <h3 className="section-title-lg mt-1">主机入侵检测</h3>
+                <div className="eyebrow">{t(`${h}.invasion.eyebrow`)}</div>
+                <h3 className="section-title-lg mt-1">{t(`${h}.invasion.title`)}</h3>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs muted-strong">总开关</span>
+                <span className="text-xs muted-strong">{t(`${h}.common.masterSwitch`)}</span>
                 <Toggle on={invasionMaster} onChange={(v) => { setInvasionMaster(v); }} />
                 <button
                   className="btn-primary btn-sm"
@@ -1145,39 +1491,34 @@ const HostHardeningPage: React.FC = () => {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   {savingInvasion && <Spinner />}
-                  {savingInvasion ? '保存中…' : '保存并应用'}
+                  {savingInvasion ? t(`${h}.common.saving`) : t(`${h}.common.saveApply`)}
                 </button>
               </div>
             </div>
             <div className="text-xs muted mb-4">
-              基于 ATT&amp;CK 框架中的入侵模型，实时监控运行时基础事件并通过入侵引擎判决来识别入侵行为。
-              内置规则由 KSec ids.yaml 提供（只读），用户可维护程序白名单。
+              {t(`${h}.invasion.desc`)}
             </div>
 
-            {/* Sub-tabs（文件白名单 / IP 白名单已下线 — 等 KSec 后续提供字段） */}
+            {/* Sub-tabs — 与 KSecGUI Invasion.vue 对齐 */}
             <div className="flex gap-2 mb-4">
               <button className={`tab${invasionSub === 'rules' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('rules')}>
-                检测规则 ({invasionRulesRO.length})
+                {t(`${h}.invasion.rules`)} {enabledRulesCount}/{invasionRules.length}
               </button>
               <button className={`tab${invasionSub === 'wl-prog' ? ' tab-active' : ''}`} onClick={() => setInvasionSub('wl-prog')}>
-                程序白名单 ({wlProg.length})
+                {t(`${h}.invasion.whitelistProg`)} ({wlProg.length})
               </button>
+              {/* 白名单文件 / 白名单IP 暂时下线（路由 + 保存逻辑保留，将来恢复只需删本注释） */}
             </div>
 
             {invasionSub === 'rules' && (
               <>
                 <div className="text-xs muted mb-3">
-                  共 {invasionRulesRO.length} 项检测规则（来自 ids.yaml）。这部分由 KSec 引擎维护，UI 只读展示，无法在前端启停单条规则。
+                  {t(`${h}.invasion.rulesDesc`, { count: invasionRules.length })}
                 </div>
                 <div className="space-y-2" style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 6 }}>
-                  {invasionRulesRO.length === 0 && (
-                    <div className="text-xs muted" style={{ textAlign: 'center', padding: 24 }}>
-                      KSec 未返回检测规则——确认 ids.yaml 已加载或总开关已开
-                    </div>
-                  )}
-                  {invasionRulesRO.map((r, i) => (
+                  {invasionRules.map((r) => (
                     <div
-                      key={i}
+                      key={r.ruleName}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -1189,10 +1530,16 @@ const HostHardeningPage: React.FC = () => {
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="text-sm font-semibold text-[#171212]">{r.name}</div>
-                        {r.desc && <div className="text-xs muted mt-0.5">{r.desc}</div>}
+                        <div className="flex items-center gap-2">
+                          <span className="badge badge-slate text-[10px]">{r.type}</span>
+                          <span className="text-sm font-semibold text-[#171212]">{r.name}</span>
+                        </div>
+                        <div className="text-xs muted mt-1">{r.desc}</div>
                       </div>
-                      <span className="badge badge-slate text-[10px]">只读</span>
+                      <Toggle
+                        on={enabledRuleNames.has(r.ruleName)}
+                        onChange={(v) => { toggleInvasionRule(r.ruleName, v); }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1201,65 +1548,396 @@ const HostHardeningPage: React.FC = () => {
 
             {invasionSub === 'wl-prog' && (
               <WhitelistTable
-                desc="白名单程序在触发规则时不会被判定为入侵行为（持久化到 ids.yaml 的 whitelist_program_path）。"
+                desc={t(`${h}.invasion.wlProgDesc`)}
                 items={wlProg.map((v) => ({ value: v, desc: '' }))}
                 onAdd={() =>
                   setModal({
                     kind: 'batch-path',
-                    title: '添加白名单程序',
-                    placeholder: '支持输入单条/多条程序路径，每行填写一条，最多支持 200 条',
+                    title: t(`${h}.invasion.addWlProgTitle`),
+                    placeholder: t(`${h}.invasion.addWlProgPlaceholder`),
                     onConfirm: (lines) => {
-                      setWlProg([...wlProg, ...lines].slice(0, 200));
+                      const { ok, bad } = validateInvasionEntries(lines, 'path');
+                      if (bad.length > 0) {
+                        fireToast(t(`${h}.invasion.formatErrorIgnored`, { items: bad.slice(0, 3).join('、') + (bad.length > 3 ? '…' : '') }), 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlProg, ok, 20);
+                      if (next.dropped > 0) fireToast(t(`${h}.invasion.exceedLimit`, { count: next.dropped }), 'warning');
+                      setWlProg(next.merged);
                       closeModal();
-                      fireToast('已添加白名单程序', 'success');
+                      fireToast(t(`${h}.invasion.wlProgAdded`), 'success');
                     },
                   })
                 }
                 onDelete={(i) => {
                   setWlProg(wlProg.filter((_, idx) => idx !== i));
-                  fireToast('已删除', 'success');
+                  fireToast(t(`${h}.invasion.deleted`), 'success');
                 }}
-                col1="程序路径"
+                col1={t(`${h}.invasion.colProgramPath`)}
               />
             )}
 
-            {/* 入侵检测日志 — SSE 实时推流，源 = /opt/KSec/log/idsres.log */}
+            {invasionSub === 'wl-file' && (
+              <WhitelistTable
+                desc="白名单文件操作不会触发入侵告警，最多 20 条。"
+                items={wlFile.map((v) => ({ value: v, desc: '' }))}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单文件',
+                    placeholder: '支持输入单条/多条文件路径，每行填写一条，最多支持 20 条',
+                    onConfirm: (lines) => {
+                      const { ok, bad } = validateInvasionEntries(lines, 'path');
+                      if (bad.length > 0) {
+                        fireToast(`格式错误已忽略：${bad.slice(0, 3).join('、')}${bad.length > 3 ? '…' : ''}`, 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlFile, ok, 20);
+                      if (next.dropped > 0) fireToast(`超过 20 条上限，丢弃 ${next.dropped} 条`, 'warning');
+                      setWlFile(next.merged);
+                      closeModal();
+                      fireToast('已添加白名单文件', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlFile(wlFile.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="文件路径"
+              />
+            )}
+
+            {invasionSub === 'wl-ip' && (
+              <WhitelistTable
+                desc="来自白名单 IP 的访问不会被判定为入侵，最多 20 条。Falco 仅支持单 IPv4 字面量，不支持 CIDR。"
+                items={wlIP.map((v) => ({ value: v, desc: '' }))}
+                onAdd={() =>
+                  setModal({
+                    kind: 'batch-path',
+                    title: '添加白名单 IP',
+                    placeholder: '每行一条 IPv4 字面量（如 10.0.0.5），最多 20 条；不支持 CIDR',
+                    onConfirm: (lines) => {
+                      const { ok, bad } = validateInvasionEntries(lines, 'ip');
+                      if (bad.length > 0) {
+                        fireToast(`非法 IP 已忽略：${bad.slice(0, 3).join('、')}${bad.length > 3 ? '…' : ''}（仅接受单 IPv4，不支持 CIDR）`, 'warning');
+                      }
+                      if (ok.length === 0) { closeModal(); return; }
+                      const next = mergeUnique(wlIP, ok, 20);
+                      if (next.dropped > 0) fireToast(`超过 20 条上限，丢弃 ${next.dropped} 条`, 'warning');
+                      setWlIP(next.merged);
+                      closeModal();
+                      fireToast('已添加白名单 IP', 'success');
+                    },
+                  })
+                }
+                onDelete={(i) => {
+                  setWlIP(wlIP.filter((_, idx) => idx !== i));
+                  fireToast('已删除', 'success');
+                }}
+                col1="IPv4 地址"
+              />
+            )}
+
+            {/* 入侵检测日志 — SSE 实时推流，源 = /opt/KSec/log/intrusion_detection.log
+                展示方式参考 KSecGUI/components/InvasionLog.vue */}
             <div style={{ marginTop: 24 }}>
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-[#171212] text-sm">入侵检测日志</h4>
-                <span className="text-xs muted">实时推流，最近 200 条</span>
+                <h4 className="font-semibold text-[#171212] text-sm">{t(`${h}.invasion.logTitle`)}</h4>
+                <button className="btn-secondary btn-sm" onClick={() => fireToast(t(`${h}.file.logRefreshed`), 'info')}>{t(`${h}.common.refresh`)}</button>
               </div>
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 160 }}>时间</th>
-                    <th style={{ width: 200 }}>规则</th>
-                    <th>进程</th>
-                    <th>详情</th>
+                    <th style={{ width: 160 }}>{t(`${h}.common.time`)}</th>
+                    <th style={{ width: 130 }}>{t(`${h}.invasion.colCategory`)}</th>
+                    <th style={{ width: 200 }}>{t(`${h}.common.process`)}</th>
+                    <th style={{ width: 100 }}>{t(`${h}.common.processUser`)}</th>
+                    <th>{t(`${h}.invasion.colDesc`)}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {invasionLogs.length === 0 && (
-                    <tr><td colSpan={4} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>暂无入侵检测日志</td></tr>
-                  )}
-                  {invasionLogs.map((row, i) => {
-                    const of = row.output_fields ?? {};
-                    const cmdline = typeof of['proc.cmdline'] === 'string' ? (of['proc.cmdline'] as string) : '';
-                    const fdName = typeof of['fd.name'] === 'string' ? (of['fd.name'] as string) : '';
-                    return (
-                      <tr key={i}>
-                        <td><span className="text-xs muted-strong font-mono">{row.time ?? '-'}</span></td>
-                        <td><span className="badge badge-red text-[10px]">{row.rule ?? '-'}</span></td>
-                        <td><code className="text-xs font-mono text-[#171212]">{row.process ?? '-'}</code></td>
-                        <td><span className="text-xs muted">{cmdline || fdName || row.raw.slice(0, 80)}</span></td>
-                      </tr>
-                    );
-                  })}
+                  {(() => {
+                    const rows: InvasionLogRow[] = invasionLogs
+                      .map((entry, idx) => enrichInvasionLog(entry as unknown as { time?: string; rule?: string; output_fields?: Record<string, unknown> }, idx))
+                      .filter((r): r is InvasionLogRow => r !== null);
+                    if (rows.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={5} className="text-xs muted" style={{ textAlign: 'center', padding: 16 }}>
+                            {t(`${h}.invasion.noLogs`)}
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return rows.flatMap((row) => {
+                      const isOpen = invasionExpanded.has(row.key);
+                      return [
+                        <tr key={row.key}>
+                          <td><span className="text-xs muted-strong font-mono">{row.time}</span></td>
+                          <td><span className="badge badge-red text-[10px]">{row.ruleType}</span></td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => toggleInvasionExpand(row.key)}
+                              title={row.source}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 0,
+                                cursor: 'pointer',
+                                color: '#0070e0',
+                                fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace',
+                                fontSize: 12,
+                                maxWidth: 180,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.source}</span>
+                              <span aria-hidden style={{ fontSize: 9 }}>{isOpen ? '▲' : '▼'}</span>
+                            </button>
+                          </td>
+                          <td><span className="text-xs">{row.user}</span></td>
+                          <td><span className="text-xs">{row.desc}</span></td>
+                        </tr>,
+                        isOpen ? (
+                          <tr key={`${row.key}-chain`}>
+                            <td colSpan={5} style={{ background: '#fafafa' }}>
+                              <span className="text-xs muted" title={row.processChain}>{row.processChain}</span>
+                            </td>
+                          </tr>
+                        ) : null,
+                      ];
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
           </div>
         )}
+
+        {/* ===== 合规检测 / CIS 基线（mock 矩阵；待接 KSec baseline 模块）===== */}
+        {mainTab === 'baseline' && (() => {
+          const isInProgress = baselineStatus === 'scanning' || baselineStatus === 'repairing' || baselineStatus === 'roolbacking';
+          const phase: 'scanned' | 'repaired' | 'rollbacked' | null =
+            baselineStatus === 'scanned' ? 'scanned' :
+            baselineStatus === 'repaired' ? 'repaired' :
+            baselineStatus === 'rollbacked' ? 'rollbacked' : null;
+          const ov = baselineReport?.overview ?? {};
+          return (
+            <div className="panel">
+              {/* Hero: 头部状态卡 */}
+              <div
+                className="flex items-start justify-between mb-4"
+                style={{ padding: 16, background: '#fdf6f1', border: '1px solid #eadfd8', borderRadius: 10 }}
+              >
+                <div className="flex-1">
+                  <div className="eyebrow">{t(`${h}.baseline.eyebrow`)}</div>
+                  {baselineStatus === 'home' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">{t(`${h}.baseline.homeTitle`)}</h3>
+                      <div className="text-xs muted mt-1">
+                        {t(`${h}.baseline.homeDesc`)}
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'scanned' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">
+                        {t(`${h}.baseline.scannedTitle`, { count: ov['不通过项'] ?? 0 })}
+                        <span style={{ color: Number(ov['不通过项']) === 0 ? '#00c63c' : '#ff830c', fontWeight: 700, margin: '0 4px' }}>
+                          {ov['不通过项'] ?? 0}
+                        </span>
+                      </h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['检测时间'] && <span className="font-mono muted-strong mr-3">{ov['检测时间']}</span>}
+                        {t(`${h}.baseline.scannedDesc`, { total: ov['总检测项'] ?? 0 })}
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'repaired' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">{t(`${h}.baseline.repairedTitle`)}</h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['修复时间'] && <span className="font-mono muted-strong mr-3">{ov['修复时间']}</span>}
+                        {t(`${h}.baseline.repairedDesc`, { success: ov['成功项'] ?? 0, fail: ov['失败项'] ?? 0 })}
+                      </div>
+                    </>
+                  )}
+                  {baselineStatus === 'rollbacked' && (
+                    <>
+                      <h3 className="section-title-lg mt-1">{t(`${h}.baseline.rollbackedTitle`)}</h3>
+                      <div className="text-xs muted mt-1">
+                        {ov['回滚时间'] && <span className="font-mono muted-strong mr-3">{ov['回滚时间']}</span>}
+                        {t(`${h}.baseline.rollbackedDesc`, { success: ov['成功项'] ?? 0, fail: ov['失败项'] ?? 0 })}
+                      </div>
+                    </>
+                  )}
+                  {isInProgress && (
+                    <>
+                      <h3 className="section-title-lg mt-1 flex items-center gap-2">
+                        <Spinner size={16} />
+                        {baselineStatus === 'scanning' && t(`${h}.baseline.scanning`)}
+                        {baselineStatus === 'repairing' && t(`${h}.baseline.repairing`)}
+                        {baselineStatus === 'roolbacking' && t(`${h}.baseline.rollingBack`)}
+                      </h3>
+                      <div className="text-xs muted mt-1">{t(`${h}.baseline.backendRunning`)}</div>
+                    </>
+                  )}
+                </div>
+                {!isInProgress && (
+                  <div className="flex items-center gap-2">
+                    {baselineStatus === 'home' && (
+                      <button
+                        className="btn-primary btn-sm"
+                        disabled={baselineChecked.size === 0}
+                        onClick={() => void runBaselineScan()}
+                      >{t(`${h}.baseline.scanNow`)}</button>
+                    )}
+                    {baselineStatus === 'scanned' && (
+                      <>
+                        <button className="btn-secondary btn-sm" onClick={() => void runBaselineReset()}>{t(`${h}.baseline.rescan`)}</button>
+                        <button className="btn-primary btn-sm" onClick={() => void runBaselineRepair()}>{t(`${h}.baseline.repairNow`)}</button>
+                      </>
+                    )}
+                    {baselineStatus === 'repaired' && (
+                      <>
+                        <button className="btn-secondary btn-sm" onClick={() => void runBaselineRollback()}>{t(`${h}.baseline.rollback`)}</button>
+                        <button className="btn-primary btn-sm" onClick={() => void runBaselineReset()}>{t(`${h}.baseline.rescan`)}</button>
+                      </>
+                    )}
+                    {baselineStatus === 'rollbacked' && (
+                      <button className="btn-primary btn-sm" onClick={() => void runBaselineReset()}>{t(`${h}.baseline.rescan`)}</button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 5 大类列表 */}
+              {baselineCats.length === 0 && (
+                <div className="text-xs muted text-center" style={{ padding: 32 }}>
+                  {t(`${h}.baseline.noPolicy`)}
+                </div>
+              )}
+              <div className="space-y-3">
+                {baselineCats.map((cat) => {
+                  const catScanned = cat.items.some((it) => baselineScannedIds.has(it.id));
+                  let successNum = 0;
+                  let failNum = 0;
+                  if (phase && catScanned) {
+                    for (const it of cat.items) {
+                      const d = baselineDetailMap.get(it.id);
+                      if (!d) continue;
+                      if (d.result === 'success') successNum++;
+                      else if (d.result === 'fail' || d.result === '不支持') failNum++;
+                    }
+                  }
+                  const isOpen = baselineExpanded.has(cat.type);
+                  return (
+                    <div key={cat.type} style={{ border: '1px solid #eadfd8', borderRadius: 10, background: 'white' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 12,
+                          padding: '12px 16px',
+                        }}
+                      >
+                        {baselineStatus === 'home' && (
+                          <input
+                            type="checkbox"
+                            checked={baselineChecked.has(cat.type)}
+                            onChange={() => toggleBaselineChecked(cat.type)}
+                            style={{ accentColor: '#dc2626' }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="text-sm font-semibold text-[#171212]">{cat.type}</div>
+                          <div className="text-xs muted mt-0.5">{cat.description}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleBaselineExpand(cat.type)}
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            fontSize: 12, color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 6,
+                          }}
+                        >
+                          {baselineStatus === 'home' && <span>{t(`${h}.baseline.items`, { count: cat.items.length })}</span>}
+                          {phase && catScanned && (
+                            <span>
+                              {phase === 'scanned' ? (
+                                <>{t(`${h}.baseline.itemsWithRisk`, { total: cat.items.length, risk: failNum })}</>
+                              ) : (
+                                <>成功 <span style={{ color: '#0070e0', fontWeight: 700 }}>{successNum}</span> 项{failNum > 0 && <>，失败 <span style={{ color: '#ff830c', fontWeight: 700 }}>{failNum}</span> 项</>}</>
+                              )}
+                            </span>
+                          )}
+                          {phase && !catScanned && (
+                            <span>{cat.items.length} 项，<span style={{ color: '#989cb2' }}>{t(`${h}.baseline.notChecked`)}</span></span>
+                          )}
+                          <span aria-hidden style={{ fontSize: 10 }}>{isOpen ? '▲' : '▼'}</span>
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div style={{ borderTop: '1px solid #eadfd8' }}>
+                          <table className="tbl" style={{ margin: 0 }}>
+                            <thead style={{ background: '#fdfaf7' }}>
+                              <tr>
+                                <th>检测项</th>
+                                {!phase && <th style={{ width: 180 }}>基线值</th>}
+                                {phase === 'scanned' && (<><th style={{ width: 150 }}>基线值</th><th style={{ width: 150 }}>实际值</th><th style={{ width: 100 }}>检测结果</th></>)}
+                                {phase === 'repaired' && (<><th style={{ width: 150 }}>修复前</th><th style={{ width: 150 }}>修复后</th><th style={{ width: 100 }}>修复结果</th></>)}
+                                {phase === 'rollbacked' && (<><th style={{ width: 150 }}>回滚前</th><th style={{ width: 150 }}>回滚后</th><th style={{ width: 100 }}>回滚结果</th></>)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cat.items.map((it) => {
+                                const d = phase ? baselineDetailMap.get(it.id) : undefined;
+                                const before = d?.before ?? '-';
+                                const after = d?.after ?? '-';
+                                const result = catScanned ? (d?.result ?? (phase === 'scanned' ? 'security' : 'uncheck')) : 'uncheck';
+                                const label = phase ? baselineResultLabel(result, phase, t) : null;
+                                const valStr = String(it.value === true ? 'true' : it.value);
+                                return (
+                                  <tr key={it.id}>
+                                    <td>
+                                      <div className="text-sm text-[#171212]">{it.name}</div>
+                                      {it.desp && <div className="text-xs muted" style={{ marginTop: 2 }}>{it.desp}</div>}
+                                    </td>
+                                    {!phase && (
+                                      <td>
+                                        <span title={it.remark ?? ''} style={{ borderBottom: it.remark ? '1px dashed #999' : 'none' }}>
+                                          {valStr === '-1' && it.remark ? `${valStr} ⓘ` : valStr}
+                                        </span>
+                                      </td>
+                                    )}
+                                    {phase && (
+                                      <>
+                                        <td><code className="text-xs font-mono">{before === ',' || !before ? '-' : before}</code></td>
+                                        <td><code className="text-xs font-mono">{after === ',' || !after ? '-' : after}</code></td>
+                                        <td><span style={{ color: label?.color }} className="text-xs">{label?.text ?? '-'}</span></td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ===== Modals ===== */}
         {modal?.kind === 'batch-path' && (
