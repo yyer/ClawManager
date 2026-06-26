@@ -55,6 +55,7 @@
 
 Recent highlights from the latest product and documentation updates.
 
+- [2026-06-14] Added Lite / Pro runtime modes and rollout support, so Lite instances can run through shared gateway runtime pools while Pro instances keep dedicated desktop deployments for stronger isolation.
 - [2026-05-18] Added the Team workspace MVP introduction and preview, covering one-click Team creation, OpenClaw member orchestration, Redis Team Bus injection, shared storage, member status, task dispatch, and event/result views.
 - [2026-04-29] Added Hermes runtime integration support, including Webtop-based instance provisioning, Agent Control Plane registration, AI Gateway injection, channel and skill bootstrap, and `.hermes` import/export workflows. See the [Hermes Runtime Guide](./docs/hermes-runtime-agent-development.md).
 - [2026-04-08] Added skill management and skill scanning workflows to the platform, via [Merged PR #52](https://github.com/Yuan-lab-LLM/ClawManager/pull/52).
@@ -124,12 +125,16 @@ Runtime authors can follow the [Hermes Runtime Guide](./docs/hermes-runtime-agen
 
 ## Get Started
 
-ClawManager now has clearer entry points for both full Kubernetes deployments and lightweight cluster setups. If you want to evaluate the product quickly, start with the guide that matches your environment and then follow the first-use walkthrough.
+ClawManager now separates the Kubernetes distribution from the storage profile. Choose `k3s` or `k8s` first, then choose the storage profile that matches the cluster shape:
 
-- Standard Kubernetes deployment: [deployments/k8s/clawmanager.yaml](./deployments/k8s/clawmanager.yaml)
-- K3s or lightweight deployment: [deployments/k3s/clawmanager.yaml](./deployments/k3s/clawmanager.yaml)
+- k3s single-node HostPath: [deployments/k3s/single-node/clawmanager.yaml](./deployments/k3s/single-node/clawmanager.yaml)
+- k3s cluster CSI/RWX example: [deployments/k3s/cluster/clawmanager.yaml](./deployments/k3s/cluster/clawmanager.yaml)
+- Kubernetes single-node HostPath: [deployments/k8s/single-node/clawmanager.yaml](./deployments/k8s/single-node/clawmanager.yaml)
+- Kubernetes cluster CSI/RWX example: [deployments/k8s/cluster/clawmanager.yaml](./deployments/k8s/cluster/clawmanager.yaml)
 - Operations-oriented quick start and first login flow: [User Guide](./docs/use_guide_en.md)
 - Deployment notes and architecture-level context: [Deployment Guide](./docs/deployment.md)
+
+The cluster profile is validated with Longhorn (`longhorn` for RWO data and `longhorn-rwx` for RWX workspaces), but these StorageClass names are examples. You can replace them with any CSI classes that provide the same access modes.
 
 ## Three Control Planes
 
@@ -172,6 +177,18 @@ See the [Resource Management Guide](./docs/resource-management.md) and the [Secu
 ## Product Gallery
 
 The product is designed to feel coherent across administration, workspace access, and AI governance. Instead of treating these as separate tools, ClawManager brings them into one control surface.
+
+### Lite Mode Deployment
+
+Lite mode provisions instances through a shared gateway runtime pool. Each workspace runs as an isolated gateway process inside managed runtime Pods, which keeps startup fast and lowers dedicated CPU, memory, storage, and GPU allocation overhead while preserving workspace access, Share Link / Password access, channel and skill injection, and admin visibility.
+
+![](./docs/main/liteopenclaw.png)
+
+### Pro Mode Deployment
+
+Pro mode provisions a dedicated desktop runtime for each instance, backed by its own Kubernetes Deployment, Service, and PVC. Use it when users need stronger isolation, full desktop resources, runtime events, instance skill management, and the complete desktop management experience.
+
+![](./docs/main/proopenclaw.png)
 
 ### Team Workspace
 

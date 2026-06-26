@@ -14,7 +14,8 @@ export interface Instance {
     | "custom"
     | "webtop"
     | "hermes";
-  runtime_type: "desktop" | "shell";
+  runtime_type: "desktop" | "shell" | "gateway";
+  instance_mode: "lite" | "pro";
   status: "creating" | "running" | "stopped" | "error" | "deleting";
   cpu_cores: number;
   memory_gb: number;
@@ -25,8 +26,13 @@ export interface Instance {
   os_version: string;
   image_registry?: string;
   image_tag?: string;
+  desktop_stream_profile?: DesktopStreamProfile;
   storage_class: string;
   mount_path: string;
+  workspace_path?: string;
+  workspace_usage_bytes?: number;
+  runtime_generation?: number;
+  runtime_error_message?: string;
   pod_name?: string;
   pod_namespace?: string;
   pod_ip?: string;
@@ -38,15 +44,61 @@ export interface Instance {
   stopped_at?: string;
 }
 
+export type V2InstanceType = "openclaw" | "hermes";
+export type InstanceMode = "lite" | "pro";
+export type InstanceAvailability = "available" | "starting" | "unavailable";
+
 export interface InstanceStatus {
   instance_id: number;
   status: string;
+  availability?: InstanceAvailability;
+  agent_type?: V2InstanceType;
+  workspace_usage_bytes?: number;
   pod_name?: string;
   pod_namespace?: string;
   pod_ip?: string;
   pod_status?: string;
   created_at: string;
   started_at?: string;
+}
+
+export interface InstanceExternalAccess {
+  id: number;
+  instance_id: number;
+  enabled: boolean;
+  auth_mode: "share_link" | "password";
+  password_hint?: string;
+  expires_at?: string;
+  created_by?: number;
+  last_used_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ExternalAccessExpirationMode = "preset" | "custom" | "permanent";
+export type ExternalAccessExpirationPreset = "1h" | "24h" | "7d" | "30d";
+
+export interface ExternalAccessRequest {
+  expires_mode?: ExternalAccessExpirationMode;
+  expires_preset?: ExternalAccessExpirationPreset;
+  expires_at?: string;
+}
+
+export interface ExternalAccessStatusResult {
+  external_access?: InstanceExternalAccess | null;
+  share_url?: string;
+  password?: string;
+}
+
+export interface EnableShareLinkResult {
+  access: InstanceExternalAccess;
+  share_url?: string;
+}
+
+export interface PasswordExternalAccessResult {
+  access: InstanceExternalAccess;
+  password: string;
+  share_url?: string;
 }
 
 export interface AgentInfo {
@@ -125,7 +177,10 @@ export interface CreateInstanceRequest {
     | "custom"
     | "webtop"
     | "hermes";
-  runtime_type?: "desktop" | "shell";
+  mode?: InstanceMode;
+  instance_mode?: InstanceMode;
+  runtime_type?: "desktop" | "shell" | "gateway";
+  desktop_stream_profile?: DesktopStreamProfile;
   cpu_cores: number;
   memory_gb: number;
   disk_gb: number;
@@ -144,7 +199,10 @@ export interface CreateInstanceRequest {
 export interface UpdateInstanceRequest {
   name?: string;
   description?: string;
+  desktop_stream_profile?: DesktopStreamProfile;
 }
+
+export type DesktopStreamProfile = "low" | "standard" | "high";
 
 export interface InstanceListResponse {
   instances: Instance[];

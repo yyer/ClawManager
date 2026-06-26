@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,10 +16,12 @@ import (
 	"clawreef/internal/db"
 	"clawreef/internal/handlers"
 	"clawreef/internal/middleware"
+	"clawreef/internal/models"
 	"clawreef/internal/repository"
 	"clawreef/internal/secplane"
 	"clawreef/internal/services"
 	"clawreef/internal/services/k8s"
+	"clawreef/internal/services/leader"
 
 	"github.com/gin-gonic/gin"
 )
@@ -66,9 +70,14 @@ func main() {
 	instanceDesiredStateRepo := repository.NewInstanceDesiredStateRepository(database)
 	instanceCommandRepo := repository.NewInstanceCommandRepository(database)
 	instanceConfigRevisionRepo := repository.NewInstanceConfigRevisionRepository(database)
+	runtimePodRepo := repository.NewRuntimePodRepository(database)
+	bindingRepo := repository.NewInstanceRuntimeBindingRepository(database)
+	rolloutRepo := repository.NewRuntimeRolloutRepository(database)
+	workspaceFileAuditRepo := repository.NewWorkspaceFileAuditRepository(database)
 	teamRepo := repository.NewTeamRepository(database)
 	skillRepo := repository.NewSkillRepository(database)
 	securityScanRepo := repository.NewSecurityScanRepository(database)
+	instanceExternalAccessRepo := repository.NewInstanceExternalAccessRepository(database)
 
 	if repaired, repairErr := services.RepairSeededAdminPassword(userRepo); repairErr != nil {
 		log.Printf("Warning: failed to repair seeded admin password: %v", repairErr)
@@ -99,19 +108,36 @@ func main() {
 	aiObservabilityService := services.NewAIObservabilityService(modelInvocationRepo, auditEventRepo, costRecordRepo, riskHitRepo, chatMessageRepo, llmModelRepo, instanceRepo, userRepo)
 	clusterResourceService := services.NewClusterResourceService(instanceRepo)
 	services.SetRuntimeImageSettingsProvider(systemImageSettingService)
+	services.SetOpenClawTransferRuntimeRepositories(instanceRepo, bindingRepo, runtimePodRepo)
+	runtimeAgentClient := services.NewRuntimeAgentClient(cfg.Runtime.AgentControlToken)
 	instanceService := services.NewInstanceService(
 		instanceRepo,
 		quotaRepo,
 		llmModelRepo,
 		openClawConfigService,
 		services.WithPrivilegedInstancePods(cfg.Kubernetes.Runtime.Pod.Privileged),
+		services.WithV2RuntimeLifecycle(runtimePodRepo, bindingRepo, runtimeAgentClient, cfg.Runtime.WorkspaceRoot),
 	)
 	instanceAgentService := services.NewInstanceAgentService(instanceRepo, instanceAgentRepo, instanceDesiredStateRepo, instanceRuntimeStatusRepo, instanceCommandRepo)
 	instanceRuntimeStatusService := services.NewInstanceRuntimeStatusService(instanceRuntimeStatusRepo, instanceAgentRepo, instanceDesiredStateRepo)
 	instanceCommandService := services.NewInstanceCommandService(instanceCommandRepo, instanceRuntimeStatusRepo, instanceDesiredStateRepo)
 	instanceConfigRevisionService := services.NewInstanceConfigRevisionService(instanceConfigRevisionRepo)
+	var platformRedis services.PlatformRedisClient
+	if redisURL := strings.TrimSpace(cfg.Runtime.RedisURL); redisURL != "" {
+		var redisErr error
+		platformRedis, redisErr = services.NewPlatformRedisClient(redisURL)
+		if redisErr != nil {
+			log.Printf("platform redis disabled: %v", redisErr)
+		}
+	} else {
+		log.Printf("platform redis disabled: redis url is empty")
+	}
+	runtimeEvents := services.NewRuntimeEventService(platformRedis)
+	workspaceFileService := services.NewWorkspaceFileService(workspaceFileAuditRepo)
+	runtimeWorkspaceFileService := services.NewRuntimeWorkspaceFileService(workspaceFileAuditRepo)
 	skillService := services.NewSkillService(skillRepo, instanceRepo, instanceCommandService, objectStorageService, skillScannerClient)
 	securityScanService := services.NewSecurityScanService(securityScanRepo, skillRepo, objectStorageService, skillScannerClient)
+	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
 
 	// Initialize secplane (security protection platform) module. Keeps all of
@@ -121,12 +147,27 @@ func main() {
 	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
 	secplaneModule.StartBackgroundWorkers(context.Background())
 
-	teamService := services.NewTeamService(teamRepo, instanceService, secplaneModule.PolicyService)
+	teamService := services.NewTeamService(
+		teamRepo,
+		instanceService,
+		services.WithTeamRuntimeWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
+		services.WithTeamCollabService(secplaneModule.PolicyService),
+	)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userService, quotaService)
-	instanceHandler := handlers.NewInstanceHandler(instanceService, instanceAgentService, instanceRuntimeStatusService, instanceCommandService, instanceConfigRevisionService, openClawConfigService, skillService)
+	instanceHandler := handlers.NewInstanceHandler(
+		instanceService,
+		instanceAgentService,
+		instanceRuntimeStatusService,
+		instanceCommandService,
+		instanceConfigRevisionService,
+		openClawConfigService,
+		skillService,
+		externalAccessService,
+		services.WithInstanceProxyRuntimeRepositories(instanceRepo, runtimePodRepo, bindingRepo),
+	)
 	systemSettingsHandler := handlers.NewSystemSettingsHandler(systemImageSettingService)
 	llmModelHandler := handlers.NewLLMModelHandler(llmModelService)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGatewayService)
@@ -139,15 +180,112 @@ func main() {
 	securityHandler := handlers.NewSecurityHandler(securityScanService)
 	agentHandler := handlers.NewAgentHandler(instanceAgentService, instanceCommandService, instanceRuntimeStatusService, instanceConfigRevisionService, skillService)
 	teamHandler := handlers.NewTeamHandler(teamService)
+	workspaceFileHandler := handlers.NewWorkspaceFileHandler(instanceService, workspaceFileService, runtimeWorkspaceFileService)
+	runtimeAgentHandler := handlers.NewRuntimeAgentHandler(cfg.Runtime, runtimePodRepo, bindingRepo, runtimeEvents)
 
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
 	wsHandler := handlers.NewWebSocketHandler(wsHub)
+	var runtimeAdminEventBridgeCancel context.CancelFunc
+	if platformRedis != nil {
+		var bridgeCtx context.Context
+		bridgeCtx, runtimeAdminEventBridgeCancel = context.WithCancel(context.Background())
+		services.StartRuntimeAdminEventBridge(bridgeCtx, runtimeEvents, wsHub)
+	}
 
-	// Start sync service to keep instance status in sync with K8s
+	// Control-plane singleton background loops. The HTTP API and the in-pod
+	// nginx desktop data plane run on every replica, but these loops must run
+	// on exactly one replica. With leader election enabled they only run on the
+	// elected leader and migrate on failover; with it disabled (single-replica
+	// deployments) they run directly.
 	syncService := services.NewSyncService(instanceRepo, instanceRuntimeStatusService)
-	syncService.Start()
-	teamService.Start()
+	var runtimeSchedulerCancel context.CancelFunc
+	var runtimeSchedulerMu sync.Mutex
+	var runtimeScheduler *services.RuntimeScheduler
+	if cfg.Runtime.SchedulerEnabled {
+		k8sClient := k8s.GetClient()
+		if k8sClient == nil || k8sClient.Clientset == nil {
+			log.Printf("runtime scheduler disabled: k8s client is unavailable")
+		} else {
+			runtimeLeader := services.NewRuntimeLeaderService(k8sClient.Clientset, cfg.Runtime.Namespace, cfg.Runtime.BackendReplicaID)
+			runtimeDeployments := k8s.NewRuntimeDeploymentService(k8sClient.Clientset)
+			runtimeSchedulerOptions := []services.RuntimeSchedulerOption{
+				services.WithRuntimeSchedulerWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
+				services.WithRuntimeSchedulerNamespace(cfg.Runtime.Namespace),
+				services.WithRuntimeSchedulerGatewayPortRange(cfg.Runtime.GatewayPortStart, cfg.Runtime.GatewayPortEnd),
+				services.WithRuntimeSchedulerHeartbeatTimeout(cfg.Runtime.HeartbeatTimeout),
+				services.WithRuntimeSchedulerMaxGatewaysPerPod(cfg.Runtime.MaxGatewaysPerPod),
+			}
+			if gatewayEnvProvider, ok := instanceService.(interface {
+				BuildGatewayEnv(*models.Instance) (map[string]string, error)
+			}); ok {
+				runtimeSchedulerOptions = append(runtimeSchedulerOptions, services.WithRuntimeSchedulerGatewayEnvBuilder(gatewayEnvProvider.BuildGatewayEnv))
+			}
+			runtimeScheduler = services.NewRuntimeScheduler(
+				instanceRepo,
+				runtimePodRepo,
+				bindingRepo,
+				rolloutRepo,
+				runtimeAgentClient,
+				runtimeEvents,
+				runtimeLeader,
+				runtimeDeployments,
+				cfg.Runtime.SchedulerTick,
+				runtimeSchedulerOptions...,
+			)
+			log.Printf("runtime scheduler initialized")
+		}
+	} else {
+		log.Printf("runtime scheduler disabled by configuration")
+	}
+	runtimePoolHandler := handlers.NewRuntimePoolHandler(runtimePodRepo, bindingRepo, rolloutRepo, runtimeScheduler, runtimeEvents)
+
+	leaderCtx, leaderCancel := context.WithCancel(context.Background())
+	defer leaderCancel()
+
+	startBackground := func(ctx context.Context) {
+		log.Printf("Starting leader-only background loops (identity=%s)", cfg.LeaderElection.Identity)
+		syncService.Start()
+		teamService.StartBackground(ctx)
+		if runtimeScheduler != nil {
+			runtimeSchedulerMu.Lock()
+			if runtimeSchedulerCancel == nil {
+				var schedulerCtx context.Context
+				schedulerCtx, runtimeSchedulerCancel = context.WithCancel(ctx)
+				runtimeScheduler.Start(schedulerCtx)
+				log.Printf("runtime scheduler started")
+			}
+			runtimeSchedulerMu.Unlock()
+		}
+	}
+	stopBackground := func() {
+		log.Printf("Stopping leader-only background loops (identity=%s)", cfg.LeaderElection.Identity)
+		runtimeSchedulerMu.Lock()
+		if runtimeSchedulerCancel != nil {
+			runtimeSchedulerCancel()
+			runtimeSchedulerCancel = nil
+		}
+		runtimeSchedulerMu.Unlock()
+		teamService.StopBackground()
+		syncService.Stop()
+	}
+
+	if cfg.LeaderElection.Enabled && k8s.GetClient() != nil && k8s.GetClient().Clientset != nil {
+		go leader.Run(leaderCtx, k8s.GetClient().Clientset, leader.Config{
+			Namespace:     cfg.LeaderElection.Namespace,
+			LeaseName:     cfg.LeaderElection.LeaseName,
+			Identity:      cfg.LeaderElection.Identity,
+			LeaseDuration: time.Duration(cfg.LeaderElection.LeaseDuration) * time.Second,
+			RenewDeadline: time.Duration(cfg.LeaderElection.RenewDeadline) * time.Second,
+			RetryPeriod:   time.Duration(cfg.LeaderElection.RetryPeriod) * time.Second,
+		}, leader.Callbacks{
+			OnStartedLeading: startBackground,
+			OnStoppedLeading: stopBackground,
+		})
+	} else {
+		log.Println("Leader election disabled or K8s unavailable; running control-plane background loops directly")
+		startBackground(leaderCtx)
+	}
 
 	// Setup router
 	r := gin.Default()
@@ -159,8 +297,20 @@ func main() {
 	r.NoMethod(egressProxyHandler.Handle)
 
 	// Routes
+	r.Any("/s/:code", instanceHandler.OpenShortExternalAccess)
+	r.Any("/s/:code/*path", instanceHandler.OpenShortExternalAccess)
+
 	api := r.Group("/api/v1")
 	{
+		runtimeAgent := api.Group("/runtime-agent")
+		{
+			runtimeAgent.POST("/register", runtimeAgentHandler.Register)
+			runtimeAgent.POST("/heartbeat", runtimeAgentHandler.Heartbeat)
+			runtimeAgent.POST("/metrics/report", runtimeAgentHandler.ReportMetrics)
+			runtimeAgent.POST("/gateways/report", runtimeAgentHandler.ReportGateways)
+			runtimeAgent.POST("/skills/report", runtimeAgentHandler.ReportSkills)
+		}
+
 		// Auth routes
 		auth := api.Group("/auth")
 		{
@@ -221,6 +371,17 @@ func main() {
 			instances.POST("/:id/openclaw/import", instanceHandler.ImportOpenClaw)
 			instances.GET("/:id/hermes/export", instanceHandler.ExportHermes)
 			instances.POST("/:id/hermes/import", instanceHandler.ImportHermes)
+			instances.GET("/:id/external-access", instanceHandler.GetExternalAccess)
+			instances.POST("/:id/external-access/share-link", instanceHandler.EnableShareLink)
+			instances.POST("/:id/external-access/password", instanceHandler.CreateExternalAccessPassword)
+			instances.DELETE("/:id/external-access", instanceHandler.DisableExternalAccess)
+			instances.GET("/:id/workspace/files", workspaceFileHandler.List)
+			instances.GET("/:id/workspace/preview", workspaceFileHandler.Preview)
+			instances.GET("/:id/workspace/download", workspaceFileHandler.Download)
+			instances.POST("/:id/workspace/upload", workspaceFileHandler.Upload)
+			instances.POST("/:id/workspace/folders", workspaceFileHandler.Mkdir)
+			instances.PATCH("/:id/workspace/entries", workspaceFileHandler.Rename)
+			instances.DELETE("/:id/workspace/entries", workspaceFileHandler.Delete)
 			instances.GET("/:id/skills", skillHandler.ListInstanceSkills)
 			instances.POST("/:id/skills", skillHandler.AttachSkillToInstance)
 			instances.DELETE("/:id/skills/:skillId", skillHandler.RemoveSkillFromInstance)
@@ -236,6 +397,17 @@ func main() {
 		adminInstances.Use(middleware.NewAdminAuth(userRepo))
 		{
 			adminInstances.GET("", instanceHandler.ListAllInstances)
+		}
+
+		adminRuntime := api.Group("/admin")
+		adminRuntime.Use(middleware.Auth())
+		adminRuntime.Use(middleware.SetUserInfo(userRepo))
+		adminRuntime.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminRuntime.GET("/runtime-pods", runtimePoolHandler.ListPods)
+			adminRuntime.GET("/runtime-pods/:id/gateways", runtimePoolHandler.GetPodGateways)
+			adminRuntime.POST("/runtime-pods/:id/drain", runtimePoolHandler.DrainPod)
+			adminRuntime.POST("/runtime-rollouts", runtimePoolHandler.StartRollout)
 		}
 
 		teams := api.Group("/teams")
@@ -369,7 +541,7 @@ func main() {
 		}
 
 		gatewayLLM := api.Group("/gateway/llm")
-		gatewayLLM.Use(middleware.GatewayAuth(instanceRepo))
+		gatewayLLM.Use(middleware.GatewayAuth(instanceRepo, bindingRepo))
 		{
 			gatewayLLM.GET("/models", aiGatewayHandler.ListModels)
 			gatewayLLM.POST("/chat/completions", aiGatewayHandler.ChatCompletions)
@@ -434,9 +606,14 @@ func main() {
 		log.Printf("HTTP server forced to shutdown: %v", err)
 	}
 
-	// Stop background services
-	syncService.Stop()
-	teamService.Stop()
+	// Stop background services. Cancelling leaderCtx releases the lease (and,
+	// if we were leader, triggers stopBackground); the explicit stopBackground
+	// call is idempotent and covers the leader-election-disabled path.
+	leaderCancel()
+	stopBackground()
+	if runtimeAdminEventBridgeCancel != nil {
+		runtimeAdminEventBridgeCancel()
+	}
 	wsHub.Stop()
 	instanceHandler.Shutdown()
 

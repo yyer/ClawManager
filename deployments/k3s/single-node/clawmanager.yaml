@@ -1,3 +1,8 @@
+# ClawManager single-node install profile.
+# Official validation target: HostPath on one labeled storage node.
+# Before installing, label exactly one node:
+#   kubectl label node <node> clawmanager.io/storage-node=true --overwrite
+# Replace paths or StorageClass names only if you understand the single-node constraints.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -13,6 +18,9 @@ stringData:
   mysql-root-password: root123
   mysql-password: clawreef123
   jwt-secret: change-me-in-production
+  runtime-agent-control-token: change-me-runtime-control-token
+  runtime-agent-report-token: change-me-runtime-report-token
+  openclaw-gateway-token: change-me-openclaw-gateway-token
   minio-root-user: minioadmin
   minio-root-password: minioadmin123
   minio-access-key: minioadmin
@@ -639,8 +647,8 @@ data:
     SELECT
       'openclaw',
       'shell',
-      'OpenClaw Shell',
-      'ghcr.io/yuan-lab-llm/agentsruntime/openclaw-shell:latest',
+      'OpenClaw Lite',
+      'ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest',
       TRUE
     WHERE NOT EXISTS (
       SELECT 1
@@ -675,11 +683,49 @@ data:
         updated_at = CURRENT_TIMESTAMP
     WHERE type IN ('openclaw', 'ubuntu', 'webtop', 'hermes')
       AND mount_path IN ('/data', '/home/user/data', '/config/.hermes');
+  031_add_hermes_lite_runtime_image.sql: |
+    USE clawmanager;
+    UPDATE system_image_settings
+    SET
+      image = 'ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest',
+      display_name = 'Hermes Lite',
+      is_enabled = TRUE
+    WHERE instance_type = 'hermes'
+      AND runtime_type = 'shell'
+      AND image IN (
+        'ghcr.io/yuan-lab-llm/agentsruntime/hermes-shell:latest',
+        'registry.example.com/your-custom-shell-image:latest'
+      );
+
+    INSERT INTO system_image_settings (instance_type, runtime_type, display_name, image, is_enabled)
+    SELECT
+      'hermes',
+      'shell',
+      'Hermes Lite',
+      'ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest',
+      TRUE
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM system_image_settings
+      WHERE instance_type = 'hermes'
+        AND runtime_type = 'shell'
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM system_image_settings
+      WHERE instance_type = 'hermes'
+        AND is_enabled = FALSE
+    );
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: clawmanager-mysql-pv
+  labels:
+    app: clawmanager
+    managed-by: clawmanager
+    clawmanager.io/storage-profile: single-node
+    clawmanager.io/storage-node: "true"
 spec:
   capacity:
     storage: 5Gi
@@ -688,6 +734,14 @@ spec:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: clawmanager.io/storage-node
+              operator: In
+              values:
+                - "true"
   hostPath:
     path: /data/clawmanager/system/mysql
     type: DirectoryOrCreate
@@ -710,6 +764,11 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: clawmanager-minio-pv
+  labels:
+    app: clawmanager
+    managed-by: clawmanager
+    clawmanager.io/storage-profile: single-node
+    clawmanager.io/storage-node: "true"
 spec:
   capacity:
     storage: 10Gi
@@ -718,6 +777,14 @@ spec:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: clawmanager.io/storage-node
+              operator: In
+              values:
+                - "true"
   hostPath:
     path: /data/clawmanager/system/minio
     type: DirectoryOrCreate
@@ -735,6 +802,92 @@ spec:
       storage: 10Gi
   storageClassName: manual
   volumeName: clawmanager-minio-pv
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clawmanager-redis-pv
+  labels:
+    app: clawmanager
+    managed-by: clawmanager
+    clawmanager.io/storage-profile: single-node
+    clawmanager.io/storage-node: "true"
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: clawmanager.io/storage-node
+              operator: In
+              values:
+                - "true"
+  hostPath:
+    path: /data/clawmanager/system/redis
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: clawmanager-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: manual
+  volumeName: clawmanager-redis-pv
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clawmanager-workspaces-pv
+  labels:
+    app: clawmanager
+    managed-by: clawmanager
+    clawmanager.io/storage-profile: single-node
+    clawmanager.io/storage-node: "true"
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: clawmanager.io/storage-node
+              operator: In
+              values:
+                - "true"
+  hostPath:
+    path: /data/clawmanager/system/workspaces
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clawmanager-workspaces
+  namespace: clawmanager-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: manual
+  volumeName: clawmanager-workspaces-pv
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -755,6 +908,8 @@ spec:
         - name: mysql
           image: mysql:8.4.8
           imagePullPolicy: IfNotPresent
+          args:
+            - "--innodb-use-native-aio=0"
           ports:
             - containerPort: 3306
           env:
@@ -908,7 +1063,21 @@ spec:
               mountPath: /data
       volumes:
         - name: redis-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clawmanager-redis
+  namespace: clawmanager-system
+spec:
+  selector:
+    app: clawmanager-team-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
 ---
 apiVersion: v1
 kind: Service
@@ -930,6 +1099,53 @@ metadata:
   namespace: clawmanager-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: clawmanager-runtime-manager
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - create
+      - update
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - deployments/scale
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clawmanager-runtime-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: clawmanager-runtime-manager
+subjects:
+  - kind: ServiceAccount
+    name: clawmanager-app
+    namespace: clawmanager-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: clawmanager-app-cluster-admin
@@ -937,6 +1153,33 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: clawmanager-app
+    namespace: clawmanager-system
+---
+# Explicit lease permissions for control-plane leader election. The
+# cluster-admin binding above already covers this; this Role documents the
+# requirement and keeps leader election working if RBAC is tightened later.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: clawmanager-app-leaderelection
+  namespace: clawmanager-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: clawmanager-app-leaderelection
+  namespace: clawmanager-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: clawmanager-app-leaderelection
 subjects:
   - kind: ServiceAccount
     name: clawmanager-app
@@ -1027,15 +1270,6 @@ spec:
               value: ":9001"
             - name: SERVER_MODE
               value: "release"
-            # ksec-bridge reverse-proxy target. The bridge runs as a systemd unit
-            # on the same host as KSec — Downward API tells nginx which node IP
-            # to talk to (Phase 2 multi-host will replace this with a map / svc).
-            - name: KSEC_BRIDGE_HOST
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: KSEC_BRIDGE_PORT
-              value: "9101"
             - name: DB_HOST
               value: "mysql"
             - name: DB_PORT
@@ -1082,14 +1316,78 @@ spec:
               value: "clawmanager"
             - name: K8S_STORAGE_CLASS
               value: "manual"
+            - name: CLAWMANAGER_STORAGE_PROFILE
+              value: "single-node"
+            - name: K8S_HOSTPATH_FALLBACK_ENABLED
+              value: "true"
+            - name: K8S_PVC_BIND_TIMEOUT
+              value: "2m"
+            - name: K8S_CONTROL_PLANE_STORAGE_CLASS
+              value: "manual"
+            - name: K8S_INSTANCE_STORAGE_CLASS
+              value: "manual"
+            - name: K8S_WORKSPACE_STORAGE_CLASS
+              value: "manual"
+            - name: K8S_WORKSPACE_ACCESS_MODE
+              value: "ReadWriteMany"
             - name: K8S_PV_HOST_PATH_PREFIX
               value: "/data/clawreef"
             - name: CLAWMANAGER_WORKSPACE_ARCHIVE_MAX_MIB
               value: "500"
+            - name: PLATFORM_REDIS_URL
+              value: "redis://clawmanager-redis.clawmanager-system.svc.cluster.local:6379/0"
+            - name: TEAM_REDIS_URL
+              value: "redis://clawmanager-redis.clawmanager-system.svc.cluster.local:6379/0"
+            - name: CLAWMANAGER_DESKTOP_DIRECT_PROXY
+              value: "true"
+            # Leader election for control-plane singleton background loops.
+            # Required before scaling replicas > 1 so SyncService / Team event
+            # consumers / stale-task monitor run on exactly one replica.
+            - name: CLAWMANAGER_LEADER_ELECTION
+              value: "true"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: CLAWMANAGER_TEAM_REDIS_URL
-              value: "redis://clawmanager-team-redis.clawmanager-system.svc.cluster.local:6379/0"
+              value: "redis://clawmanager-redis.clawmanager-system.svc.cluster.local:6379/0"
             - name: CLAWMANAGER_TEAM_MANAGER_BASE_URL
               value: "http://clawmanager-gateway.clawmanager-system.svc.cluster.local:9001"
+            - name: RUNTIME_NAMESPACE
+              value: "clawmanager-system"
+            - name: RUNTIME_WORKSPACE_ROOT
+              value: "/workspaces"
+            - name: RUNTIME_WORKSPACE_PVC_CLAIM
+              value: "clawmanager-workspaces"
+            - name: RUNTIME_MAX_GATEWAYS_PER_POD
+              value: "100"
+            - name: RUNTIME_GATEWAY_PORT_START
+              value: "20000"
+            - name: RUNTIME_GATEWAY_PORT_END
+              value: "20099"
+            - name: RUNTIME_SCHEDULER_ENABLED
+              value: "true"
+            - name: RUNTIME_HEARTBEAT_TIMEOUT
+              value: "10s"
+            - name: RUNTIME_AGENT_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-control-token
+            - name: RUNTIME_AGENT_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-report-token
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: openclaw-gateway-token
             - name: SKILL_SCANNER_ENABLED
               value: "true"
             - name: SKILL_SCANNER_BASE_URL
@@ -1104,6 +1402,8 @@ spec:
             - name: tls-cert
               mountPath: /var/run/clawreef-tls
               readOnly: true
+            - name: workspaces
+              mountPath: /workspaces
           readinessProbe:
             httpGet:
               scheme: HTTPS
@@ -1123,6 +1423,194 @@ spec:
           secret:
             secretName: clawmanager-tls
             optional: true
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: clawmanager-workspaces
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-runtime
+  namespace: clawmanager-system
+  labels:
+    app: openclaw-runtime
+    clawmanager.io/runtime-type: openclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw-runtime
+      clawmanager.io/runtime-type: openclaw
+  template:
+    metadata:
+      labels:
+        app: openclaw-runtime
+        clawmanager.io/runtime-type: openclaw
+    spec:
+      containers:
+        - name: runtime
+          image: ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest
+          imagePullPolicy: Always
+          env:
+            - name: CLAWMANAGER_RUNTIME_TYPE
+              value: openclaw
+            - name: CLAWMANAGER_BACKEND_URL
+              value: "http://clawmanager-gateway.clawmanager-system.svc.cluster.local:9001"
+            - name: CLAWMANAGER_RUNTIME_DEPLOYMENT_NAME
+              value: openclaw-runtime
+            - name: CLAWMANAGER_RUNTIME_IMAGE_REF
+              value: ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest
+            - name: RUNTIME_WORKSPACE_ROOT
+              value: /workspaces
+            - name: RUNTIME_GATEWAY_PORT_START
+              value: "20000"
+            - name: RUNTIME_GATEWAY_PORT_END
+              value: "20099"
+            - name: RUNTIME_AGENT_LISTEN_ADDR
+              value: "0.0.0.0:19090"
+            - name: RUNTIME_AGENT_PUBLIC_PORT
+              value: "19090"
+            - name: RUNTIME_GATEWAY_COMMAND
+              value: "/usr/local/bin/openclaw gateway run --allow-unconfigured --auth token --bind lan --force"
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: openclaw-gateway-token
+            - name: RUNTIME_AGENT_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-control-token
+            - name: RUNTIME_AGENT_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-report-token
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: agent
+              containerPort: 19090
+          volumeMounts:
+            - name: workspaces
+              mountPath: /workspaces
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: clawmanager-workspaces
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-runtime
+  namespace: clawmanager-system
+  labels:
+    app: hermes-runtime
+    clawmanager.io/runtime-type: hermes
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes-runtime
+      clawmanager.io/runtime-type: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes-runtime
+        clawmanager.io/runtime-type: hermes
+    spec:
+      containers:
+        - name: runtime
+          image: ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CLAWMANAGER_RUNTIME_TYPE
+              value: hermes
+            - name: CLAWMANAGER_BACKEND_URL
+              value: "http://clawmanager-gateway.clawmanager-system.svc.cluster.local:9001"
+            - name: CLAWMANAGER_RUNTIME_DEPLOYMENT_NAME
+              value: hermes-runtime
+            - name: CLAWMANAGER_RUNTIME_IMAGE_REF
+              value: ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest
+            - name: CLAWMANAGER_AGENT_PORT
+              value: "19090"
+            - name: CLAWMANAGER_GATEWAY_PORT_START
+              value: "20000"
+            - name: CLAWMANAGER_GATEWAY_PORT_END
+              value: "20099"
+            - name: HERMES_TUI_DIR
+              value: /usr/local/lib/hermes-agent/ui-tui
+            - name: CLAWMANAGER_AGENT_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-control-token
+            - name: CLAWMANAGER_AGENT_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-report-token
+            - name: RUNTIME_WORKSPACE_ROOT
+              value: /workspaces
+            - name: RUNTIME_AGENT_LISTEN_ADDR
+              value: "0.0.0.0:19090"
+            - name: RUNTIME_AGENT_PUBLIC_PORT
+              value: "19090"
+            - name: RUNTIME_GATEWAY_PORT_START
+              value: "20000"
+            - name: RUNTIME_GATEWAY_PORT_END
+              value: "20099"
+            - name: RUNTIME_AGENT_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-control-token
+            - name: RUNTIME_AGENT_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawmanager-secrets
+                  key: runtime-agent-report-token
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: agent
+              containerPort: 19090
+          volumeMounts:
+            - name: workspaces
+              mountPath: /workspaces
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: clawmanager-workspaces
 ---
 apiVersion: v1
 kind: Service
