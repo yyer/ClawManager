@@ -71,9 +71,6 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 			config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "openclaw-desktop", defaultTag)
 		}
 		config.Env = defaultWebtopDesktopEnv("ClawManager Desktop")
-		// Override the lsio base image's DEFAULT_RES (15360x8640 = 16K × 8K).
-		config.Env["SELKIES_MANUAL_WIDTH"] = "1024"
-		config.Env["SELKIES_MANUAL_HEIGHT"] = "768"
 	case "debian":
 		config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "debian-desktop", defaultTag)
 	case "centos":
@@ -106,12 +103,7 @@ func defaultMountPathForInstanceType(instanceType string) string {
 
 func defaultEnvForInstanceType(instanceType string) map[string]string {
 	switch instanceType {
-	case "openclaw":
-		env := defaultWebtopDesktopEnv("ClawManager Desktop")
-		env["SELKIES_MANUAL_WIDTH"] = "1024"
-		env["SELKIES_MANUAL_HEIGHT"] = "768"
-		return env
-	case "ubuntu", "webtop":
+	case "ubuntu", "webtop", "openclaw":
 		return defaultWebtopDesktopEnv("ClawManager Desktop")
 	case "hermes":
 		return defaultWebtopDesktopEnv("Hermes Runtime")
