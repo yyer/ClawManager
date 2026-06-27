@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -29,12 +30,18 @@ import (
 	"strings"
 	"time"
 
+	"clawreef/internal/models"
 	"clawreef/internal/repository"
 	"clawreef/internal/secplane/compiler/aegis"
 	"clawreef/internal/secplane/compiler/secureclaw"
 	"clawreef/internal/secplane/outbound"
 	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services"
+	"clawreef/internal/services/k8s"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 // adminUserID is the user the secplane skill is uploaded under. Skills are
@@ -122,6 +129,10 @@ type DispatchTarget struct {
 	CommandType string `json:"command_type"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	// PostInstallError is kept for API backwards-compat. The new exec-based
+	// install path folds post-install failures into Error directly, so this
+	// field is no longer populated by DispatchAegis/DispatchAegisApply.
+	PostInstallError string `json:"post_install_error,omitempty"`
 }
 
 type service struct {
@@ -131,6 +142,8 @@ type service struct {
 	skills            services.SkillService
 	outboundService   outbound.Service
 	killSwitchService KillSwitchProvider
+	podService        *k8s.PodService
+	cmdRepo           repository.InstanceCommandRepository
 }
 
 // KillSwitchProvider — 我们只需要读状态，不引入对 killswitch 包的循环依赖。
@@ -139,12 +152,20 @@ type KillSwitchProvider interface {
 }
 
 // NewService constructs the dispatch service.
+//
+// podService is used by installClawaegisexViaExec/writeUserConfigDirect to
+// k8s-exec into the desktop container. cmdRepo is used by markCommandTerminal
+// to flip secplane.apply_aegis_config command rows to succeeded/failed after
+// the exec. Either may be nil in test contexts — DispatchAegis/Apply skip the
+// exec and mark the command succeeded.
 func NewService(
 	policyService policy.Service,
 	cmdService services.InstanceCommandService,
 	instances repository.InstanceRepository,
 	skills services.SkillService,
 	outboundSvc outbound.Service,
+	podService *k8s.PodService,
+	cmdRepo repository.InstanceCommandRepository,
 ) Service {
 	return &service{
 		outboundService: outboundSvc,
@@ -152,6 +173,8 @@ func NewService(
 		cmdService:      cmdService,
 		instances:       instances,
 		skills:          skills,
+		podService:      podService,
+		cmdRepo:          cmdRepo,
 	}
 }
 
@@ -233,44 +256,57 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 	idemKey := fmt.Sprintf("secplane.aegis.%s.v%d.%s.r%s",
 		strings.TrimPrefix(skill.SkillKey, ""), versionNo, cfgSha[:16], revision)
 
-	contentMD5 := ""
-	if skill.ContentMD5 != nil {
-		contentMD5 = *skill.ContentMD5
-	}
-	versionExtID := ""
-	if skill.CurrentVersionID != nil {
-		versionExtID = fmt.Sprintf("ver_%d", *skill.CurrentVersionID)
-	}
-
 	for _, instanceID := range targets {
 		target := DispatchTarget{
 			InstanceID:  instanceID,
-			CommandType: services.InstanceCommandTypeInstallSkill,
+			CommandType: services.InstanceCommandTypeSecplaneApplyAegisConfig,
 		}
+		inst, err := s.instances.GetByID(instanceID)
+		if err != nil || inst == nil {
+			target.Status = "failed"
+			target.Error = fmt.Sprintf("load instance: %v", err)
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+
+		// Record a secplane.apply_aegis_config command row so GetEffectiveAegisConfig
+		// can read back the dispatched user_config. The command is created in
+		// "pending" status; we flip it to succeeded/failed after the k8s exec.
 		req := services.CreateInstanceCommandRequest{
-			CommandType: services.InstanceCommandTypeInstallSkill,
+			CommandType: services.InstanceCommandTypeSecplaneApplyAegisConfig,
 			Payload: map[string]interface{}{
-				"skill_id":      skill.ExternalSkillID,
-				"skill_version": versionExtID,
-				"target_name":   skill.SkillKey,
-				"content_md5":   contentMD5,
-				// Carry the compiled bundle alongside so a later
-				// `effective-config` query can show what was actually pushed,
-				// without having to crack open the skill zip again.
-				"aegis_revision":     bundle.Revision,
-				"aegis_sha256":       bundle.Sha256,
-				"aegis_user_config":  bundle.UserConfig,
+				"user_config":    bundle.UserConfig,
+				"revision":       bundle.Revision,
+				"sha256":         bundle.Sha256,
+				"install_method": "exec_zip",
 			},
 			IdempotencyKey: idemKey,
-			TimeoutSeconds: 300,
+			TimeoutSeconds: 60,
 		}
 		cmd, cerr := s.cmdService.Create(instanceID, issuedBy, req)
 		if cerr != nil {
 			target.Status = "failed"
 			target.Error = cerr.Error()
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+		target.CommandID = cmd.ID
+
+		// Test mode: skip the k8s exec, mark command succeeded.
+		if s.podService == nil {
+			target.Status = "succeeded"
+			_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+
+		if err := s.installClawaegisexViaExec(ctx, inst, zipBytes); err != nil {
+			target.Status = "failed"
+			target.Error = err.Error()
+			_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
 		} else {
-			target.CommandID = cmd.ID
-			target.Status = cmd.Status
+			target.Status = "succeeded"
+			_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
 		}
 		out.Targets = append(out.Targets, target)
 	}
@@ -278,23 +314,144 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 	return out, nil
 }
 
-// DispatchAegisApply was originally designed as a config-only fast path
-// emitting secplane.apply_aegis_config — but standard OpenClaw pod agents
-// don't recognize that command type ("unsupported command type" failure
-// observed in dev23 e2e). To keep the new UI working on stock OpenClaw we
-// alias this to DispatchAegis, which uses the proven install_skill path:
-// zip the ClawAegis source + new user_config.json → upload as a new skill
-// version → enqueue install_skill on each target → pod agent extracts to
-// workspace/skills/clawaegisex/ → plugin's mtime watcher picks up the new
-// user_config.json and hot-reloads.
+// DispatchAegisApply is the config-only fast path. It writes the compiled
+// user_config.json directly to extensions/clawaegisex/ via k8s exec (no skill
+// zip rebuild, no install_skill command). clawaegisex has its own mtime-based
+// hot-reload (handlers.js getLiveConfig() fs.statSync's user_config.json on
+// every hook event), so writing the file is enough — no gateway restart.
 //
-// Trade-off vs the original design: every "apply" rebuilds the full skill
-// bundle (~MB) and adds a skill_version row. If a future pod agent ever
-// supports a true config-delta channel (e.g. update_skill with inline JSON
-// payload, or secplane.apply_aegis_config), swap this body back to the
-// lightweight implementation.
+// If extensions/clawaegisex/ doesn't exist on the pod (first-time install),
+// falls back to installClawaegisexViaExec which pipes the full zip via stdin
+// and restarts the gateway. Subsequent calls take the config-only path.
+//
+// Flow per target:
+//  1. Compile rules → UserConfig (in-process)
+//  2. PackageSkill (only needed for the fallback full-install path; cheap)
+//  3. Create secplane.apply_aegis_config command row (for GetEffectiveAegisConfig)
+//  4. extensionsMissing? → installClawaegisexViaExec (full zip + pkill)
+//    else → writeUserConfigDirect (base64 user_config.json, no pkill)
+//  5. Mark command succeeded/failed
 func (s *service) DispatchAegisApply(ctx context.Context, issuedBy *int, instanceIDs []int) (DispatchResult, error) {
-	return s.DispatchAegis(ctx, issuedBy, instanceIDs)
+	rules, err := s.policyService.List("")
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("load secplane rules: %w", err)
+	}
+	revision := time.Now().UTC().Format("20060102T150405.000000000Z")
+	bundle, err := aegis.Compile(rules, revision)
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("compile aegis bundle: %w", err)
+	}
+	s.injectOutboundEntries(&bundle.UserConfig)
+	s.injectKillSwitch(&bundle.UserConfig)
+
+	userCfgJSON, err := json.Marshal(bundle.UserConfig)
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("marshal user_config: %w", err)
+	}
+	cfgSum := sha256.Sum256(userCfgJSON)
+	cfgSha := hex.EncodeToString(cfgSum[:])
+
+	// PackageSkill is needed for the fallback full-install path (when
+	// extensions/clawaegisex/ doesn't exist yet). It's cheap (in-memory zip
+	// assembly) so we always compute it rather than branch per-target.
+	zipBytes, _, err := aegis.PackageSkill(bundle.UserConfig)
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("package skill zip: %w", err)
+	}
+
+	targets, err := s.resolveTargets(instanceIDs)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
+	out := DispatchResult{
+		Revision:   bundle.Revision,
+		Sha256:     bundle.Sha256,
+		UserConfig: bundle.UserConfig,
+		Targets:    make([]DispatchTarget, 0, len(targets)),
+	}
+
+	for _, instanceID := range targets {
+		target := DispatchTarget{
+			InstanceID:  instanceID,
+			CommandType: services.InstanceCommandTypeSecplaneApplyAegisConfig,
+			Status:      "succeeded",
+		}
+		inst, err := s.instances.GetByID(instanceID)
+		if err != nil || inst == nil {
+			target.Status = "failed"
+			target.Error = fmt.Sprintf("load instance: %v", err)
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+
+		// Record a command row so GetEffectiveAegisConfig can read back the
+		// dispatched user_config. Without this, Apply-only dispatches leave
+		// no history trace.
+		idemKey := fmt.Sprintf("secplane.aegis-apply.%s.r%s", cfgSha[:16], revision)
+		req := services.CreateInstanceCommandRequest{
+			CommandType: services.InstanceCommandTypeSecplaneApplyAegisConfig,
+			Payload: map[string]interface{}{
+				"user_config": bundle.UserConfig,
+				"revision":    bundle.Revision,
+				"sha256":      bundle.Sha256,
+			},
+			IdempotencyKey: idemKey,
+			TimeoutSeconds: 60,
+		}
+		cmd, _ := s.cmdService.Create(instanceID, issuedBy, req)
+		if cmd != nil {
+			target.CommandID = cmd.ID
+		}
+
+		// Test mode: skip exec, mark command succeeded.
+		if s.podService == nil {
+			if cmd != nil {
+				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			}
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+
+		needFullInstall, err := s.extensionsMissing(ctx, inst)
+		if err != nil {
+			target.Status = "failed"
+			target.Error = err.Error()
+			if cmd != nil {
+				_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
+			}
+			out.Targets = append(out.Targets, target)
+			continue
+		}
+		if needFullInstall {
+			// First-time install: write the full zip (includes user_config.json).
+			// No separate writeUserConfigDirect needed — PackageSkill already
+			// injected the correct user_config.json into the zip.
+			if err := s.installClawaegisexViaExec(ctx, inst, zipBytes); err != nil {
+				target.Status = "failed"
+				target.Error = err.Error()
+				if cmd != nil {
+					_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
+				}
+			} else if cmd != nil {
+				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			}
+		} else {
+			// Config-only update: just overwrite user_config.json (mtime hot-reload, no pkill).
+			if err := s.writeUserConfigDirect(ctx, inst, userCfgJSON); err != nil {
+				target.Status = "failed"
+				target.Error = err.Error()
+				if cmd != nil {
+					_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
+				}
+			} else if cmd != nil {
+				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			}
+		}
+		out.Targets = append(out.Targets, target)
+	}
+
+	return out, nil
 }
 
 // DispatchSecureClaw compiles the SecureClaw knob rules into a SecureClawConfig
@@ -432,6 +589,150 @@ func (s *service) resolveTargets(in []int) ([]int, error) {
 		return nil, fmt.Errorf("no valid target instances")
 	}
 	return out, nil
+}
+
+// writeUserConfigDirect is the config-only fast path used by DispatchAegisApply.
+// It writes user_config.json directly to extensions/clawaegisex/ via k8s exec
+// (base64-decoded from stdin). Does NOT restart the gateway — clawaegisex has
+// its own mtime-based hot-reload (handlers.js getLiveConfig() fs.statSync's
+// user_config.json on every hook event and re-parses when mtime moves), so
+// writing the file is enough to apply the new config on the next hook.
+// Requires that extensions/clawaegisex/ already exists (i.e. DispatchAegis has
+// been run at least once). If the directory doesn't exist, returns an error
+// directing the caller to run DispatchAegis first.
+func (s *service) writeUserConfigDirect(ctx context.Context, inst *models.Instance, userCfgJSON []byte) error {
+	const script = `set -e
+OPENCLAW_DIR="${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}/.openclaw"
+DST="$OPENCLAW_DIR/extensions/clawaegisex"
+if [ ! -d "$DST" ]; then
+  echo "ERR: $DST does not exist; run DispatchAegis (full install) first" >&2
+  exit 1
+fi
+mkdir -p "$DST"
+base64 -d > "$DST/user_config.json"
+chmod 0644 "$DST/user_config.json"
+echo "OK: user_config.json updated (hot-reload will pick up on next hook)"
+`
+	stdin := bytes.NewReader([]byte(base64.StdEncoding.EncodeToString(userCfgJSON)))
+	stdout, stderr, err := s.execInDesktop(ctx, inst.UserID, inst.ID,
+		[]string{"sh", "-lc", script}, stdin)
+	if err != nil {
+		return fmt.Errorf("exec: %w; stderr: %s; stdout: %s", err, stderr, stdout)
+	}
+	return nil
+}
+
+// installClawaegisexViaExec installs the full clawaegisex plugin zip directly
+// to extensions/clawaegisex/ via a single k8s exec call. Replaces the legacy
+// install_skill + ensureClawaegisexLoaded pipeline: no agent poll, no
+// workspace/skills/ extraction, no 90s wait. The zip bytes (from
+// aegis.PackageSkill) are base64-encoded and piped via stdin to python3's
+// zipfile module (desktop container has no unzip binary). pkill openclaw
+// restarts the gateway so it auto-discovers the new plugin code.
+//
+// Used by:
+//   - DispatchAegis (full install path, every call)
+//   - DispatchAegisApply fallback when extensions/clawaegisex/ is missing
+//     (first-time install on a fresh pod)
+func (s *service) installClawaegisexViaExec(ctx context.Context, inst *models.Instance, zipBytes []byte) error {
+	const script = `set -e
+OPENCLAW_DIR="${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}/.openclaw"
+mkdir -p "$OPENCLAW_DIR/extensions"
+# zip top-level dir is clawaegisex/ — extract creates/overwrites $OPENCLAW_DIR/extensions/clawaegisex/
+# desktop container has no unzip binary, use python3 zipfile (always available on openclaw images).
+base64 -d | python3 -c "import zipfile,io,sys; zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).extractall(sys.argv[1])" "$OPENCLAW_DIR/extensions/"
+DST="$OPENCLAW_DIR/extensions/clawaegisex"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$DST/.clawmanager-dispatched-at"
+# pkill openclaw matches both comm=openclaw (gateway) and comm=openclaw-agent.
+# s6-supervise restarts the agent within ~1s, agent re-execs gateway which
+# auto-discovers extensions/clawaegisex/ and loads the new code.
+pkill openclaw || true
+echo "OK: clawaegisex installed via exec, agent restarting"
+`
+	stdin := bytes.NewReader([]byte(base64.StdEncoding.EncodeToString(zipBytes)))
+	stdout, stderr, err := s.execInDesktop(ctx, inst.UserID, inst.ID,
+		[]string{"sh", "-lc", script}, stdin)
+	if err != nil {
+		return fmt.Errorf("exec: %w; stderr: %s; stdout: %s", err, stderr, stdout)
+	}
+	return nil
+}
+
+// extensionsMissing returns true if extensions/clawaegisex/ does not exist
+// on the pod (first-time install scenario). Used by DispatchAegisApply to
+// decide between the config-only writeUserConfigDirect path and the full
+// installClawaegisexViaExec fallback.
+func (s *service) extensionsMissing(ctx context.Context, inst *models.Instance) (bool, error) {
+	const script = `test -d "${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}/.openclaw/extensions/clawaegisex"`
+	_, _, err := s.execInDesktop(ctx, inst.UserID, inst.ID,
+		[]string{"sh", "-lc", script}, nil)
+	if err != nil {
+		// non-zero exit = directory missing
+		return true, nil
+	}
+	return false, nil
+}
+
+// markCommandTerminal flips an instance_commands row to a terminal status
+// (succeeded/failed) and sets FinishedAt + ErrorMessage. Used by
+// DispatchAegis/DispatchAegisApply after the k8s exec succeeds or fails —
+// secplane.apply_aegis_config commands are created in "pending" status by
+// cmdService.Create and need to be marked terminal since there's no agent
+// poll loop (unlike install_skill which the agent reports back).
+func (s *service) markCommandTerminal(cmdID int, status, errMsg string) error {
+	if s.cmdRepo == nil || cmdID == 0 {
+		return nil
+	}
+	cmd, err := s.cmdRepo.GetByID(cmdID)
+	if err != nil {
+		return fmt.Errorf("load command %d: %w", cmdID, err)
+	}
+	if cmd == nil {
+		return nil
+	}
+	cmd.Status = status
+	now := time.Now().UTC()
+	cmd.FinishedAt = &now
+	if errMsg != "" {
+		cmd.ErrorMessage = &errMsg
+	}
+	return s.cmdRepo.Update(cmd)
+}
+
+// execInDesktop runs a command in the desktop container of the instance's pod
+// via k8s exec (SPDY). Modeled on openclaw_transfer_service.exec but targets
+// the desktop container (not the runtime container) since clawaegisex lives in
+// /config/.openclaw/ which is the desktop container's PVC.
+func (s *service) execInDesktop(ctx context.Context, userID, instanceID int, command []string, stdin io.Reader) (string, string, error) {
+	if s.podService == nil || s.podService.GetClient() == nil || s.podService.GetClient().Clientset == nil {
+		return "", "", fmt.Errorf("k8s client not initialized")
+	}
+	pod, err := s.podService.GetPod(ctx, userID, instanceID)
+	if err != nil {
+		return "", "", fmt.Errorf("get pod: %w", err)
+	}
+	var stdout, stderr bytes.Buffer
+	req := s.podService.GetClient().Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec")
+	req.VersionedParams(&corev1.PodExecOptions{
+		Container: "desktop",
+		Command:   command,
+		Stdin:     stdin != nil,
+		Stdout:    true,
+		Stderr:    true,
+		TTY:       false,
+	}, scheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(s.podService.GetClient().Config, "POST", req.URL())
+	if err != nil {
+		return "", "", fmt.Errorf("init exec: %w", err)
+	}
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  stdin,
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Tty:    false,
+	})
+	return stdout.String(), stderr.String(), err
 }
 
 // GetEffectiveAegisConfig walks instance_commands backwards for the given

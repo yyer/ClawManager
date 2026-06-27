@@ -16,6 +16,7 @@ import (
 	"clawreef/internal/secplane/outbound"
 	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services"
+	"clawreef/internal/services/k8s"
 
 	"github.com/gin-gonic/gin"
 	"github.com/upper/db/v4"
@@ -73,7 +74,9 @@ func NewModule(
 	outboundRepo := outbound.NewRepository(sess)
 	outboundSvc := outbound.NewService(outboundRepo)
 
-	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc, outboundSvc)
+	podSvc := k8s.NewPodService()
+	cmdRepo := repository.NewInstanceCommandRepository(sess)
+	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc, outboundSvc, podSvc, cmdRepo)
 
 	killSwitchSvc := killswitch.NewService(sess)
 	dispatchSvc.SetKillSwitchProvider(killSwitchAdapter{svc: killSwitchSvc})
