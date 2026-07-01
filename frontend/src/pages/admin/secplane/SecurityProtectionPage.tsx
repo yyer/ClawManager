@@ -105,14 +105,6 @@ const RING_BUBBLE_KEYS: Record<string, string[]> = {
   'cat-5': ['cat5_0', 'cat5_1'],
 };
 
-// Grid layout
-const GRID_ROWS: Array<[string, string]> = [
-  ['cat-1', 'cat-6'],
-  ['cat-4', 'cat-3'],
-  ['cat-2', 'cat-7'],
-  ['cat-5', '__placeholder__'],
-];
-
 // Layer subtitle keys
 const LAYER_SUBTITLE_KEYS: Record<string, string> = {
   'cat-1': 'secplane.protection.layerSubtitle.cat1',
@@ -236,7 +228,7 @@ const LayerSection: React.FC<{ title: string; dotColor: string; rows: Array<stri
 
 const SecurityProtectionPage: React.FC = () => {
   const { t } = useI18n();
-  const [viewMode, setViewMode] = useState<'grid' | 'ring' | 'layer'>('ring');
+  const [viewMode, setViewMode] = useState<'layer' | 'ring'>('layer');
 
   // Alert data
   const [allAlerts, setAllAlerts] = useState<SecplaneAlert[]>([]);
@@ -498,80 +490,9 @@ const SecurityProtectionPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 mb-5">
-            <button type="button" className={`sec-tab ${viewMode === 'grid' ? 'active' : ''}`} onClick={() => setViewMode('grid')}>{t('secplane.protection.views.grid')}</button>
-            <button type="button" className={`sec-tab ${viewMode === 'ring' ? 'active' : ''}`} onClick={() => setViewMode('ring')}>{t('secplane.protection.views.ring')}</button>
             <button type="button" className={`sec-tab ${viewMode === 'layer' ? 'active' : ''}`} onClick={() => setViewMode('layer')}>{t('secplane.protection.views.layer')}</button>
+            <button type="button" className={`sec-tab ${viewMode === 'ring' ? 'active' : ''}`} onClick={() => setViewMode('ring')}>{t('secplane.protection.views.ring')}</button>
           </div>
-
-          {viewMode === 'grid' && (
-            <div>
-              {GRID_ROWS.map((row, ri) => (
-                <div key={ri} className="grid grid-cols-2 gap-4 mb-4">
-                  {row.map((catId) => {
-                    if (catId === '__placeholder__') {
-                      return (
-                        <div key="placeholder" style={{ borderRadius: 20, border: '1px dashed #e2ddd8', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120, color: '#c8bfb8', fontSize: '0.8125rem' }}>
-                          <span>{t('secplane.protection.section.morePlanned')}</span>
-                        </div>
-                      );
-                    }
-                    const cat = CATEGORIES.find((c) => c.id === catId);
-                    const vis = MODULE_VISUAL[catId];
-                    if (!cat || !vis) return null;
-                    const disabled = !!cat.disabled;
-                    const bubbles = BUBBLE_LABEL_KEYS[catId]?.map((bk) => t(`secplane.protection.bubbleLabels.${bk}`)) ?? [];
-                    const subtitle = disabled
-                      ? t('secplane.protection.gridCard.plannedSubtitle')
-                      : t('secplane.protection.gridCard.sceneCount', { count: bubbles.length });
-                    const card = (
-                      <>
-                        <div className="flex items-start gap-3 mb-3">
-                          <div className="mod-icon" style={{ background: vis.iconGradient, boxShadow: vis.iconShadow }}>
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d={vis.iconPath} />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <div className="text-base font-bold text-[#171212]">{cat.labelKey ? t(cat.labelKey) : cat.label}</div>
-                              {disabled ? (
-                                <span className="badge badge-orange">{t('secplane.protection.gridCard.planned')}</span>
-                              ) : (
-                                <span className={`layer-tag ${vis.layerTagClass}`}>
-                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: vis.arrowColor, display: 'inline-block' }} />
-                                  {t(vis.layerLabelKey)}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs muted">{subtitle}</div>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          {bubbles.map((b) => (
-                            <span key={b} className="scenario-bubble" style={disabled ? { opacity: 0.4 } : undefined}>{b}</span>
-                          ))}
-                        </div>
-                        <div className="divider" style={{ margin: '12px 0' }} />
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="muted-strong">{t(vis.footerNoteKey)}</span>
-                          <span style={{ color: vis.arrowColor, fontWeight: 600 }}>{disabled ? t('secplane.protection.gridCard.plannedLink') : t('secplane.protection.gridCard.viewLink')}</span>
-                        </div>
-                      </>
-                    );
-                    const cardStyle = { borderColor: vis.cardBorder, background: vis.cardBg };
-                    if (disabled) {
-                      return (
-                        <div key={catId} className="cat-card-new disabled" style={cardStyle}>{card}</div>
-                      );
-                    }
-                    return (
-                      <Link key={catId} to={cat.path} className="cat-card-new" style={cardStyle}>{card}</Link>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
 
           {viewMode === 'ring' && (
             <div className="flex flex-col items-center">

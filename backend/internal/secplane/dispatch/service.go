@@ -66,32 +66,49 @@ type Service interface {
 	// or the last secplane.apply_aegis_config — whichever is most recent.
 	// Returns (nil, nil) when no dispatch has happened for this instance yet.
 	GetEffectiveAegisConfig(instanceID int) (*EffectiveAegisConfig, error)
-	// GetLiveAegisConfig returns the user_config.json from the LATEST skill_blob
-	// the agent has uploaded for this instance's clawaegisex skill. Closer to
-	// "ground truth on pod" than GetEffectiveAegisConfig (which only knows what
-	// was last DISPATCHED, not what's actually on disk). Reads from skill_blobs
-	// via SkillService.DownloadSkill, unzips, and extracts the user_config.json
-	// file (typically at top level clawaegisex/user_config.json).
+	// GetLiveAegisConfig returns the most recently SUCCESSFULLY-DISPATCHED
+	// clawaegisex user_config for the given instance, read from the
+	// secplane_instance_runtime_config table (one row per instance+skill,
+	// upserted on every successful DispatchAegis / DispatchAegisApply).
 	//
-	// Returns (nil, error) when:
-	//   - instance has no clawaegisex skill registered (agent never reported it)
-	//   - latest blob is missing or not a valid zip
-	//   - user_config.json is not present in the zip
+	// Falls back to the legacy skill_blob path (unzip the latest clawaegisex
+	// blob the agent uploaded) ONLY when no runtime_config row exists — e.g.
+	// instances dispatched before this table existed. New dispatches always
+	// populate the table, so the fallback is a transition shim.
+	//
+	// Returns (nil, error) when neither path yields a config.
 	GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, error)
 }
 
-// LiveAegisConfig is the user_config.json read from the most-recent skill_blob
-// the agent uploaded for the instance's clawaegisex skill. Use to compare
-// against EffectiveAegisConfig (what was dispatched) to detect drift between
-// "what we sent" and "what the agent is actually carrying on disk".
+// LiveAegisConfig is what the admin UI shows as "Pod 实时 Aegis 配置". Primary
+// source is secplane_instance_runtime_config (written on every successful
+// dispatch); the skill_blob fields (SkillID/BlobContentHash/SourceFile) are
+// only populated when the runtime_config row is missing and the legacy
+// skill_blob fallback path is used.
 type LiveAegisConfig struct {
-	InstanceID      int                    `json:"instance_id"`
-	SkillID         int                    `json:"skill_id"`
-	SkillName       string                 `json:"skill_name"`
-	BlobContentHash string                 `json:"blob_content_hash"`
-	SourceFile      string                 `json:"source_file"`
-	UserConfig      map[string]interface{} `json:"user_config"`
-	FetchedAt       time.Time              `json:"fetched_at"`
+	InstanceID int `json:"instance_id"`
+
+	// Primary-path fields (runtime_config table).
+	SkillName    string                 `json:"skill_name,omitempty"`
+	Revision     string                 `json:"revision,omitempty"`
+	Sha256       string                 `json:"sha256,omitempty"`
+	ConfigSha256 string                 `json:"config_sha256,omitempty"`
+	Source       string                 `json:"source,omitempty"`
+	CommandID    *int                   `json:"command_id,omitempty"`
+	Status       string                 `json:"status,omitempty"`
+	DispatchedAt *time.Time             `json:"dispatched_at,omitempty"`
+
+	// Legacy skill_blob fallback fields. Populated only when runtime_config
+	// row is absent and the agent has uploaded a clawaegisex skill blob.
+	SkillID         int    `json:"skill_id,omitempty"`
+	BlobContentHash string `json:"blob_content_hash,omitempty"`
+	SourceFile      string `json:"source_file,omitempty"`
+
+	// Source provenance: "runtime_config" or "skill_blob". Frontend can show
+	// which path produced this response.
+	Provenance string                 `json:"provenance"`
+	UserConfig map[string]interface{} `json:"user_config"`
+	FetchedAt  time.Time              `json:"fetched_at"`
 }
 
 // EffectiveAegisConfig is what we last pushed to an instance — useful for the
@@ -144,6 +161,7 @@ type service struct {
 	killSwitchService KillSwitchProvider
 	podService        *k8s.PodService
 	cmdRepo           repository.InstanceCommandRepository
+	runtimeCfgRepo    RuntimeConfigRepository
 }
 
 // KillSwitchProvider — 我们只需要读状态，不引入对 killswitch 包的循环依赖。
@@ -166,6 +184,7 @@ func NewService(
 	outboundSvc outbound.Service,
 	podService *k8s.PodService,
 	cmdRepo repository.InstanceCommandRepository,
+	runtimeCfgRepo RuntimeConfigRepository,
 ) Service {
 	return &service{
 		outboundService: outboundSvc,
@@ -175,6 +194,7 @@ func NewService(
 		skills:          skills,
 		podService:      podService,
 		cmdRepo:          cmdRepo,
+		runtimeCfgRepo: runtimeCfgRepo,
 	}
 }
 
@@ -296,6 +316,8 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 		if s.podService == nil {
 			target.Status = "succeeded"
 			_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			cmdID := cmd.ID
+			s.recordRuntimeConfig(instanceID, "clawaegisex", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_aegis", &cmdID)
 			out.Targets = append(out.Targets, target)
 			continue
 		}
@@ -307,6 +329,8 @@ func (s *service) DispatchAegis(ctx context.Context, issuedBy *int, instanceIDs 
 		} else {
 			target.Status = "succeeded"
 			_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			cmdID := cmd.ID
+			s.recordRuntimeConfig(instanceID, "clawaegisex", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_aegis", &cmdID)
 		}
 		out.Targets = append(out.Targets, target)
 	}
@@ -409,6 +433,12 @@ func (s *service) DispatchAegisApply(ctx context.Context, issuedBy *int, instanc
 			if cmd != nil {
 				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
 			}
+			var cmdID *int
+			if cmd != nil {
+				id := cmd.ID
+				cmdID = &id
+			}
+			s.recordRuntimeConfig(instanceID, "clawaegisex", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_aegis_apply", cmdID)
 			out.Targets = append(out.Targets, target)
 			continue
 		}
@@ -433,8 +463,16 @@ func (s *service) DispatchAegisApply(ctx context.Context, issuedBy *int, instanc
 				if cmd != nil {
 					_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
 				}
-			} else if cmd != nil {
-				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			} else {
+				if cmd != nil {
+					_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+				}
+				var cmdID *int
+				if cmd != nil {
+					id := cmd.ID
+					cmdID = &id
+				}
+				s.recordRuntimeConfig(instanceID, "clawaegisex", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_aegis_apply", cmdID)
 			}
 		} else {
 			// Config-only update: just overwrite user_config.json (mtime hot-reload, no pkill).
@@ -444,8 +482,16 @@ func (s *service) DispatchAegisApply(ctx context.Context, issuedBy *int, instanc
 				if cmd != nil {
 					_ = s.markCommandTerminal(cmd.ID, "failed", err.Error())
 				}
-			} else if cmd != nil {
-				_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+			} else {
+				if cmd != nil {
+					_ = s.markCommandTerminal(cmd.ID, "succeeded", "")
+				}
+				var cmdID *int
+				if cmd != nil {
+					id := cmd.ID
+					cmdID = &id
+				}
+				s.recordRuntimeConfig(instanceID, "clawaegisex", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_aegis_apply", cmdID)
 			}
 		}
 		out.Targets = append(out.Targets, target)
@@ -550,6 +596,12 @@ func (s *service) DispatchSecureClaw(ctx context.Context, issuedBy *int, instanc
 		} else {
 			target.CommandID = cmd.ID
 			target.Status = cmd.Status
+			// install_skill is async (agent polls), so "successfully dispatched"
+			// = command row created. Record the user_config snapshot now; if the
+			// agent later fails to apply it, an operator can compare this row
+			// against the command's terminal status.
+			cmdID := cmd.ID
+			s.recordRuntimeConfig(instanceID, "secureclaw", bundle.Revision, bundle.Sha256, bundle.UserConfig, "dispatch_secureclaw", &cmdID)
 		}
 		out.Targets = append(out.Targets, target)
 	}
@@ -611,6 +663,37 @@ fi
 mkdir -p "$DST"
 base64 -d > "$DST/user_config.json"
 chmod 0644 "$DST/user_config.json"
+# Patch openclaw.json: plugins.entries.clawaegisex.hooks.allowConversationAccess=true
+# See installClawaegisexViaExec for the full rationale. writeUserConfigDirect does
+# NOT pkill openclaw (relies on mtime hot-reload of user_config.json), but the
+# openclaw.json edit triggers the chokidar config watcher which hot-reloads
+# plugins.entries.clawaegisex.hooks — enough to flip canStartExplicitHookPlugin
+# to true on the next gateway restart. If the gateway is already running with
+# clawaegisex loaded (hooks already set), this is a no-op.
+python3 -c "
+import json, os, sys
+cfg_path = os.path.join(os.environ.get('CLAWMANAGER_AGENT_PERSISTENT_DIR', '/config'), '.openclaw', 'openclaw.json')
+try:
+    with open(cfg_path, 'r') as f:
+        cfg = json.load(f)
+except Exception as e:
+    sys.stderr.write('openclaw.json read failed: ' + str(e) + '\n')
+    sys.exit(0)
+entries = cfg.setdefault('plugins', {}).setdefault('entries', {})
+entry = entries.setdefault('clawaegisex', {})
+hooks = entry.setdefault('hooks', {})
+if hooks.get('allowConversationAccess') is True:
+    sys.exit(0)
+hooks['allowConversationAccess'] = True
+entry['hooks'] = hooks
+entries['clawaegisex'] = entry
+tmp = cfg_path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+os.replace(tmp, cfg_path)
+print('OK: openclaw.json patched with plugins.entries.clawaegisex.hooks.allowConversationAccess=true')
+" || true
 echo "OK: user_config.json updated (hot-reload will pick up on next hook)"
 `
 	stdin := bytes.NewReader([]byte(base64.StdEncoding.EncodeToString(userCfgJSON)))
@@ -643,6 +726,40 @@ mkdir -p "$OPENCLAW_DIR/extensions"
 base64 -d | python3 -c "import zipfile,io,sys; zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).extractall(sys.argv[1])" "$OPENCLAW_DIR/extensions/"
 DST="$OPENCLAW_DIR/extensions/clawaegisex"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$DST/.clawmanager-dispatched-at"
+# Patch openclaw.json: plugins.entries.clawaegisex.hooks.allowConversationAccess=true
+# Without this, openclaw 2026.5.4's shouldConsiderForGatewayStartup returns
+# false (clawaegisex has no activation.onStartup, no channels/contracts, and
+# entry.hooks is empty), so the gateway never loads clawaegisex at startup →
+# http server listening (2 plugins: file-transfer, memory-core) → no defense.
+# canStartExplicitHookPlugin returns true once entry.hooks.allowConversationAccess=true.
+# clawaegisex's own gateway_start hook would patch this on first load, but
+# that's a chicken-and-egg: the plugin must be loaded for gateway_start to
+# fire. We seed it here so the very first gateway start after install loads
+# clawaegisex.
+python3 -c "
+import json, os, sys
+cfg_path = os.path.join(os.environ.get('CLAWMANAGER_AGENT_PERSISTENT_DIR', '/config'), '.openclaw', 'openclaw.json')
+try:
+    with open(cfg_path, 'r') as f:
+        cfg = json.load(f)
+except Exception as e:
+    sys.stderr.write('openclaw.json read failed: ' + str(e) + '\n')
+    sys.exit(0)
+entries = cfg.setdefault('plugins', {}).setdefault('entries', {})
+entry = entries.setdefault('clawaegisex', {})
+hooks = entry.setdefault('hooks', {})
+if hooks.get('allowConversationAccess') is True:
+    sys.exit(0)
+hooks['allowConversationAccess'] = True
+entry['hooks'] = hooks
+entries['clawaegisex'] = entry
+tmp = cfg_path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+os.replace(tmp, cfg_path)
+print('OK: openclaw.json patched with plugins.entries.clawaegisex.hooks.allowConversationAccess=true')
+" || true
 # pkill openclaw matches both comm=openclaw (gateway) and comm=openclaw-agent.
 # s6-supervise restarts the agent within ~1s, agent re-execs gateway which
 # auto-discovers extensions/clawaegisex/ and loads the new code.
@@ -805,8 +922,45 @@ func (s *service) GetEffectiveAegisConfig(instanceID int) (*EffectiveAegisConfig
 }
 
 // GetLiveAegisConfig — see Service interface doc.
+//
+// Primary path: read secplane_instance_runtime_config (one row per
+// instance+skill, upserted on every successful dispatch). This works for
+// plugin auto-discover installs where the agent never uploads a skill_blob.
+//
+// Fallback path: when no runtime_config row exists (e.g. instance was
+// dispatched before this table existed), unzip the latest clawaegisex
+// skill_blob the agent uploaded. The fallback is best-effort and may 404 for
+// plugin installs — that's expected.
 func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, error) {
-	// 1. Find this instance's clawaegisex skill row.
+	// --- Primary: runtime_config table ---
+	if s.runtimeCfgRepo != nil {
+		rec, err := s.runtimeCfgRepo.GetByInstance(instanceID, "clawaegisex")
+		if err != nil {
+			return nil, fmt.Errorf("lookup runtime_config: %w", err)
+		}
+		if rec != nil {
+			cfg := rec.UserConfigMap()
+			if cfg == nil {
+				return nil, fmt.Errorf("runtime_config: parse user_config json for instance %d", instanceID)
+			}
+			return &LiveAegisConfig{
+				InstanceID:      instanceID,
+				SkillName:       rec.SkillName,
+				Revision:        rec.Revision,
+				Sha256:          rec.Sha256,
+				ConfigSha256:    rec.ConfigSha256,
+				Source:          rec.Source,
+				CommandID:       rec.CommandID,
+				Status:          rec.Status,
+				DispatchedAt:    &rec.DispatchedAt,
+				UserConfig:      cfg,
+				Provenance:      "runtime_config",
+				FetchedAt:       time.Now().UTC(),
+			}, nil
+		}
+	}
+
+	// --- Fallback: skill_blob (legacy) ---
 	items, err := s.skills.ListInstanceSkills(instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("list instance skills: %w", err)
@@ -817,7 +971,6 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		if it.Skill == nil {
 			continue
 		}
-		// 名字匹配 "clawaegisex" 或类似 (大小写不敏感, 容忍连字符变体)
 		nameLower := strings.ToLower(it.Skill.Name)
 		keyLower := strings.ToLower(it.Skill.SkillKey)
 		if strings.Contains(nameLower, "clawaegisex") ||
@@ -832,16 +985,14 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		}
 	}
 	if aegisSkillID == 0 {
-		return nil, fmt.Errorf("clawaegisex skill not registered on instance %d (agent may not have reported yet)", instanceID)
+		return nil, fmt.Errorf("clawaegisex skill not registered on instance %d and no runtime_config row (dispatch first)", instanceID)
 	}
 
-	// 2. Pull the latest version's blob bytes via SkillService.DownloadSkill.
 	zipBytes, _, err := s.skills.DownloadSkill(userID, aegisSkillID)
 	if err != nil {
 		return nil, fmt.Errorf("download skill blob (skill_id=%d): %w", aegisSkillID, err)
 	}
 
-	// 3. Open as zip and extract user_config.json (look at common locations).
 	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("open skill zip: %w", err)
@@ -886,7 +1037,6 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		return nil, fmt.Errorf("parse user_config.json: %w", err)
 	}
 
-	// content_hash 取 sha256 (跟 skill_blobs.content_hash 字段对齐展示用)
 	sum := sha256.Sum256(zipBytes)
 	return &LiveAegisConfig{
 		InstanceID:      instanceID,
@@ -895,8 +1045,49 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		BlobContentHash: hex.EncodeToString(sum[:]),
 		SourceFile:      sourceFile,
 		UserConfig:      userCfg,
+		Provenance:      "skill_blob",
 		FetchedAt:       time.Now().UTC(),
 	}, nil
+}
+
+// recordRuntimeConfig upserts a secplane_instance_runtime_config row after a
+// successful dispatch target. skillName is "clawaegisex" or "secureclaw";
+// source is "dispatch_aegis" / "dispatch_aegis_apply" / "dispatch_secureclaw".
+// Failures are logged-and-swallowed: a runtime_config write failure MUST NOT
+// fail the dispatch itself (the on-pod write already succeeded).
+func (s *service) recordRuntimeConfig(
+	instanceID int,
+	skillName string,
+	revision string,
+	sha256Hex string,
+	userConfig any,
+	source string,
+	commandID *int,
+) {
+	if s.runtimeCfgRepo == nil {
+		return
+	}
+	if instanceID == 0 || skillName == "" {
+		return
+	}
+	userCfgJSON, err := json.Marshal(userConfig)
+	if err != nil {
+		return
+	}
+	cfgSum := sha256.Sum256(userCfgJSON)
+	rec := &RuntimeConfigRecord{
+		InstanceID:   instanceID,
+		SkillName:    skillName,
+		Revision:     revision,
+		Sha256:       sha256Hex,
+		ConfigSha256: hex.EncodeToString(cfgSum[:]),
+		UserConfig:   string(userCfgJSON),
+		Source:       source,
+		CommandID:    commandID,
+		Status:       "succeeded",
+		DispatchedAt: time.Now().UTC(),
+	}
+	_ = s.runtimeCfgRepo.Upsert(rec)
 }
 
 // injectOutboundEntries 把 secplane_outbound_trusted 表里 active 的条目灌进

@@ -4,7 +4,8 @@ import { instanceService } from '../../services/instanceService';
 
 // 按钮 + modal — 拉取某个 openclaw 实例 pod 内 ClawAegisEx 实时 user_config.json
 // 通过 GET /secplane/instances/:id/aegis/live-config
-//   → backend 从 instance 的 clawaegisex skill_blob 解 zip 拿 user_config.json
+//   → backend 优先读 secplane_instance_runtime_config 表（每次 dispatch 成功都 upsert）
+//   → 找不到时回退到 agent 上报的 skill_blob 解 zip（plugin auto-discover 安装路径下后者 404）
 //   → 比 effective-config（DB 里 last-dispatched 那份）更接近 pod 真实状态
 
 type InstanceLite = { id: number; name: string; status?: string };
@@ -135,17 +136,54 @@ const LiveAegisConfigButton: React.FC = () => {
                 </div>
               )}
               {!error && !data && !loading && (
-                <div className="muted text-sm">选实例 → 点"拉取实时配置"。后端会去找 instance 的 clawaegisex skill_blob，解 zip 取出 user_config.json。</div>
+                <div className="muted text-sm">选实例 → 点"拉取实时配置"。后端优先读 <code>secplane_instance_runtime_config</code> 表（每次 dispatch 成功都 upsert），找不到时回退到 agent 上报的 skill_blob 解 zip。</div>
               )}
               {data && (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '6px 12px', marginBottom: 12, fontSize: 12 }}>
                     <span className="muted-strong">Skill</span>
-                    <span><code className="text-xs">{data.skill_name}</code> (id={data.skill_id})</span>
-                    <span className="muted-strong">Blob hash</span>
-                    <code className="text-xs muted">{data.blob_content_hash.slice(0, 24)}…</code>
-                    <span className="muted-strong">Source file</span>
-                    <code className="text-xs muted">{data.source_file}</code>
+                    <span><code className="text-xs">{data.skill_name ?? 'clawaegisex'}</code>{data.skill_id ? <> (id={data.skill_id})</> : null}</span>
+                    <span className="muted-strong">来源</span>
+                    <span>
+                      <code className="text-xs">{data.provenance}</code>
+                      {data.source && <> · <code className="text-xs muted">{data.source}</code></>}
+                    </span>
+                    {data.revision && (
+                      <>
+                        <span className="muted-strong">Revision</span>
+                        <code className="text-xs muted">{data.revision}</code>
+                      </>
+                    )}
+                    {data.config_sha256 && (
+                      <>
+                        <span className="muted-strong">Config sha256</span>
+                        <code className="text-xs muted">{data.config_sha256.slice(0, 24)}…</code>
+                      </>
+                    )}
+                    {data.blob_content_hash && (
+                      <>
+                        <span className="muted-strong">Blob hash</span>
+                        <code className="text-xs muted">{data.blob_content_hash.slice(0, 24)}…</code>
+                      </>
+                    )}
+                    {data.source_file && (
+                      <>
+                        <span className="muted-strong">Source file</span>
+                        <code className="text-xs muted">{data.source_file}</code>
+                      </>
+                    )}
+                    {data.command_id && (
+                      <>
+                        <span className="muted-strong">Command ID</span>
+                        <code className="text-xs">#{data.command_id}</code>
+                      </>
+                    )}
+                    {data.dispatched_at && (
+                      <>
+                        <span className="muted-strong">Dispatched at</span>
+                        <span className="text-xs muted">{data.dispatched_at}</span>
+                      </>
+                    )}
                     <span className="muted-strong">Fetched at</span>
                     <span className="text-xs muted">{data.fetched_at}</span>
                   </div>

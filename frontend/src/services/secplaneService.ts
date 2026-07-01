@@ -322,10 +322,21 @@ export interface OutboundTrustedEndpoint {
 
 export interface LiveAegisConfig {
   instance_id: number;
-  skill_id: number;
-  skill_name: string;
-  blob_content_hash: string;
-  source_file: string;
+  // Primary path (runtime_config table).
+  skill_name?: string;
+  revision?: string;
+  sha256?: string;
+  config_sha256?: string;
+  source?: string;
+  command_id?: number;
+  status?: string;
+  dispatched_at?: string;
+  // Legacy skill_blob fallback fields.
+  skill_id?: number;
+  blob_content_hash?: string;
+  source_file?: string;
+  // "runtime_config" | "skill_blob".
+  provenance: string;
   user_config: Record<string, unknown>;
   fetched_at: string;
 }
