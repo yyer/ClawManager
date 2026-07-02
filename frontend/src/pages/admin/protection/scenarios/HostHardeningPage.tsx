@@ -333,7 +333,8 @@ type BaselineUiStatus =
   | 'repairing'
   | 'repaired'
   | 'roolbacking'
-  | 'rollbacked';
+  | 'rollbacked'
+  | 'resetting';
 
 /** repair / rollback result label i18n */
 function baselineResultLabel(
@@ -760,11 +761,16 @@ const HostHardeningPage: React.FC = () => {
     }
   };
   const runBaselineReset = async (): Promise<void> => {
+    setBaselineStatus('resetting');
     try {
       await resetBaseline();
       await refreshBaseline();
+      // reset 成功后强制回到 'home'，因为 /baseline/status 可能仍返回 'scanned'
+      setBaselineStatus('home');
+      fireToast(t(`${h}.toast.resetSuccess`), 'success');
     } catch (err) {
       fireToast(t(`${h}.toast.resetFailed`, { msg: (err as Error).message }), 'warning');
+      await refreshBaseline();
     }
   };
 
@@ -1723,7 +1729,7 @@ const HostHardeningPage: React.FC = () => {
 
         {/* ===== 合规检测 / CIS 基线（mock 矩阵；待接 KSec baseline 模块）===== */}
         {mainTab === 'baseline' && (() => {
-          const isInProgress = baselineStatus === 'scanning' || baselineStatus === 'repairing' || baselineStatus === 'roolbacking';
+          const isInProgress = baselineStatus === 'scanning' || baselineStatus === 'repairing' || baselineStatus === 'roolbacking' || baselineStatus === 'resetting';
           const phase: 'scanned' | 'repaired' | 'rollbacked' | null =
             baselineStatus === 'scanned' ? 'scanned' :
             baselineStatus === 'repaired' ? 'repaired' :
@@ -1785,6 +1791,7 @@ const HostHardeningPage: React.FC = () => {
                         {baselineStatus === 'scanning' && t(`${h}.baseline.scanning`)}
                         {baselineStatus === 'repairing' && t(`${h}.baseline.repairing`)}
                         {baselineStatus === 'roolbacking' && t(`${h}.baseline.rollingBack`)}
+                        {baselineStatus === 'resetting' && t(`${h}.baseline.resetting`)}
                       </h3>
                       <div className="text-xs muted mt-1">{t(`${h}.baseline.backendRunning`)}</div>
                     </>
