@@ -162,6 +162,8 @@ type service struct {
 	podService        *k8s.PodService
 	cmdRepo           repository.InstanceCommandRepository
 	runtimeCfgRepo    RuntimeConfigRepository
+	bindingRepo       repository.InstanceRuntimeBindingRepository
+	runtimePodRepo    repository.RuntimePodRepository
 }
 
 // KillSwitchProvider — 我们只需要读状态，不引入对 killswitch 包的循环依赖。
@@ -185,6 +187,8 @@ func NewService(
 	podService *k8s.PodService,
 	cmdRepo repository.InstanceCommandRepository,
 	runtimeCfgRepo RuntimeConfigRepository,
+	bindingRepo repository.InstanceRuntimeBindingRepository,
+	runtimePodRepo repository.RuntimePodRepository,
 ) Service {
 	return &service{
 		outboundService: outboundSvc,
@@ -195,6 +199,8 @@ func NewService(
 		podService:      podService,
 		cmdRepo:          cmdRepo,
 		runtimeCfgRepo: runtimeCfgRepo,
+		bindingRepo:    bindingRepo,
+		runtimePodRepo: runtimePodRepo,
 	}
 }
 
@@ -816,24 +822,86 @@ func (s *service) markCommandTerminal(cmdID int, status, errMsg string) error {
 	return s.cmdRepo.Update(cmd)
 }
 
-// execInDesktop runs a command in the desktop container of the instance's pod
-// via k8s exec (SPDY). Modeled on openclaw_transfer_service.exec but targets
-// the desktop container (not the runtime container) since clawaegisex lives in
-// /config/.openclaw/ which is the desktop container's PVC.
+// execInDesktop runs a command in the instance's pod via k8s exec (SPDY).
+//
+// Two pod models are supported:
+//   - Pro mode (legacy): each instance has its own pod in clawmanager-user-<uid>
+//     namespace with label instance-id=<id>, container name "desktop", and
+//     CLAWMANAGER_AGENT_PERSISTENT_DIR=/config. Located via PodService.GetPod.
+//   - Lite mode (shared runtime pool): multiple instances share one
+//     openclaw-runtime pod in clawmanager-system; the binding is recorded in
+//     instance_runtime_bindings. Container name is "runtime" and the
+//     persistent dir is <workspace_path>/home (CLAWMANAGER_AGENT_PERSISTENT_DIR
+//     is not set by the runtime, so we inject it via the exec command env).
+//
+// If a binding row exists for the instance, lite mode is assumed; otherwise we
+// fall back to the pro-mode GetPod lookup.
 func (s *service) execInDesktop(ctx context.Context, userID, instanceID int, command []string, stdin io.Reader) (string, string, error) {
 	if s.podService == nil || s.podService.GetClient() == nil || s.podService.GetClient().Clientset == nil {
 		return "", "", fmt.Errorf("k8s client not initialized")
 	}
-	pod, err := s.podService.GetPod(ctx, userID, instanceID)
-	if err != nil {
-		return "", "", fmt.Errorf("get pod: %w", err)
+
+	var podNamespace, podName, container, persistentDir string
+
+	// Lite mode: look up binding + runtime_pods.
+	if s.bindingRepo != nil && s.runtimePodRepo != nil {
+		binding, err := s.bindingRepo.GetByInstanceID(ctx, instanceID)
+		if err != nil {
+			return "", "", fmt.Errorf("load runtime binding for instance %d: %w", instanceID, err)
+		}
+		if binding != nil {
+			runtimePod, err := s.runtimePodRepo.GetByID(ctx, binding.RuntimePodID)
+			if err != nil {
+				return "", "", fmt.Errorf("load runtime pod %d: %w", binding.RuntimePodID, err)
+			}
+			if runtimePod == nil {
+				return "", "", fmt.Errorf("runtime pod %d not found for instance %d", binding.RuntimePodID, instanceID)
+			}
+			podNamespace = runtimePod.Namespace
+			podName = runtimePod.PodName
+			container = "runtime"
+			// workspace_path is the instance root (e.g.
+			// /workspaces/openclaw/user-1/instance-2); the openclaw home is
+			// <root>/home, matching openclaw-runtime's HOME layout.
+			if wp := strings.TrimSpace(binding.WorkspacePath); wp != "" {
+				persistentDir = strings.TrimRight(wp, "/") + "/home"
+			} else {
+				persistentDir = "/config"
+			}
+		}
 	}
+
+	// Pro mode fallback: per-instance pod with instance-id label.
+	if podName == "" {
+		pod, err := s.podService.GetPod(ctx, userID, instanceID)
+		if err != nil {
+			return "", "", fmt.Errorf("get pod: %w", err)
+		}
+		podNamespace = pod.Namespace
+		podName = pod.Name
+		container = "desktop"
+		persistentDir = "" // pro mode has CLAWMANAGER_AGENT_PERSISTENT_DIR in env
+	}
+
+	// For lite mode, inject CLAWMANAGER_AGENT_PERSISTENT_DIR into the exec
+	// script's env. Pro mode already has it set in the container env.
+	wrappedCommand := command
+	if persistentDir != "" {
+		// command is typically ["sh", "-lc", <script>]. Prepend an export to
+		// the script so CLAWMANAGER_AGENT_PERSISTENT_DIR is visible to the
+		// script body (which uses ${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}).
+		if len(command) >= 3 && command[0] == "sh" && command[1] == "-lc" {
+			exportPrefix := fmt.Sprintf("export CLAWMANAGER_AGENT_PERSISTENT_DIR=%q; ", persistentDir)
+			wrappedCommand = []string{command[0], command[1], exportPrefix + command[2]}
+		}
+	}
+
 	var stdout, stderr bytes.Buffer
 	req := s.podService.GetClient().Clientset.CoreV1().RESTClient().Post().
-		Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec")
+		Resource("pods").Name(podName).Namespace(podNamespace).SubResource("exec")
 	req.VersionedParams(&corev1.PodExecOptions{
-		Container: "desktop",
-		Command:   command,
+		Container: container,
+		Command:   wrappedCommand,
 		Stdin:     stdin != nil,
 		Stdout:    true,
 		Stderr:    true,

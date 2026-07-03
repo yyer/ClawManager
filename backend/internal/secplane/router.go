@@ -77,7 +77,9 @@ func NewModule(
 	podSvc := k8s.NewPodService()
 	cmdRepo := repository.NewInstanceCommandRepository(sess)
 	runtimeCfgRepo := dispatch.NewRuntimeConfigRepository(sess)
-	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc, outboundSvc, podSvc, cmdRepo, runtimeCfgRepo)
+	bindingRepo := repository.NewInstanceRuntimeBindingRepository(sess)
+	runtimePodRepo := repository.NewRuntimePodRepository(sess)
+	dispatchSvc := dispatch.NewService(policySvc, cmdSvc, instanceRepo, skillSvc, outboundSvc, podSvc, cmdRepo, runtimeCfgRepo, bindingRepo, runtimePodRepo)
 
 	killSwitchSvc := killswitch.NewService(sess)
 	dispatchSvc.SetKillSwitchProvider(killSwitchAdapter{svc: killSwitchSvc})
