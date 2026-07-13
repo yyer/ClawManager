@@ -219,6 +219,14 @@ type instanceService struct {
 	networkPolicyService  *k8s.NetworkPolicyService
 }
 
+const (
+	defaultGatewayTokenAliasTTL = 7 * 24 * time.Hour
+	gatewayTokenAliasTTLEnv     = "CLAWMANAGER_GATEWAY_TOKEN_ALIAS_TTL_HOURS"
+)
+
+type gatewayTokenAliasRecorder interface {
+	UpsertGatewayTokenAlias(ctx context.Context, instanceID int, accessToken string, expiresAt time.Time) error
+}
 type gatewayModelInjection struct {
 	defaultModel string
 	modelsJSON   string
@@ -977,7 +985,9 @@ func (s *instanceService) securityModeForInstance(instanceType string) k8s.PodSe
 
 func (s *instanceService) ensureGatewayToken(instance *models.Instance) (string, error) {
 	if instance.AccessToken != nil && strings.TrimSpace(*instance.AccessToken) != "" {
-		return strings.TrimSpace(*instance.AccessToken), nil
+		token := strings.TrimSpace(*instance.AccessToken)
+		s.refreshGatewayTokenAlias(instance.ID, token)
+		return token, nil
 	}
 
 	tokenBytes := make([]byte, 32)
@@ -992,9 +1002,34 @@ func (s *instanceService) ensureGatewayToken(instance *models.Instance) (string,
 		return "", fmt.Errorf("failed to persist instance gateway token: %w", err)
 	}
 
+	s.refreshGatewayTokenAlias(instance.ID, token)
 	return token, nil
 }
 
+func (s *instanceService) refreshGatewayTokenAlias(instanceID int, token string) {
+	recorder, ok := s.instanceRepo.(gatewayTokenAliasRecorder)
+	if !ok {
+		return
+	}
+	ttl := gatewayTokenAliasTTL()
+	if ttl <= 0 || strings.TrimSpace(token) == "" || instanceID <= 0 {
+		return
+	}
+	if err := recorder.UpsertGatewayTokenAlias(context.Background(), instanceID, token, time.Now().UTC().Add(ttl)); err != nil {
+		fmt.Printf("Warning: failed to refresh gateway token alias for instance %d: %v\n", instanceID, err)
+	}
+}
+
+func gatewayTokenAliasTTL() time.Duration {
+	value := optionalIntEnv(gatewayTokenAliasTTLEnv)
+	if value == nil {
+		return defaultGatewayTokenAliasTTL
+	}
+	if *value <= 0 {
+		return 0
+	}
+	return time.Duration(*value) * time.Hour
+}
 func (s *instanceService) buildGatewayEnv(instance *models.Instance) (map[string]string, error) {
 	if instance == nil || instance.AccessToken == nil || strings.TrimSpace(*instance.AccessToken) == "" {
 		return map[string]string{}, nil
@@ -1014,6 +1049,7 @@ func (s *instanceService) buildGatewayEnv(instance *models.Instance) (map[string
 	}
 
 	token := strings.TrimSpace(*instance.AccessToken)
+	s.refreshGatewayTokenAlias(instance.ID, token)
 	return map[string]string{
 		"CLAWMANAGER_LLM_BASE_URL":   baseURL,
 		"CLAWMANAGER_LLM_API_KEY":    token,

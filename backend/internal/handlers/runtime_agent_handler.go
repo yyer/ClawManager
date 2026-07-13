@@ -23,10 +23,11 @@ type runtimeEventPublisher interface {
 }
 
 type RuntimeAgentHandler struct {
-	cfg         config.RuntimePoolConfig
-	podRepo     repository.RuntimePodRepository
-	bindingRepo repository.InstanceRuntimeBindingRepository
-	events      runtimeEventPublisher
+	cfg          config.RuntimePoolConfig
+	podRepo      repository.RuntimePodRepository
+	bindingRepo  repository.InstanceRuntimeBindingRepository
+	instanceRepo repository.InstanceRepository
+	events       runtimeEventPublisher
 }
 
 type runtimeAgentPodIdentity struct {
@@ -88,12 +89,13 @@ type runtimeAgentGatewayReport struct {
 	HealthAt     *time.Time `json:"health_at,omitempty"`
 }
 
-func NewRuntimeAgentHandler(cfg config.RuntimePoolConfig, podRepo repository.RuntimePodRepository, bindingRepo repository.InstanceRuntimeBindingRepository, events runtimeEventPublisher) *RuntimeAgentHandler {
+func NewRuntimeAgentHandler(cfg config.RuntimePoolConfig, podRepo repository.RuntimePodRepository, bindingRepo repository.InstanceRuntimeBindingRepository, instanceRepo repository.InstanceRepository, events runtimeEventPublisher) *RuntimeAgentHandler {
 	return &RuntimeAgentHandler{
-		cfg:         cfg,
-		podRepo:     podRepo,
-		bindingRepo: bindingRepo,
-		events:      events,
+		cfg:          cfg,
+		podRepo:      podRepo,
+		bindingRepo:  bindingRepo,
+		instanceRepo: instanceRepo,
+		events:       events,
 	}
 }
 
@@ -270,7 +272,9 @@ func (h *RuntimeAgentHandler) ReportGateways(c *gin.Context) {
 	if !ok {
 		return
 	}
+	reported := make(map[int]int, len(req.Gateways))
 	for _, gateway := range req.Gateways {
+		reported[gateway.InstanceID] = gateway.Generation
 		binding, err := h.bindingRepo.GetByInstanceID(c.Request.Context(), gateway.InstanceID)
 		if err != nil {
 			utils.HandleError(c, err)
@@ -279,18 +283,39 @@ func (h *RuntimeAgentHandler) ReportGateways(c *gin.Context) {
 		if binding == nil || binding.RuntimePodID != podID || binding.Generation != gateway.Generation {
 			continue
 		}
-		state := strings.TrimSpace(gateway.State)
-		switch state {
-		case "running", "healthy":
+		lifecycle := services.NormalizeRuntimeGatewayLifecycle(gateway.State, gateway.ErrorMessage)
+		if lifecycle.Running {
 			if err := h.bindingRepo.UpdateRunning(c.Request.Context(), gateway.InstanceID, gateway.Generation, strings.TrimSpace(gateway.GatewayID), gateway.GatewayPort, gateway.GatewayPID); err != nil {
 				utils.HandleError(c, err)
 				return
 			}
-		default:
-			if err := h.bindingRepo.UpdateState(c.Request.Context(), gateway.InstanceID, gateway.Generation, state, gateway.ErrorMessage); err != nil {
+		} else {
+			if err := h.bindingRepo.UpdateState(c.Request.Context(), gateway.InstanceID, gateway.Generation, lifecycle.BindingState, lifecycle.Message); err != nil {
 				utils.HandleError(c, err)
 				return
 			}
+		}
+		if err := h.syncInstanceRuntimeState(c.Request.Context(), gateway, lifecycle); err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+	}
+	bindings, err := h.bindingRepo.ListByRuntimePodID(c.Request.Context(), podID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	now := time.Now().UTC()
+	for _, binding := range bindings {
+		if _, reportedByInstance := reported[binding.InstanceID]; reportedByInstance {
+			continue
+		}
+		if !h.missingGatewayCleanupEligible(binding, now) {
+			continue
+		}
+		if _, err := h.bindingRepo.DeleteRunningByInstanceIDGenerationAndReleaseSlot(c.Request.Context(), binding.InstanceID, podID, binding.Generation); err != nil {
+			utils.HandleError(c, err)
+			return
 		}
 	}
 	h.publish(c.Request.Context(), "runtime_pod_gateways_reported", map[string]any{
@@ -298,6 +323,23 @@ func (h *RuntimeAgentHandler) ReportGateways(c *gin.Context) {
 		"gateway_count": len(req.Gateways),
 	})
 	utils.Success(c, http.StatusOK, "Runtime gateway report accepted", nil)
+}
+
+func (h *RuntimeAgentHandler) missingGatewayCleanupEligible(binding models.InstanceRuntimeBinding, now time.Time) bool {
+	if h == nil || h.cfg.HeartbeatTimeout <= 0 || binding.LastHealthAt == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(binding.State), services.RuntimeGatewayBindingRunning) {
+		return false
+	}
+	return !binding.LastHealthAt.After(now.Add(-h.cfg.HeartbeatTimeout))
+}
+
+func (h *RuntimeAgentHandler) syncInstanceRuntimeState(ctx context.Context, gateway runtimeAgentGatewayReport, lifecycle services.RuntimeGatewayLifecycleState) error {
+	if h.instanceRepo == nil {
+		return nil
+	}
+	return h.instanceRepo.UpdateRuntimeState(ctx, gateway.InstanceID, lifecycle.InstanceState, gateway.Generation, lifecycle.Message)
 }
 
 func (h *RuntimeAgentHandler) ReportSkills(c *gin.Context) {

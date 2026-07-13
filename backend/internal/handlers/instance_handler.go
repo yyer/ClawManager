@@ -30,7 +30,6 @@ const openclawMinArchiveBytes = 100
 const (
 	defaultWorkspaceArchiveMaxMiB = int64(500)
 	workspaceArchiveMaxMiBEnv     = "CLAWMANAGER_WORKSPACE_ARCHIVE_MAX_MIB"
-	maxLiteBatchCreateCount       = 20
 	maxLiteBatchDeleteCount       = 100
 )
 
@@ -228,7 +227,7 @@ type BatchCreateLiteInstanceTemplate struct {
 // BatchCreateLiteInstancesRequest represents a lite batch create request
 type BatchCreateLiteInstancesRequest struct {
 	NamePrefix string                           `json:"name_prefix" binding:"required,min=1,max=40"`
-	Count      int                              `json:"count" binding:"required,min=1,max=20"`
+	Count      int                              `json:"count" binding:"required,min=1"`
 	StartIndex int                              `json:"start_index" binding:"omitempty,min=0,max=9999"`
 	Template   *BatchCreateLiteInstanceTemplate `json:"template,omitempty"`
 }
@@ -480,9 +479,6 @@ func buildLiteBatchCreateRequests(req BatchCreateLiteInstancesRequest) ([]servic
 	count := req.Count
 	if count <= 0 {
 		return nil, nil, fmt.Errorf("count is required")
-	}
-	if count > maxLiteBatchCreateCount {
-		return nil, nil, fmt.Errorf("count must be at most %d", maxLiteBatchCreateCount)
 	}
 
 	prefix := strings.TrimSpace(req.NamePrefix)

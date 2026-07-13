@@ -20,7 +20,7 @@
 /frontend/node_modules/
 /frontend/dist/
 /frontend/dist-ssr/
-
+/outputs/
 # Logs
 *.log
 npm-debug.log*
@@ -61,8 +61,13 @@ Thumbs.db
 /fix-install-plan.md
 /docs/deployment-storage-remediation-plan.zh-CN.md
 
+# Team runtime config snapshots
+/team-*.json
+/agency-agents-main/
+
 
 .codex-logs/
+.codex-temp/
 .cache/
 .VSCodeCounter/
 .superpowers/
@@ -72,3 +77,10 @@ AGENTS.md
 TASK_BREAKDOWN.md
 dev_progress.md
 CLAUDE.md
+TEAM_IMAGE_DEPLOY_STEPS.md
+TEAM_PROFILES_LOCAL_TESTING.md
+/team-optimization-docs/
+/clawmanager-apply.sh
+/clawmanager-team-profiles-test.yaml
+/clawmanager-tenant.yaml
+.codex
