@@ -58,49 +58,6 @@ const DEFAULT_POLICY: CollaborationPolicy = {
   redisAclPreview: '',
 };
 
-const MOCK_ALERTS: GovernanceAlertRow[] = [
-  {
-    id: 'mock-1',
-    ts: '2026-06-09T15:58:00+08:00',
-    severity: 'high',
-    category: '身份伪造',
-    member: 'coder',
-    action: 'BLOCK',
-    detail: 'sender_id=leader 与 instance_id 不匹配，Relay 拒绝写入 claw:team:12:inbox:reviewer。',
-    source: 'prototype',
-  },
-  {
-    id: 'mock-2',
-    ts: '2026-06-09T15:46:00+08:00',
-    severity: 'high',
-    category: 'ACL 越权',
-    member: 'reviewer',
-    action: 'DENY',
-    detail: '尝试 XREAD claw:team:12:inbox:coder，被 per-member ACL 拒绝。',
-    source: 'prototype',
-  },
-  {
-    id: 'mock-3',
-    ts: '2026-06-09T15:31:00+08:00',
-    severity: 'medium',
-    category: '速率异常',
-    member: 'coder',
-    action: 'THROTTLE',
-    detail: '30 秒内 XADD 速率达到 46 rps，超过阈值 20 rps，已触发限流。',
-    source: 'prototype',
-  },
-  {
-    id: 'mock-4',
-    ts: '2026-06-09T15:12:00+08:00',
-    severity: 'medium',
-    category: '审批联动',
-    member: 'leader',
-    action: 'APPROVAL',
-    detail: '高风险转派请求命中审批阈值 85，转入审批中心待处理。',
-    source: 'prototype',
-  },
-];
-
 const RULE_CARDS: Array<{
   key: keyof Pick<CollaborationPolicy, 'identityMode' | 'schemaMode' | 'quotaMode' | 'approvalMode'>;
   title: string;
@@ -253,7 +210,7 @@ const CollaborationGovernancePage: React.FC = () => {
       detail: item.evidence || item.raw_payload || '协同治理事件',
       source: 'platform' as const,
     }));
-    return [...MOCK_ALERTS, ...mapped].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+    return [...mapped].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
   }, [liveAlerts]);
 
   const filteredAlerts = useMemo(
