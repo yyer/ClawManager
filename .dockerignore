@@ -1,12 +1,7 @@
 .git
-.gitignore
-.DS_Store
+.github
+.vscode
 node_modules
-frontend/node_modules
-frontend/dist
-backend/bin
-backend/.cache
-dev_docs
-docs
-scripts
+backend/vendor
 *.log
+*.tmp
