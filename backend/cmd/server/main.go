@@ -151,6 +151,7 @@ func main() {
 		teamRepo,
 		instanceService,
 		services.WithTeamRuntimeWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
+		services.WithTeamRedisACLManager(services.NewRedisACLManager(services.DefaultAdminRedisURL())),
 		services.WithTeamOpenClawConfigService(openClawConfigService),
 		services.WithTeamCollabService(secplaneModule.PolicyService),
 	)

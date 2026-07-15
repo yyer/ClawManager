@@ -27,10 +27,21 @@ const (
 	teamSharedUmask        = "0002"
 	teamRedisURLSecretKey  = "CLAWMANAGER_TEAM_REDIS_URL"
 	teamTokenSecretKey     = "CLAWMANAGER_TEAM_TOKEN"
+	// teamMemberRedisURLsSecretKey holds a JSON map of memberKey -> per-member
+	// Redis URL (with embedded ACL credentials). Written when a team is
+	// provisioned with redisAclMode=per_member; absent otherwise. Read by
+	// monitorACLHealth to probe each member's ACL isolation at runtime.
+	teamMemberRedisURLsSecretKey = "CLAWMANAGER_TEAM_REDIS_MEMBER_URLS"
 
 	defaultTeamTaskStaleTimeout = 30 * time.Minute
 	teamTaskStaleSweepInterval  = 30 * time.Second
 	teamConsumerScanInterval    = 10 * time.Second
+
+	// defaultACLProbeInterval is how often monitorACLHealth re-validates that
+	// per-member Redis ACL isolation still holds for every running team. 5min
+	// trades freshness for low Redis noise (each probe issues one XADD that
+	// Redis logs as NOPERM).
+	defaultACLProbeInterval = 5 * time.Minute
 
 	initialLeaderTaskIntent = "team_bootstrap_introduction"
 	teamTaskCompletionTool  = "team_complete_task"
@@ -147,6 +158,22 @@ type teamService struct {
 	collabQuotaWindows map[string][]int64
 	collabQuotaMu      sync.Mutex
 
+	// Redis per-member ACL manager. nil when ACL is not wired (back-compat);
+	// all ACL hooks become no-ops. When non-nil and governance policy has
+	// redisAclMode=per_member, provisionTeamK8s creates per-member ACL users
+	// and member Pods receive per-member Redis URLs in their env.
+	aclManager RedisACLManager
+
+	// aclProbeInterval bounds how often monitorACLHealth re-checks ACL
+	// isolation. Zero disables the probe (back-compat).
+	aclProbeInterval time.Duration
+
+	// eventsRateWindows tracks events-stream XADD timestamps per
+	// (teamID, memberKey) for runtime rate-limit alerting. Populated by
+	// consumeTeamEvents as it reads events; cleared after an alert fires.
+	eventsRateWindows map[int]map[string][]int64
+	eventsRateMu      sync.Mutex
+
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	mu                   sync.Mutex
@@ -174,6 +201,25 @@ type plannedTeamMember struct {
 type teamRuntimeSecrets struct {
 	RedisURL string
 	Token    string
+
+	// MemberRedisURLs holds per-member Redis URLs when ACL is provisioned.
+	// Empty (or missing entry for a memberKey) falls back to RedisURL.
+	MemberRedisURLs map[string]string
+}
+
+// RedisURLForMember returns the per-member Redis URL when ACL is provisioned
+// for this team, falling back to the shared admin URL otherwise. Keeps
+// buildTeamMemberInstanceRequestWithSecrets agnostic of ACL state.
+func (r *teamRuntimeSecrets) RedisURLForMember(memberKey string) string {
+	if r == nil {
+		return ""
+	}
+	if r.MemberRedisURLs != nil {
+		if url, ok := r.MemberRedisURLs[memberKey]; ok && strings.TrimSpace(url) != "" {
+			return url
+		}
+	}
+	return r.RedisURL
 }
 
 type TeamServiceOption func(*teamService)
@@ -198,6 +244,17 @@ func WithTeamOpenClawConfigService(service OpenClawConfigService) TeamServiceOpt
 	}
 }
 
+// WithTeamRedisACLManager wires a RedisACLManager. When nil (or not wired),
+// all ACL hooks are no-ops and team creation behaves as before (shared
+// admin URL for all members). When wired, provisionTeamK8s consults the
+// collab policy's redisAclMode and provisions per-member ACL users in
+// per_member mode.
+func WithTeamRedisACLManager(m RedisACLManager) TeamServiceOption {
+	return func(s *teamService) {
+		s.aclManager = m
+	}
+}
+
 func NewTeamService(repo repository.TeamRepository, instanceService InstanceService, opts ...TeamServiceOption) TeamService {
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &teamService{
@@ -211,6 +268,7 @@ func NewTeamService(repo repository.TeamRepository, instanceService InstanceServ
 		cancel:               cancel,
 		consumers:            map[int]struct{}{},
 		runtimeWorkspaceRoot: "/workspaces",
+		aclProbeInterval:     defaultACLProbeInterval,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -248,6 +306,7 @@ func (s *teamService) StartBackground(parent context.Context) {
 
 	fmt.Println("[TeamService] Starting leader-only background workers...")
 	s.ensureStaleTaskMonitor(ctx)
+	s.ensureACLHealthMonitor(ctx)
 }
 
 // StopBackground stops all background workers and blocks until they have fully
@@ -385,7 +444,7 @@ func (s *teamService) CreateTeam(userID int, req CreateTeamRequest) (*TeamDetail
 		return nil, s.rollbackTeamCreation(userID, team, err)
 	}
 
-	runtimeSecrets, err := s.provisionTeamK8s(userID, team, redisURL, sharedStorageGB, strings.TrimSpace(req.StorageClass))
+	runtimeSecrets, err := s.provisionTeamK8s(userID, team, redisURL, sharedStorageGB, strings.TrimSpace(req.StorageClass), memberPlans)
 	if err != nil {
 		return nil, s.rollbackTeamCreation(userID, team, err)
 	}
@@ -544,7 +603,7 @@ func appendTeamTaskCompletionInstruction(prompt string) string {
 	return base + "\n\n" + instruction
 }
 
-func (s *teamService) provisionTeamK8s(userID int, team *models.Team, redisURL string, sharedStorageGB int, storageClass string) (*teamRuntimeSecrets, error) {
+func (s *teamService) provisionTeamK8s(userID int, team *models.Team, redisURL string, sharedStorageGB int, storageClass string, memberPlans []plannedTeamMember) (*teamRuntimeSecrets, error) {
 	ctx := context.Background()
 	pvc, err := s.pvcService.CreateTeamSharedPVC(ctx, userID, team.ID, sharedStorageGB, storageClass)
 	if err != nil {
@@ -576,7 +635,93 @@ func (s *teamService) provisionTeamK8s(userID int, team *models.Team, redisURL s
 	if err := s.repo.UpdateTeam(team); err != nil {
 		return nil, err
 	}
-	return &teamRuntimeSecrets{RedisURL: redisURL, Token: teamToken}, nil
+	secrets := &teamRuntimeSecrets{RedisURL: redisURL, Token: teamToken}
+
+	// Per-member Redis ACL provisioning. Only runs when aclManager is wired
+	// AND collab policy has redisAclMode=per_member. On failure, logs a
+	// warning and continues with the shared admin URL (degrades to current
+	// behavior) so team creation is not blocked by ACL issues.
+	if s.aclManager != nil {
+		if p, _ := s.loadCollabPolicy(); p != nil && strings.EqualFold(strings.TrimSpace(p.RedisAclMode), "per_member") {
+			specs := make([]ACLMemberSpec, 0, len(memberPlans))
+			for _, plan := range memberPlans {
+				specs = append(specs, ACLMemberSpec{MemberKey: plan.MemberKey, IsLeader: plan.IsLeader})
+			}
+			aclRuntime, err := s.aclManager.Provision(ctx, team.ID, specs, redisURL)
+			if err != nil {
+				fmt.Printf("Warning: Team %d ACL provision failed (degrading to shared admin URL): %v\n", team.ID, err)
+			} else {
+				secrets.MemberRedisURLs = aclRuntime.MemberURLs
+				if err := s.persistMemberRedisURLs(ctx, userID, team.ID, secretName, aclRuntime.MemberURLs); err != nil {
+					fmt.Printf("Warning: Team %d failed to persist per-member Redis URLs: %v\n", team.ID, err)
+				}
+			}
+		}
+	}
+
+	return secrets, nil
+}
+
+// persistMemberRedisURLs merges the per-member URL JSON into the team's K8s
+// Secret without dropping the existing redis URL / token keys. Called after
+// ACL provision succeeds so monitorACLHealth can later read the URLs back
+// to probe each member's isolation at runtime.
+func (s *teamService) persistMemberRedisURLs(ctx context.Context, userID, teamID int, secretName string, memberURLs map[string]string) error {
+	if len(memberURLs) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(memberURLs)
+	if err != nil {
+		return fmt.Errorf("marshal member redis urls: %w", err)
+	}
+	client := k8s.GetClient()
+	if client == nil {
+		return fmt.Errorf("k8s client not initialized")
+	}
+	existingRedisURL, err := s.secretService.GetSecretValue(ctx, client.GetNamespace(userID), secretName, teamRedisURLSecretKey)
+	if err != nil {
+		return fmt.Errorf("read existing redis url: %w", err)
+	}
+	existingToken, err := s.secretService.GetSecretValue(ctx, client.GetNamespace(userID), secretName, teamTokenSecretKey)
+	if err != nil {
+		return fmt.Errorf("read existing token: %w", err)
+	}
+	return s.secretService.UpsertSecret(ctx, userID, secretName, map[string]string{
+		teamRedisURLSecretKey:          existingRedisURL,
+		teamTokenSecretKey:             existingToken,
+		teamMemberRedisURLsSecretKey:   string(payload),
+	}, map[string]string{
+		"app":        "clawreef",
+		"managed-by": "clawreef",
+		"team-id":    strconv.Itoa(teamID),
+	})
+}
+
+// loadTeamMemberRedisURLs reads the persisted per-member Redis URL map
+// from the team's K8s Secret. Returns an empty map (no error) when the
+// key is absent, which means the team was provisioned without per_member
+// ACL and should be skipped by monitorACLHealth.
+func (s *teamService) loadTeamMemberRedisURLs(ctx context.Context, team *models.Team) (map[string]string, error) {
+	if team == nil || team.RedisURLSecretName == nil || team.RedisURLSecretKey == nil {
+		return nil, nil
+	}
+	client := k8s.GetClient()
+	if client == nil {
+		return nil, fmt.Errorf("k8s client not initialized")
+	}
+	value, err := s.secretService.GetSecretValue(ctx, client.GetNamespace(team.UserID), *team.RedisURLSecretName, teamMemberRedisURLsSecretKey)
+	if err != nil {
+		return nil, err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	var urls map[string]string
+	if err := json.Unmarshal([]byte(value), &urls); err != nil {
+		return nil, fmt.Errorf("unmarshal member redis urls: %w", err)
+	}
+	return urls, nil
 }
 
 func (s *teamService) upsertTeamRosterConfig(userID int, team *models.Team, members []plannedTeamMember) (string, error) {
@@ -682,7 +827,7 @@ func (s *teamService) buildTeamMemberInstanceRequestWithSecrets(team *models.Tea
 	environmentOverrides := mergeEnvMaps(req.EnvironmentOverrides, memberEnv)
 	if instanceMode == InstanceModeLite && runtimeSecrets != nil {
 		environmentOverrides = mergeEnvMaps(environmentOverrides, map[string]string{
-			teamRedisURLSecretKey: runtimeSecrets.RedisURL,
+			teamRedisURLSecretKey: runtimeSecrets.RedisURLForMember(memberPlan.MemberKey),
 			teamTokenSecretKey:    runtimeSecrets.Token,
 		})
 		if strings.TrimSpace(rosterJSON) != "" {
@@ -997,6 +1142,15 @@ func (s *teamService) DeleteTeam(userID, teamID int) error {
 	if err := s.pvcService.DeleteTeamSharedPVC(ctx, userID, teamID); err != nil {
 		fmt.Printf("Warning: failed to delete Team %d shared PVC: %v\n", teamID, err)
 	}
+	if s.aclManager != nil {
+		if err := s.aclManager.Teardown(ctx, teamID); err != nil {
+			fmt.Printf("Warning: failed to teardown Team %d Redis ACL users: %v\n", teamID, err)
+		}
+	}
+
+	s.eventsRateMu.Lock()
+	delete(s.eventsRateWindows, teamID)
+	s.eventsRateMu.Unlock()
 
 	team.Name = deletedTeamName(team.Name, team.ID)
 	team.Status = models.TeamStatusDeleted
@@ -1031,6 +1185,11 @@ func (s *teamService) DeleteMember(userID, teamID int, memberID string) error {
 	member.UpdatedAt = now
 	if err := s.repo.UpdateMember(member); err != nil {
 		return err
+	}
+	if s.aclManager != nil {
+		if err := s.aclManager.RemoveMember(context.Background(), teamID, member.MemberKey); err != nil {
+			fmt.Printf("Warning: failed to remove Team %d member %s Redis ACL user: %v\n", teamID, member.MemberKey, err)
+		}
 	}
 	if member.InstanceID != nil && *member.InstanceID > 0 {
 		if err := s.instanceService.Delete(*member.InstanceID); err != nil {
@@ -1116,6 +1275,7 @@ func (s *teamService) consumeTeamEvents(ctx context.Context, teamID int) {
 		s.mu.Unlock()
 	}()
 
+	loopCount := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -1142,13 +1302,36 @@ func (s *teamService) consumeTeamEvents(ctx context.Context, teamID int) {
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		var policyOnce *policy.CollabPolicyPayload
 		for _, message := range messages {
 			if err := s.projectTeamEvent(team, bus, message); err != nil {
 				fmt.Printf("Warning: failed to project Team %d event %s: %v\n", teamID, message.ID, err)
 			}
+			if policyOnce == nil {
+				if p, _ := s.loadCollabPolicy(); p != nil {
+					policyOnce = p
+				}
+			}
+			if policyOnce != nil {
+				if from, ok := message.Fields["from"]; ok && strings.TrimSpace(from) != "" {
+					s.recordMemberRate(teamID, from, policyOnce)
+				}
+			}
 			team.RedisEventsLastID = message.ID
 			team.UpdatedAt = time.Now().UTC()
 			_ = s.repo.UpdateTeam(team)
+		}
+
+		loopCount++
+		if loopCount%10 == 0 {
+			if policyOnce == nil {
+				if p, _ := s.loadCollabPolicy(); p != nil {
+					policyOnce = p
+				}
+			}
+			if policyOnce != nil {
+				s.checkStreamLimits(ctx, team, bus, policyOnce)
+			}
 		}
 	}
 }
@@ -1183,6 +1366,116 @@ func (s *teamService) monitorStaleTasks(ctx context.Context) {
 		}
 	}
 }
+
+// ensureACLHealthMonitor starts monitorACLHealth exactly once per
+// StartBackground cycle. Subsequent calls while running are no-ops; a
+// new cycle (after StopBackground) starts a fresh goroutine.
+func (s *teamService) ensureACLHealthMonitor(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running {
+		return
+	}
+	if s.aclManager == nil || s.aclProbeInterval <= 0 {
+		return
+	}
+	s.wg.Add(1)
+	go s.monitorACLHealth(ctx)
+}
+
+// monitorACLHealth periodically validates that per-member Redis ACL
+// isolation still holds for every active team. For each team that has
+// persisted per-member URLs, probes every member URL by attempting a
+// cross-team XADD (expected: NOPERM). Breaches and probe errors are
+// written as secplane alerts so they surface on the governance page.
+func (s *teamService) monitorACLHealth(ctx context.Context) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.aclProbeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.probeAllTeamsACL(ctx)
+		}
+	}
+}
+
+// probeAllTeamsACL enumerates active teams and probes each one's
+// per-member URLs. Errors are logged, not returned, so a single bad
+// team does not abort the sweep.
+func (s *teamService) probeAllTeamsACL(ctx context.Context) {
+	teams, err := s.repo.ListActiveTeams()
+	if err != nil {
+		fmt.Printf("Warning: ACL probe failed to list active teams: %v\n", err)
+		return
+	}
+	for idx := range teams {
+		s.probeTeamACL(ctx, &teams[idx])
+	}
+}
+
+// probeTeamACL loads the team's persisted per-member URLs and probes
+// each one. Skips silently when the team has no persisted URLs (means
+// it was provisioned without per_member ACL, e.g. password_only mode).
+func (s *teamService) probeTeamACL(ctx context.Context, team *models.Team) {
+	memberURLs, err := s.loadTeamMemberRedisURLs(ctx, team)
+	if err != nil {
+		fmt.Printf("Warning: Team %d ACL probe failed to load member URLs: %v\n", team.ID, err)
+		return
+	}
+	if len(memberURLs) == 0 {
+		return
+	}
+	for memberKey, memberURL := range memberURLs {
+		result, err := s.aclManager.ProbeMemberURL(ctx, memberURL, team.ID, aclProbeOtherTeamID)
+		if err != nil {
+			s.recordACLProbeAlert(team.ID, memberKey, "acl_probe_error", "medium", fmt.Sprintf("probe failed: %v", err))
+			continue
+		}
+		if result.Breached {
+			s.recordACLProbeAlert(team.ID, memberKey, "acl_probe_breach", "high", result.Error)
+		} else if result.Error != "" {
+			s.recordACLProbeAlert(team.ID, memberKey, "acl_probe_error", "medium", result.Error)
+		}
+	}
+}
+
+// recordACLProbeAlert writes a secplane_alert row for an ACL probe
+// outcome. Failures are logged but do not block the probe loop.
+func (s *teamService) recordACLProbeAlert(teamID int, memberKey, ruleID, severity, evidence string) {
+	if s.collabSvc == nil {
+		return
+	}
+	ruleName := map[string]string{
+		"acl_probe_breach": "协同治理-ACL隔离失效",
+		"acl_probe_error":  "协同治理-ACL巡检异常",
+	}[ruleID]
+	if ruleName == "" {
+		ruleName = "协同治理-" + ruleID
+	}
+	subject := fmt.Sprintf("team:%d:member:%s", teamID, memberKey)
+	alert := &policy.Alert{
+		Source:   "collab_governance",
+		RuleID:   &ruleID,
+		RuleName: &ruleName,
+		Severity: severity,
+		Action:   "observed",
+		Subject:  &subject,
+		Evidence: &evidence,
+	}
+	if err := s.collabSvc.RecordExternalAlert(alert); err != nil {
+		fmt.Printf("Warning: failed to record ACL probe alert: %v\n", err)
+	}
+}
+
+// aclProbeOtherTeamID is the sentinel team ID used as the cross-team
+// write target in ACL probes. It intentionally does not correspond to
+// a real team - the ACL check is purely key-pattern based, so any ID
+// differing from the probed team's ID exercises the cross-team block.
+const aclProbeOtherTeamID = 999999
 
 func (s *teamService) sweepStaleTasks() error {
 	timeout := teamTaskStaleTimeout()

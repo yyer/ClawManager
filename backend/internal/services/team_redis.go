@@ -20,6 +20,7 @@ type redisStreamMessage struct {
 
 type redisBus struct {
 	address  string
+	username string
 	password string
 	db       int
 	useTLS   bool
@@ -37,6 +38,7 @@ func newRedisBus(rawURL string) (*redisBus, error) {
 	if !strings.Contains(address, ":") {
 		address += ":6379"
 	}
+	username := parsed.User.Username()
 	password, _ := parsed.User.Password()
 	dbIndex := 0
 	if path := strings.Trim(parsed.Path, "/"); path != "" {
@@ -48,6 +50,7 @@ func newRedisBus(rawURL string) (*redisBus, error) {
 	}
 	return &redisBus{
 		address:  address,
+		username: username,
 		password: password,
 		db:       dbIndex,
 		useTLS:   parsed.Scheme == "rediss",
@@ -86,6 +89,48 @@ func (b *redisBus) SetNX(ctx context.Context, key, value string, ttl time.Durati
 
 func (b *redisBus) Del(ctx context.Context, key string) error {
 	_, err := b.do(ctx, "DEL", key)
+	return err
+}
+
+// ACLSetUser creates or updates a Redis ACL user with the given rules.
+// Wraps `ACL SETUSER <name> <rule...>`. Returns error if Redis rejects
+// (e.g. unsupported on Redis < 6.0, or malformed rules).
+func (b *redisBus) ACLSetUser(ctx context.Context, name string, rules ...string) error {
+	args := append([]string{"ACL", "SETUSER", name}, rules...)
+	_, err := b.do(ctx, args...)
+	return err
+}
+
+// ACLDelUser removes a Redis ACL user. Wraps `ACL DELUSER <name>`.
+// No-op (returns nil) if the user does not exist.
+func (b *redisBus) ACLDelUser(ctx context.Context, name string) error {
+	_, err := b.do(ctx, "ACL", "DELUSER", name)
+	return err
+}
+
+// ACLListUsers returns the list of ACL user names. Wraps `ACL USERS`.
+func (b *redisBus) ACLListUsers(ctx context.Context) ([]string, error) {
+	reply, err := b.do(ctx, "ACL", "USERS")
+	if err != nil {
+		return nil, err
+	}
+	root, ok := reply.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected ACL USERS response")
+	}
+	users := make([]string, 0, len(root))
+	for _, item := range root {
+		if s, ok := item.(string); ok {
+			users = append(users, s)
+		}
+	}
+	return users, nil
+}
+
+// ACLSave persists ACL rules to the aclfile if one is configured. Wraps
+// `ACL SAVE`. Returns error if no aclfile is configured (caller ignores).
+func (b *redisBus) ACLSave(ctx context.Context) error {
+	_, err := b.do(ctx, "ACL", "SAVE")
 	return err
 }
 
@@ -157,6 +202,70 @@ func (b *redisBus) XRevRange(ctx context.Context, key string, count int) ([]redi
 	return parseRedisStreamEntries(root), nil
 }
 
+// XLen returns the number of entries in a stream. Wraps `XLEN key`.
+func (b *redisBus) XLen(ctx context.Context, key string) (int, error) {
+	reply, err := b.do(ctx, "XLEN", key)
+	if err != nil {
+		return 0, err
+	}
+	count, ok := reply.(int64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected redis XLEN response")
+	}
+	return int(count), nil
+}
+
+// XTrim caps a stream to approximately maxLen entries. Wraps
+// `XTRIM key MAXLEN ~N`. The `~` flag allows Redis to trim slightly below
+// N for performance; callers should treat the resulting length as advisory.
+func (b *redisBus) XTrim(ctx context.Context, key string, maxLen int) (int, error) {
+	reply, err := b.do(ctx, "XTRIM", key, "MAXLEN", "~", strconv.Itoa(maxLen))
+	if err != nil {
+		return 0, err
+	}
+	trimmed, ok := reply.(int64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected redis XTRIM response")
+	}
+	return int(trimmed), nil
+}
+
+// XDel removes the given IDs from a stream. Wraps `XDEL key id...`.
+func (b *redisBus) XDel(ctx context.Context, key string, ids ...string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := append([]string{"XDEL", key}, ids...)
+	reply, err := b.do(ctx, args...)
+	if err != nil {
+		return 0, err
+	}
+	deleted, ok := reply.(int64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected redis XDEL response")
+	}
+	return int(deleted), nil
+}
+
+// HKeys returns the field names of a Redis hash. Wraps `HKEYS key`.
+func (b *redisBus) HKeys(ctx context.Context, key string) ([]string, error) {
+	reply, err := b.do(ctx, "HKEYS", key)
+	if err != nil {
+		return nil, err
+	}
+	root, ok := reply.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected redis HKEYS response")
+	}
+	fields := make([]string, 0, len(root))
+	for _, item := range root {
+		if s, ok := item.(string); ok {
+			fields = append(fields, s)
+		}
+	}
+	return fields, nil
+}
+
 func parseRedisStreamEntries(entries []interface{}) []redisStreamMessage {
 	messages := make([]redisStreamMessage, 0, len(entries))
 	for _, messageRaw := range entries {
@@ -211,7 +320,16 @@ func (b *redisBus) connect(ctx context.Context) (net.Conn, *bufio.Reader, error)
 		return nil, nil, fmt.Errorf("failed to connect redis: %w", err)
 	}
 	reader := bufio.NewReader(conn)
-	if b.password != "" {
+	if b.username != "" && b.password != "" {
+		if err := writeRedisCommand(conn, "AUTH", b.username, b.password); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+		if _, err := readRedisReply(reader); err != nil {
+			_ = conn.Close()
+			return nil, nil, fmt.Errorf("redis auth failed: %w", err)
+		}
+	} else if b.password != "" {
 		if err := writeRedisCommand(conn, "AUTH", b.password); err != nil {
 			_ = conn.Close()
 			return nil, nil, err
