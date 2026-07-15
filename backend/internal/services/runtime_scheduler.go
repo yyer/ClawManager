@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -946,7 +947,7 @@ func (s *RuntimeScheduler) createGatewayOnPod(ctx context.Context, instance mode
 		},
 		UID:         uid,
 		GID:         gid,
-		CPUCores:    instance.CPUCores,
+		CPUCores:    cpuCoresToInt(instance.CPUCores),
 		MemoryMB:    instance.MemoryGB * 1024,
 		DiskQuotaMB: instance.DiskGB * 1024,
 		Generation:  instance.RuntimeGeneration,
@@ -1036,6 +1037,17 @@ func runtimeGatewayLinuxIDs(instanceID int, environment map[string]string) (int,
 		return linuxID, linuxID
 	}
 	return linuxID, sharedGID
+}
+
+// cpuCoresToInt converts a fractional CPU core count to the int expected by
+// the runtime agent. Runtime agent's /v1/gateways rejects float cpu_cores
+// with "invalid json" — its JSON schema requires an integer. Round up so a
+// 0.5-core instance still gets a 1-core cgroup quota (no zero-CPU pod).
+func cpuCoresToInt(cores float64) int {
+	if cores <= 0 {
+		return 1
+	}
+	return int(math.Ceil(cores))
 }
 
 func (s *RuntimeScheduler) gatewayEnvironment(instance *models.Instance) (map[string]string, error) {

@@ -32,7 +32,7 @@ type RuntimeAgentCreateGatewayRequest struct {
 	PortRange     RuntimeAgentPortRange `json:"port_range"`
 	UID           int                   `json:"uid"`
 	GID           int                   `json:"gid"`
-	CPUCores      float64               `json:"cpu_cores"`
+	CPUCores      int                   `json:"cpu_cores"`
 	MemoryMB      int                   `json:"memory_mb"`
 	DiskQuotaMB   int                   `json:"disk_quota_mb"`
 	Generation    int                   `json:"generation"`

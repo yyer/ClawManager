@@ -2413,3 +2413,25 @@ func TestIsSchedulerManagedV2InstanceRejectsProDesktop(t *testing.T) {
 func ptrString(value string) *string {
 	return &value
 }
+
+func TestCpuCoresToInt(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want int
+	}{
+		{0.5, 1},   // 0.5 cores rounds up to 1 (avoid zero-CPU pod)
+		{0.1, 1},   // small fractional rounds up
+		{1.0, 1},   // whole number stays
+		{1.5, 2},   // 1.5 rounds up to 2
+		{2.0, 2},   // whole number stays
+		{2.7, 3},   // 2.7 rounds up to 3
+		{0, 1},     // zero falls back to 1 (avoid zero-CPU pod)
+		{-1, 1},    // negative falls back to 1
+	}
+	for _, c := range cases {
+		got := cpuCoresToInt(c.in)
+		if got != c.want {
+			t.Errorf("cpuCoresToInt(%v) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
