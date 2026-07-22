@@ -427,6 +427,14 @@ func buildInstanceDeploymentPodSpec(client *Client, config PodConfig, runtimeTyp
 		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "shm", MountPath: "/dev/shm"})
 	}
 
+	// Apply umask wrapper AFTER all other container mutations. This is the
+	// PRO/desktop Team instance path (lite Team agents live in the shared
+	// openclaw-runtime pod and get umask 002 from the image layer instead -
+	// see deployments/docker/Dockerfile.openclaw-umask). Pro Team instances
+	// each get their own pod via EnsureDeployment, so the wrapper applies
+	// per-instance. See PodConfig.Umask and applyUmaskWrapper for full rationale.
+	applyUmaskWrapper(&spec.Containers[0], config.Umask)
+
 	return spec
 }
 

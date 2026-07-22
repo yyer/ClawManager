@@ -30,6 +30,9 @@ const (
 	storageProfileSingle    = "single-node"
 	storageProfileLegacyNFS = "legacy-nfs"
 	defaultPVCBindTimeout   = 2 * time.Minute
+	// os.FileMode keeps setgid outside the Unix permission-bit range, so
+	// 0o2775 alone does not set it when passed to os.Chmod.
+	teamSharedDirectoryMode = os.FileMode(0o775) | os.ModeSetgid
 )
 
 // NewPVCService creates a new PVC service
@@ -156,10 +159,8 @@ func (s *PVCService) CreateTeamSharedPVC(ctx context.Context, userID, teamID, st
 	storageSize := resource.MustParse(fmt.Sprintf("%dGi", storageSizeGB))
 	workspaceAccessMode := workspacePVCAccessMode(s.client.WorkspaceAccessMode)
 	useWorkspaceNFS := strings.TrimSpace(s.client.WorkspaceNFSServer) != ""
-	if useWorkspaceNFS {
-		if err := s.ensureTeamSharedWorkspaceDirectory(userID, teamID); err != nil {
-			return nil, err
-		}
+	if err := s.ensureTeamSharedWorkspaceDirectory(userID, teamID); err != nil {
+		return nil, err
 	}
 
 	pvc := &corev1.PersistentVolumeClaim{
@@ -497,11 +498,11 @@ func (s *PVCService) ensureTeamSharedWorkspaceDirectory(userID, teamID int) erro
 	dir := filepath.Join(root, filepath.FromSlash(TeamSharedWorkspaceRelativePath(userID, teamID)))
 	dirs := append([]string{dir}, teamSharedRuntimeSubdirectories(dir)...)
 	for _, target := range dirs {
-		if err := os.MkdirAll(target, 0o2775); err != nil {
+		if err := os.MkdirAll(target, teamSharedDirectoryMode); err != nil {
 			return fmt.Errorf("failed to create Team shared runtime workspace directory %s: %w", target, err)
 		}
 		_ = os.Chown(target, 1000, 1000)
-		if err := os.Chmod(target, 0o2775); err != nil {
+		if err := os.Chmod(target, teamSharedDirectoryMode); err != nil {
 			return fmt.Errorf("failed to chmod Team shared runtime workspace directory %s: %w", target, err)
 		}
 	}

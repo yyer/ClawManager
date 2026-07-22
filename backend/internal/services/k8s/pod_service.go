@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -67,6 +68,36 @@ type PodConfig struct {
 	VolumeOwnershipFixes []VolumeOwnershipFix
 	SHMSizeGB            int
 	SecurityMode         PodSecurityMode
+	// Umask wraps the container entrypoint with `sh -c 'umask <Umask> && exec /init'`
+	// so the LSIO s6 supervisor (/init) and all its child agents (openclaw-agent,
+	// clawmanager-agent) inherit the requested umask.
+	//
+	// WHY THIS EXISTS:
+	// Team instances run multiple agents under distinct UIDs (200xxx for lite,
+	// 1000 for pro) that share a setgid directory (/team or /workspaces/teams/...).
+	// The setgid bit only inherits the GID; it does NOT inherit group-write
+	// permission. New file/directory permissions are still governed by the
+	// creating process's umask. The LSIO base images (both openclaw-lite and
+	// openclaw:latest) ship with umask 022 and do NOT read the UMASK env var,
+	// so without this wrapper new files are created 0644 (group has no write)
+	// and peers cannot update status/inbox/results files -> team collaboration
+	// breaks with EACCES.
+	//
+	// SCOPE - WHICH PATHS HIT THIS:
+	// - Pro/desktop Team instances: YES. createInstance -> EnsureDeployment ->
+	//   buildInstanceDeploymentPodSpec reads config.Umask (pro instances each
+	//   get their own pod, so the wrapper is applied per-instance).
+	// - Lite/gateway Team instances: NO. createV2Instance provisions only a
+	//   DB record + workspace dir; the agent runs inside the shared
+	//   openclaw-runtime pod whose command is the image default /init. Umask
+	//   for lite Team agents is fixed at the image layer instead
+	//   (deployments/docker/Dockerfile.openclaw-umask patches /etc/services.d/
+	//   run scripts with `umask 002`).
+	// - Non-team instances: Umask is empty (req.Team == nil), no wrapper.
+	//
+	// Set to "0002" (or "002") for Team instances. Leave empty for non-team
+	// instances to preserve upstream image defaults.
+	Umask string
 }
 
 type PVCMount struct {
@@ -349,6 +380,10 @@ func (s *PodService) CreatePod(ctx context.Context, config PodConfig) (*corev1.P
 		})
 	}
 
+	// Apply umask wrapper AFTER all other container mutations so the command
+	// override is not clobbered. Must run before the deployment is created below.
+	applyUmaskWrapper(&pod.Spec.Containers[0], config.Umask)
+
 	replicas := int32(1)
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -430,6 +465,28 @@ func buildContainerSecurityContext(mode PodSecurityMode) *corev1.SecurityContext
 	default:
 		return nil
 	}
+}
+
+// applyUmaskWrapper overrides the container's command with a `sh -c` wrapper
+// that sets umask before exec'ing the image's original /init entrypoint.
+//
+// This is the ONLY reliable way to enforce a umask for LSIO-based images
+// (openclaw-lite, openclaw:latest): they ignore the UMASK env var and their
+// s6 run scripts hardcode umask 022. Patching the image is the alternative,
+// but this code-level wrapper ships with ClawManager and works across all
+// environments without per-env image rebuilds.
+//
+// umask is a process attribute preserved across execve (POSIX), so /init and
+// every s6-managed child service (openclaw-agent, clawmanager-agent) inherit
+// it. See PodConfig.Umask for the full rationale.
+//
+// No-op when umask is empty, so non-team instances are unaffected.
+func applyUmaskWrapper(container *corev1.Container, umask string) {
+	trimmed := strings.TrimSpace(umask)
+	if trimmed == "" {
+		return
+	}
+	container.Command = []string{"sh", "-c", "umask " + trimmed + " && exec /init"}
 }
 
 func buildVolumeOwnershipInitContainer(index int, image string, pullPolicy corev1.PullPolicy, fix VolumeOwnershipFix) corev1.Container {

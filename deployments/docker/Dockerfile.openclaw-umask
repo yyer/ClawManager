@@ -1,0 +1,2 @@
+FROM ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest
+RUN sed -i '1a umask 002' /etc/services.d/clawmanager-agent/run /etc/services.d/openclaw-agent/run
