@@ -109,10 +109,9 @@ func TestBuildMemberACLRules(t *testing.T) {
 			"+XREADGROUP",
 			"+XACK",
 			"+HSET",
-			"~claw:team:12:inbox:frontend",
-			"%W~claw:team:12:inbox:*",
-			"%W~claw:team:12:events",
-			"%W~claw:team:12:presence",
+			"+GET",
+			"+EVAL",
+			"~claw:team:12:*",
 		}
 		if len(rules) != len(want) {
 			t.Fatalf("normal member rules length = %d, want %d (%v)", len(rules), len(want), rules)
@@ -148,6 +147,8 @@ func TestBuildMemberACLRules(t *testing.T) {
 			"+XREADGROUP",
 			"+XACK",
 			"+HSET",
+			"+GET",
+			"+EVAL",
 			"~claw:team:12:*",
 		}
 		if len(rules) != len(want) {
@@ -166,13 +167,13 @@ func TestBuildMemberACLRules(t *testing.T) {
 	})
 
 	t.Run("member_key_used_raw_in_inbox_pattern", func(t *testing.T) {
-		// inbox pattern must use raw memberKey (matches teamInboxKey in
-		// team_service.go). memberKey is normalised upstream by
-		// normalizeTeamMemberKey to [a-z0-9-], so no sanitisation here.
+		// member rules use ~claw:team:<id>:* (team-scoped R+W) so memberKey
+		// no longer appears in the pattern. Sanity-check the team-id is
+		// rendered correctly instead.
 		rules := buildMemberACLRules(12, "code-reviewer", false, secret)
 		joined := strings.Join(rules, " ")
-		if !strings.Contains(joined, "~claw:team:12:inbox:code-reviewer") {
-			t.Errorf("inbox pattern should use raw memberKey: %v", rules)
+		if !strings.Contains(joined, "~claw:team:12:*") {
+			t.Errorf("team pattern should be present: %v", rules)
 		}
 	})
 }

@@ -329,6 +329,8 @@ func buildMemberACLRules(teamID int, memberKey string, isLeader bool, secret str
 			"+XREADGROUP",
 			"+XACK",
 			"+HSET",
+			"+GET",
+			"+EVAL",
 			fmt.Sprintf("~claw:team:%d:*", teamID),
 		}
 	}
@@ -344,10 +346,9 @@ func buildMemberACLRules(teamID int, memberKey string, isLeader bool, secret str
 		"+XREADGROUP",
 		"+XACK",
 		"+HSET",
-		fmt.Sprintf("~claw:team:%d:inbox:%s", teamID, memberKey),
-		fmt.Sprintf("%%W~claw:team:%d:inbox:*", teamID),
-		fmt.Sprintf("%%W~claw:team:%d:events", teamID),
-		fmt.Sprintf("%%W~claw:team:%d:presence", teamID),
+		"+GET",
+		"+EVAL",
+		fmt.Sprintf("~claw:team:%d:*", teamID),
 	}
 }
 
