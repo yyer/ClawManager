@@ -825,12 +825,12 @@ func (s *teamService) buildTeamMemberInstanceRequestWithSecrets(team *models.Tea
 		memberEnv["CLAWMANAGER_TEAM_SHARED_DIR"] = s.teamRuntimeSharedPath(team)
 	}
 	environmentOverrides := mergeEnvMaps(req.EnvironmentOverrides, memberEnv)
-	if instanceMode == InstanceModeLite && runtimeSecrets != nil {
+	if runtimeSecrets != nil {
 		environmentOverrides = mergeEnvMaps(environmentOverrides, map[string]string{
 			teamRedisURLSecretKey: runtimeSecrets.RedisURLForMember(memberPlan.MemberKey),
 			teamTokenSecretKey:    runtimeSecrets.Token,
 		})
-		if strings.TrimSpace(rosterJSON) != "" {
+		if instanceMode == InstanceModeLite && strings.TrimSpace(rosterJSON) != "" {
 			environmentOverrides["CLAWMANAGER_TEAM_CONFIG_JSON"] = rosterJSONWithSharedDir(rosterJSON, s.teamRuntimeSharedPath(team))
 		}
 	}
