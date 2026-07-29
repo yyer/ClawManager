@@ -281,10 +281,10 @@ func buildAdminACLRules(teamID int, secret string) []string {
 // buildMemberACLRules returns the ACL rules for a team member.
 //
 // Commands granted (both roles): SELECT, CLIENT, PING, XADD, XGROUP,
-// XREADGROUP, XACK, HSET. These are what the openclaw redis-team plugin
+// XREADGROUP, XACK, HSET, SET. These are what the openclaw redis-team plugin
 // issues during normal operation (DB selection, client identification,
 // keepalive, stream writes, consumer-group reads on own inbox, acks,
-// presence hash updates).
+// presence hash updates, plain key-value writes).
 //
 // Leader additionally gets +XREAD and +XREVRANGE so it can directly consume
 // the events stream and read member inboxes for task routing.
@@ -329,6 +329,7 @@ func buildMemberACLRules(teamID int, memberKey string, isLeader bool, secret str
 			"+XREADGROUP",
 			"+XACK",
 			"+HSET",
+			"+SET",
 			"+GET",
 			"+EVAL",
 			fmt.Sprintf("~claw:team:%d:*", teamID),
@@ -346,6 +347,7 @@ func buildMemberACLRules(teamID int, memberKey string, isLeader bool, secret str
 		"+XREADGROUP",
 		"+XACK",
 		"+HSET",
+		"+SET",
 		"+GET",
 		"+EVAL",
 		fmt.Sprintf("~claw:team:%d:*", teamID),
