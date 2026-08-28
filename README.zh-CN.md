@@ -23,6 +23,9 @@
   <img src="https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Kubernetes-Native-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes Native" />
   <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="MIT License" />
+  <a href="https://discord.gg/9RwgbGJD5R">
+    <img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="加入 ClawManager Discord 社区" />
+  </a>
 </p>
 
 <p align="center">
@@ -55,6 +58,7 @@
 
 这里展示最近的重要产品与文档更新。
 
+- [2026-07-07] 新增安全防护平台（secplane）前端控制台——覆盖运行时防御（输入面/状态面/决策面/输出面、资产防篡改、人因审批）、主机加固与容器隔离、出站可信端点治理、策略治理、应急熔断、全链路审计、SecureClaw 数据与组件可信审计、协同接入治理及输入检测，4 层防护统一管理界面，5 语言 i18n 完整支持。
 - [2026-06-14] 新增 Lite / Pro 运行时模式与滚动升级支持，Lite 实例可通过共享 gateway 运行时池运行，Pro 实例保留专属 desktop deployment 以获得更强隔离。
 - [2026-05-18] 新增 Team 工作空间 MVP 介绍与界面预览，覆盖一键创建 Team、OpenClaw 成员编排、Redis Team Bus 配置注入、共享存储、成员状态、任务派发，以及事件和结果查看。
 - [2026-04-29] 新增 Hermes Runtime 接入支持，覆盖基于 Webtop 的实例创建、Agent Control Plane 注册、AI Gateway 注入、channel 与 skill 引导注入，以及 `.hermes` 导入导出流程。见 [Hermes Runtime Guide](./docs/hermes-runtime-agent-development.md)。
@@ -70,13 +74,28 @@
   </a>
 </p>
 
-## 社区微信群
+## 社区交流
 
-欢迎加入 ClawManager 开源社区微信群，获取产品更新、交流使用经验，并与贡献者一起讨论共建。
+欢迎加入 ClawManager 开源社区，可通过微信群或 Discord 获取产品更新、交流使用经验，并与贡献者一起讨论共建。
 
-<p align="center">
-  <img src="./docs/main/clawmanager_group_chat.jpg" alt="ClawManager 微信群二维码" width="300" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_group_chat.jpg" alt="ClawManager 微信群二维码" height="300" />
+      <br /><br />
+      <strong>微信群</strong>
+      <br />
+      扫描二维码加入微信群
+    </td>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_discord.jpg" alt="ClawManager Discord 邀请二维码" height="300" />
+      <br /><br />
+      <strong>Discord</strong>
+      <br />
+      <a href="https://discord.gg/9RwgbGJD5R">扫描二维码加入 Discord 服务器</a>
+    </td>
+  </tr>
+</table>
 
 <a id="product-tour"></a>
 ## 产品介绍
@@ -92,16 +111,14 @@ ClawManager 将 AI Agent 实例的运行、治理与运维能力带到 Kubernete
 <a id="team-workspaces"></a>
 ## Team 工作空间
 
-Team 工作空间让 ClawManager 从单实例运维扩展到多 Agent 协作编排。用户可以创建一个 Team，指定一个 Leader 和多个成员，由 ClawManager 负责创建成员 Runtime、注入协作配置，并在控制面持续展示任务、事件和结果状态。
+Team 工作空间提供简化的 OpenClaw Lite 协作流程：选择角色模板、创建 Team，然后在团队群聊中描述目标即可。Leader 会负责制定计划、协调成员、收集交付并输出最终结果。
 
-当前 MVP 聚焦 OpenClaw 成员编排与 Redis Team Bus 闭环：
+- 固定为 Leader 中介协作，无需逐个配置成员运行时或资源预设
+- 内置交付、产品探索和软件工程等成员模板
+- 团队群聊展示计划、派发、进度、验收、交付和最终汇总
+- Execution Kanban 展示总任务状态及当前成员交付
 
-- 一键创建 Team，并校验 Leader / 成员 roster
-- 为成员 Runtime Pod 注入 Team 角色、成员 ID、控制面地址和共享目录配置
-- 通过受控环境变量和 Secret 引用注入 Redis inbox、events、presence 与 DLQ key
-- 将共享 PVC 挂载到 `/team`，用于上下文、产物、快照和任务结果
-- Team 详情页集中展示 Leader 桌面、团队群聊、成员列表、调试派发、任务进度与事件结果
-- Team、成员、任务和事件以 DB 为权威状态，Redis 仅作为消息总线与短期 presence 通道
+参见 [Team 协作快速指南](./docs/team-workspaces-guide.md)，了解创建、协作阶段和查看交付结果的流程。
 
 <a id="runtime-integrations"></a>
 ## Runtime 接入
@@ -249,6 +266,7 @@ ClawManager 是一个 Kubernetes 原生平台，包含 React 前端、Go 后端�
 ## 文档
 
 - [用户指南](./docs/use_guide_cn.md)
+- [Team 协作快速指南](./docs/team-workspaces-guide.md)
 - [Deployment Guide（英文）](./docs/deployment.md)
 - [Admin and User Guide（英文）](./docs/admin-user-guide.md)
 - [Agent Control Plane Guide（英文）](./docs/agent-control-plane.md)

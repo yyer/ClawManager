@@ -23,6 +23,9 @@
   <img src="https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Kubernetes-Native-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes Native" />
   <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="MIT License" />
+  <a href="https://discord.gg/9RwgbGJD5R">
+    <img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="ClawManager Discord コミュニティに参加" />
+  </a>
 </p>
 
 <p align="center">
@@ -55,6 +58,7 @@
 
 最近の重要な製品アップデートとドキュメント更新です。
 
+- [2026-07-07] セキュリティ保護プラットフォーム（secplane）フロントエンドコンソールを追加しました。ランタイム防御（入力/状態/決定/出力サーフェス、資産改ざん防止、ヒューマン承認）、ホスト強化とコンテナ分離、アウトバウンド信頼エンドポイントガバナンス、ポリシーガバナンス、キルスイッチ/サーキットブレーカー、フルチェーン監査、SecureClaw データ・コンポーネント信頼監査、コラボレーションガバナンス、入力検出をカバーする4層防御の統合管理UIを5言語i18nで提供します。
 - [2026-06-14] Lite / Pro ランタイムモードとロールアウト対応を追加しました。Lite インスタンスは共有 gateway runtime pool で動作し、Pro インスタンスはより強い分離のため専用 desktop deployment を維持します。
 - [2026-05-18] Team ワークスペース MVP の紹介とプレビューを追加しました。ワンクリック Team 作成、OpenClaw メンバーのオーケストレーション、Redis Team Bus 注入、共有ストレージ、メンバー状態、タスク配布、イベント/結果ビューをカバーします。
 - [2026-04-29] Hermes Runtime 連携を追加しました。Webtop ベースのインスタンス作成、Agent Control Plane 登録、AI Gateway 注入、channel と skill のブートストラップ、`.hermes` のインポート/エクスポートに対応しています。詳しくは [Hermes Runtime Guide](./docs/hermes-runtime-agent-development.md) を参照してください。
@@ -70,13 +74,28 @@
   </a>
 </p>
 
-## WeChatコミュニティグループ
+## コミュニティ
 
-ClawManager オープンソースコミュニティの WeChat グループです。プロダクト更新の確認、使い方の相談、コントリビューター同士の交流にご活用ください。
+ClawManager オープンソースコミュニティに WeChat または Discord から参加してください。プロダクト更新の確認、使い方の相談、コントリビューター同士の交流にご活用ください。
 
-<p align="center">
-  <img src="./docs/main/clawmanager_group_chat.jpg" alt="ClawManager WeChatグループのQRコード" width="300" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_group_chat.jpg" alt="ClawManager WeChatグループのQRコード" height="300" />
+      <br /><br />
+      <strong>WeChat</strong>
+      <br />
+      QRコードをスキャンして WeChat グループに参加
+    </td>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_discord.jpg" alt="ClawManager Discord 招待QRコード" height="300" />
+      <br /><br />
+      <strong>Discord</strong>
+      <br />
+      <a href="https://discord.gg/9RwgbGJD5R">QRコードをスキャンして Discord サーバーに参加</a>
+    </td>
+  </tr>
+</table>
 
 <a id="product-tour"></a>
 ## 製品紹介
@@ -92,16 +111,14 @@ ClawManager は、AI エージェントインスタンスの運用を Kubernetes
 <a id="team-workspaces"></a>
 ## Team ワークスペース
 
-Team ワークスペースは、ClawManager を単一インスタンス運用から複数 Agent の協調ランタイム管理へ拡張します。ユーザーは Team を作成し、1 人の Leader と複数のメンバーを割り当て、ClawManager にメンバー Runtime のプロビジョニング、協調設定の注入、タスクとイベント状態の可視化を任せることができます。
+Team ワークスペースは、簡素化された OpenClaw Lite の協働フローを提供します。ロールテンプレートを選び、Team を作成して、Team チャットで目標を説明するだけです。Leader が計画、メンバー調整、成果物収集、最終結果の提示を担当します。
 
-現在の MVP は、OpenClaw メンバーのオーケストレーションと Redis Team Bus のループに焦点を当てています。
+- メンバーごとの Runtime やリソースプリセットを設定せず、Leader 仲介型の協働に固定
+- デリバリー、製品探索、ソフトウェア開発向けの組み込みテンプレート
+- 計画、割り当て、進捗、レビュー、成果物、最終統合を表示する Team チャット
+- 総合タスク状態と現在の成果物を表示する Execution Kanban
 
-- 検証済みの Leader / メンバー roster によるワンクリック Team 作成
-- Team ロール、メンバー ID、コントロールプレーン URL、共有マウント設定を持つメンバー Runtime Pod の作成
-- 管理された環境変数と Secret 参照による Redis inbox、events、presence、DLQ key の注入
-- コンテキスト、成果物、スナップショット、タスク結果のための共有 PVC を `/team` にマウント
-- Leader デスクトップ、Team チャット、メンバー一覧、配布パネル、タスク進捗、イベント/結果履歴をまとめた Team 詳細ビュー
-- Team、メンバー、タスク、イベントを DB の権威状態として保持し、Redis はメッセージバスとして扱う設計
+作成、協働段階、結果の確認方法は [Team Workspace Quick Guide](./docs/team-workspaces-guide_ja.md) を参照してください。
 
 <a id="runtime-integrations"></a>
 ## Runtime 連携
@@ -245,6 +262,7 @@ ClawManager は、React フロントエンド、Go バックエンド、状態�
 ## ドキュメント
 
 - [ユーザーガイド](./docs/use_guide_ja.md)
+- [Team Workspace Quick Guide](./docs/team-workspaces-guide_ja.md)
 - [Deployment Guide (English)](./docs/deployment.md)
 - [Admin and User Guide (English)](./docs/admin-user-guide.md)
 - [Agent Control Plane Guide (English)](./docs/agent-control-plane.md)

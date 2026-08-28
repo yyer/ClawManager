@@ -23,6 +23,9 @@
   <img src="https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Kubernetes-Native-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes Native" />
   <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="MIT License" />
+  <a href="https://discord.gg/9RwgbGJD5R">
+    <img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="ClawManager Discord-Community beitreten" />
+  </a>
 </p>
 
 <p align="center">
@@ -55,6 +58,7 @@
 
 Wichtige aktuelle Produkt- und Dokumentations-Updates.
 
+- [2026-07-07] Security Protection Platform (secplane) Frontend-Konsole hinzugefuegt — umfassende Sicherheitskonsole mit Runtime-Abwehr (Eingabe-/Zustands-/Entscheidungs-/Ausgabeoberflaeche, Asset-Schutz, menschliche Freigabe), Host-Haertung und Container-Isolierung, Outbound-Vertrauens-Governance, Richtlinien-Governance, Kill-Switch/Circuit-Breaker, Full-Chain-Audit, SecureClaw-Daten- und Komponentenvertrauens-Audit, Kollaborations-Governance und Eingabeerkennung. 4 Verteidigungsschichten in einer einheitlichen Admin-UI mit vollstaendiger i18n fuer 5 Sprachen.
 - [2026-06-14] Lite-/Pro-Runtime-Modi und Rollout-Support hinzugefuegt: Lite-Instanzen laufen ueber gemeinsame Gateway-Runtime-Pools, waehrend Pro-Instanzen dedizierte Desktop-Deployments fuer staerkere Isolation behalten.
 - [2026-05-18] Team-Workspace-MVP mit Einfuehrung und Vorschau hinzugefuegt, inklusive One-Click-Team-Erstellung, OpenClaw-Member-Orchestrierung, Redis-Team-Bus-Injection, Shared Storage, Member-Status, Task-Dispatch sowie Event- und Ergebnisansichten.
 - [2026-04-29] Hermes-Runtime-Integration hinzugefuegt, inklusive Webtop-basierter Instanzbereitstellung, Agent-Control-Plane-Registrierung, AI-Gateway-Injection, channel- und skill-Bootstrap sowie `.hermes` Import/Export. Siehe [Hermes Runtime Guide](./docs/hermes-runtime-agent-development.md).
@@ -70,13 +74,28 @@ Wichtige aktuelle Produkt- und Dokumentations-Updates.
   </a>
 </p>
 
-## WeChat-Community-Gruppe
+## Community
 
-Tritt der ClawManager Open-Source-Community auf WeChat bei, um Produkt-Updates zu verfolgen, Nutzungserfahrungen auszutauschen und mit Mitwirkenden ins Gespraech zu kommen.
+Tritt der ClawManager Open-Source-Community auf WeChat oder Discord bei, um Produkt-Updates zu verfolgen, Nutzungserfahrungen auszutauschen und mit Mitwirkenden ins Gespraech zu kommen.
 
-<p align="center">
-  <img src="./docs/main/clawmanager_group_chat.jpg" alt="QR-Code zur ClawManager WeChat-Gruppe" width="300" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_group_chat.jpg" alt="QR-Code zur ClawManager WeChat-Gruppe" height="300" />
+      <br /><br />
+      <strong>WeChat</strong>
+      <br />
+      QR-Code scannen, um der WeChat-Gruppe beizutreten
+    </td>
+    <td align="center" width="320" valign="top">
+      <img src="./docs/main/clawmanager_discord.jpg" alt="QR-Code zur ClawManager Discord-Einladung" height="300" />
+      <br /><br />
+      <strong>Discord</strong>
+      <br />
+      <a href="https://discord.gg/9RwgbGJD5R">QR-Code scannen, um unserem Discord-Server beizutreten</a>
+    </td>
+  </tr>
+</table>
 
 <a id="product-tour"></a>
 ## Produktueberblick
@@ -92,16 +111,14 @@ Es eignet sich besonders fuer:
 <a id="team-workspaces"></a>
 ## Team Workspaces
 
-Team Workspaces erweitern ClawManager von Einzelinstanz-Betrieb zu koordinierter Multi-Agent-Runtime-Verwaltung. Nutzer koennen ein Team erstellen, einen Leader und mehrere Member zuweisen und ClawManager die Bereitstellung der Member-Runtimes, die Injection der Kollaborationskonfiguration und die Sichtbarkeit von Tasks und Events in der Control Plane ueberlassen.
+Team Workspaces bieten einen vereinfachten OpenClaw-Lite-Kollaborationsablauf: Rollenvorlage auswaehlen, Team erstellen und das Ziel im Team-Chat beschreiben. Der Leader plant, koordiniert die Mitglieder, sammelt Ergebnisse und liefert die finale Zusammenfassung.
 
-Das aktuelle MVP konzentriert sich auf OpenClaw-Member-Orchestrierung und den Redis-Team-Bus-Loop:
+- feste Leader-vermittelte Zusammenarbeit ohne Runtime- oder Ressourcenprofil je Mitglied
+- integrierte Vorlagen fuer Auslieferung, Produkterkundung und Softwareentwicklung
+- Team-Chat fuer Plan, Zuweisung, Fortschritt, Review, Lieferung und Zusammenfassung
+- Execution Kanban fuer Gesamtaufgabe und aktuelle Mitgliederlieferungen
 
-- One-Click-Team-Erstellung mit validiertem Leader/Member-Roster
-- Member-Runtime-Pods mit Team-Rolle, Member-ID, Control-Plane-URL und Shared-Mount-Konfiguration
-- Redis-basierte inbox-, events-, presence- und DLQ-Keys ueber kontrollierte Umgebungsvariablen und Secret-Referenzen
-- Shared PVC unter `/team` fuer Kontext, Artefakte, Snapshots und Task-Ergebnisse
-- Team-Detailansicht mit Leader-Desktop, Team-Chat, Member-Liste, Dispatch-Panel, Task-Fortschritt und Event-/Ergebnis-Historie
-- DB-gestuetzte Team-, Member-, Task- und Event-Datensaetze, sodass Redis Message Bus bleibt und nicht zur Source of Truth wird
+Siehe [Team Workspace Quick Guide](./docs/team-workspaces-guide_de.md) fuer Erstellung, Kollaborationsphasen und Ergebnisansicht.
 
 <a id="runtime-integrations"></a>
 ## Runtime-Integrationen
@@ -245,6 +262,7 @@ Siehe [Developer Guide (English)](./docs/developer-guide.md).
 ## Dokumentation
 
 - [Benutzerhandbuch](./docs/use_guide_de.md)
+- [Team Workspace Quick Guide](./docs/team-workspaces-guide_de.md)
 - [Deployment Guide (English)](./docs/deployment.md)
 - [Admin and User Guide (English)](./docs/admin-user-guide.md)
 - [Agent Control Plane Guide (English)](./docs/agent-control-plane.md)

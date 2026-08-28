@@ -86,21 +86,26 @@ func (TeamMember) TableName() string {
 }
 
 type TeamTask struct {
-	ID             int        `db:"id,primarykey,autoincrement" json:"id"`
-	TeamID         int        `db:"team_id" json:"team_id"`
-	TargetMemberID int        `db:"target_member_id" json:"target_member_id"`
-	CreatedBy      *int       `db:"created_by" json:"created_by,omitempty"`
-	MessageID      string     `db:"message_id" json:"message_id"`
-	Status         string     `db:"status" json:"status"`
-	PayloadJSON    string     `db:"payload_json" json:"-"`
-	ResultJSON     *string    `db:"result_json" json:"-"`
-	ErrorMessage   *string    `db:"error_message" json:"error_message,omitempty"`
-	RedisStreamID  *string    `db:"redis_stream_id" json:"redis_stream_id,omitempty"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	DispatchedAt   *time.Time `db:"dispatched_at" json:"dispatched_at,omitempty"`
-	StartedAt      *time.Time `db:"started_at" json:"started_at,omitempty"`
-	FinishedAt     *time.Time `db:"finished_at" json:"finished_at,omitempty"`
-	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	ID                   int        `db:"id,primarykey,autoincrement" json:"id"`
+	TeamID               int        `db:"team_id" json:"team_id"`
+	TargetMemberID       int        `db:"target_member_id" json:"target_member_id"`
+	CreatedBy            *int       `db:"created_by" json:"created_by,omitempty"`
+	MessageID            string     `db:"message_id" json:"message_id"`
+	Status               string     `db:"status" json:"status"`
+	WorkflowState        string     `db:"workflow_state" json:"workflow_state"`
+	PlanVersion          int64      `db:"plan_version" json:"plan_version"`
+	LedgerVersion        int64      `db:"ledger_version" json:"ledger_version"`
+	CurrentPhaseID       *string    `db:"current_phase_id" json:"current_phase_id,omitempty"`
+	AcceptedCompletionID *string    `db:"accepted_completion_id" json:"accepted_completion_id,omitempty"`
+	PayloadJSON          string     `db:"payload_json" json:"-"`
+	ResultJSON           *string    `db:"result_json" json:"-"`
+	ErrorMessage         *string    `db:"error_message" json:"error_message,omitempty"`
+	RedisStreamID        *string    `db:"redis_stream_id" json:"redis_stream_id,omitempty"`
+	CreatedAt            time.Time  `db:"created_at" json:"created_at"`
+	DispatchedAt         *time.Time `db:"dispatched_at" json:"dispatched_at,omitempty"`
+	StartedAt            *time.Time `db:"started_at" json:"started_at,omitempty"`
+	FinishedAt           *time.Time `db:"finished_at" json:"finished_at,omitempty"`
+	UpdatedAt            time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 func (TeamTask) TableName() string {
@@ -109,6 +114,9 @@ func (TeamTask) TableName() string {
 
 type TeamEvent struct {
 	ID            int        `db:"id,primarykey,autoincrement" json:"id"`
+	EventID       *string    `db:"event_id" json:"event_id,omitempty"`
+	CompletionID  *string    `db:"completion_id" json:"completion_id,omitempty"`
+	SequenceNo    int64      `db:"sequence_no" json:"sequence_no"`
 	TeamID        int        `db:"team_id" json:"team_id"`
 	MemberID      *int       `db:"member_id" json:"member_id,omitempty"`
 	TaskID        *int       `db:"task_id" json:"task_id,omitempty"`
@@ -122,4 +130,75 @@ type TeamEvent struct {
 
 func (TeamEvent) TableName() string {
 	return "team_events"
+}
+
+type TeamWorkItem struct {
+	ID                int        `db:"id,primarykey,autoincrement" json:"id"`
+	TeamID            int        `db:"team_id" json:"team_id"`
+	RootTaskID        int        `db:"root_task_id" json:"root_task_id"`
+	WorkID            string     `db:"work_id" json:"work_id"`
+	AssignmentID      *string    `db:"assignment_id" json:"assignment_id,omitempty"`
+	CanonicalWorkID   *string    `db:"canonical_work_id" json:"canonical_work_id,omitempty"`
+	PhaseID           *string    `db:"phase_id" json:"phase_id,omitempty"`
+	Revision          int        `db:"revision" json:"revision"`
+	RequiredForRoot   bool       `db:"required_for_root" json:"required_for_root"`
+	SupersededBy      *string    `db:"superseded_by" json:"superseded_by,omitempty"`
+	ReviewRequired    bool       `db:"review_required" json:"review_required"`
+	ValidatedRevision *int       `db:"validated_revision" json:"validated_revision,omitempty"`
+	OwnerMemberID     *int       `db:"owner_member_id" json:"owner_member_id,omitempty"`
+	Title             string     `db:"title" json:"title"`
+	Status            string     `db:"status" json:"status"`
+	DependsOnJSON     *string    `db:"depends_on_json" json:"-"`
+	ResultJSON        *string    `db:"result_json" json:"-"`
+	ArtifactRefsJSON  *string    `db:"artifact_refs_json" json:"-"`
+	CreatedAt         time.Time  `db:"created_at" json:"created_at"`
+	StartedAt         *time.Time `db:"started_at" json:"started_at,omitempty"`
+	FinishedAt        *time.Time `db:"finished_at" json:"finished_at,omitempty"`
+	UpdatedAt         time.Time  `db:"updated_at" json:"updated_at"`
+}
+
+type TeamWorkflowPhase struct {
+	ID               int        `db:"id,primarykey,autoincrement" json:"id"`
+	TeamID           int        `db:"team_id" json:"team_id"`
+	RootTaskID       int        `db:"root_task_id" json:"root_task_id"`
+	PhaseID          string     `db:"phase_id" json:"phase_id"`
+	PlanVersion      int64      `db:"plan_version" json:"plan_version"`
+	SequenceNo       int        `db:"sequence_no" json:"sequence_no"`
+	Status           string     `db:"status" json:"status"`
+	RequiredForRoot  bool       `db:"required_for_root" json:"required_for_root"`
+	DecisionRequired bool       `db:"decision_required" json:"decision_required"`
+	DependsOnJSON    *string    `db:"depends_on_json" json:"-"`
+	NextPhaseID      *string    `db:"next_phase_id" json:"next_phase_id,omitempty"`
+	CompletionPolicy *string    `db:"completion_policy" json:"completion_policy,omitempty"`
+	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
+	CompletedAt      *time.Time `db:"completed_at" json:"completed_at,omitempty"`
+	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
+}
+
+func (TeamWorkflowPhase) TableName() string {
+	return "team_workflow_phases"
+}
+
+type TeamEventOutbox struct {
+	ID            int        `db:"id,primarykey,autoincrement" json:"id"`
+	TeamID        int        `db:"team_id" json:"team_id"`
+	SourceEventID string     `db:"source_event_id" json:"source_event_id"`
+	Destination   string     `db:"destination" json:"destination"`
+	MessageID     string     `db:"message_id" json:"message_id"`
+	PayloadJSON   string     `db:"payload_json" json:"-"`
+	Status        string     `db:"status" json:"status"`
+	Attempts      int        `db:"attempts" json:"attempts"`
+	AvailableAt   time.Time  `db:"available_at" json:"available_at"`
+	LastError     *string    `db:"last_error" json:"last_error,omitempty"`
+	DeliveredAt   *time.Time `db:"delivered_at" json:"delivered_at,omitempty"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at" json:"updated_at"`
+}
+
+func (TeamEventOutbox) TableName() string {
+	return "team_event_outbox"
+}
+
+func (TeamWorkItem) TableName() string {
+	return "team_work_items"
 }
