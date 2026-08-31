@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - 'codex/**'
       - 'feature/**'
       - 'fix/**'
   pull_request:
@@ -162,6 +161,12 @@ jobs:
 
           text = re.sub(
               r"(\n\s+- name: workspaces\s+)nfs:\s+server: workspace-store\.clawmanager-system\.svc\.cluster\.local\s+path: /exports/workspaces",
+              r"\1emptyDir: {}",
+              text,
+          )
+
+          text = re.sub(
+              r"(\n\s+- name: workspaces\s+)persistentVolumeClaim:\s+claimName: clawmanager-workspaces",
               r"\1emptyDir: {}",
               text,
           )

@@ -12,15 +12,16 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Server         ServerConfig         `yaml:"server"`
-	Database       DatabaseConfig       `yaml:"database"`
-	JWT            JWTConfig            `yaml:"jwt"`
-	Kubernetes     KubernetesConfig     `yaml:"kubernetes"`
-	Storage        StorageConfig        `yaml:"storage"`
-	Runtime        RuntimePoolConfig    `yaml:"runtime"`
-	ObjectStorage  ObjectStorageConfig  `yaml:"objectStorage"`
-	SkillScanner   SkillScannerConfig   `yaml:"skillScanner"`
-	LeaderElection LeaderElectionConfig `yaml:"leaderElection"`
+	Server           ServerConfig           `yaml:"server"`
+	Database         DatabaseConfig         `yaml:"database"`
+	JWT              JWTConfig              `yaml:"jwt"`
+	Kubernetes       KubernetesConfig       `yaml:"kubernetes"`
+	Storage          StorageConfig          `yaml:"storage"`
+	Runtime          RuntimePoolConfig      `yaml:"runtime"`
+	ObjectStorage    ObjectStorageConfig    `yaml:"objectStorage"`
+	SkillScanner     SkillScannerConfig     `yaml:"skillScanner"`
+	SkillMaterialize SkillMaterializeConfig `yaml:"skillMaterialize"`
+	LeaderElection   LeaderElectionConfig   `yaml:"leaderElection"`
 }
 
 // LeaderElectionConfig controls the control-plane leader election that gates
@@ -156,23 +157,25 @@ type StorageConfig struct {
 
 // RuntimePoolConfig holds shared V2 runtime pool configuration.
 type RuntimePoolConfig struct {
-	Namespace             string        `yaml:"namespace"`
-	WorkspaceRoot         string        `yaml:"workspaceRoot"`
-	WorkspacePVCClaimName string        `yaml:"workspacePvcClaimName"`
-	WorkspaceNFSServer    string        `yaml:"workspaceNfsServer"`
-	WorkspaceNFSPath      string        `yaml:"workspaceNfsPath"`
-	AgentControlToken     string        `yaml:"agentControlToken"`
-	AgentReportToken      string        `yaml:"agentReportToken"`
-	BackendReplicaID      string        `yaml:"backendReplicaId"`
-	RedisURL              string        `yaml:"redisUrl"`
-	SchedulerEnabled      bool          `yaml:"schedulerEnabled"`
-	HeartbeatTimeout      time.Duration `yaml:"heartbeatTimeout"`
-	SchedulerTick         time.Duration `yaml:"schedulerTick"`
-	OpenClawImage         string        `yaml:"openClawImage"`
-	HermesImage           string        `yaml:"hermesImage"`
-	MaxGatewaysPerPod     int           `yaml:"maxGatewaysPerPod"`
-	GatewayPortStart      int           `yaml:"gatewayPortStart"`
-	GatewayPortEnd        int           `yaml:"gatewayPortEnd"`
+	Namespace                 string        `yaml:"namespace"`
+	WorkspaceRoot             string        `yaml:"workspaceRoot"`
+	WorkspacePVCClaimName     string        `yaml:"workspacePvcClaimName"`
+	WorkspaceNFSServer        string        `yaml:"workspaceNfsServer"`
+	WorkspaceNFSPath          string        `yaml:"workspaceNfsPath"`
+	AgentControlToken         string        `yaml:"agentControlToken"`
+	AgentReportToken          string        `yaml:"agentReportToken"`
+	BackendReplicaID          string        `yaml:"backendReplicaId"`
+	RedisURL                  string        `yaml:"redisUrl"`
+	SchedulerEnabled          bool          `yaml:"schedulerEnabled"`
+	HeartbeatTimeout          time.Duration `yaml:"heartbeatTimeout"`
+	SchedulerTick             time.Duration `yaml:"schedulerTick"`
+	OpenClawImage             string        `yaml:"openClawImage"`
+	HermesImage               string        `yaml:"hermesImage"`
+	OpenCodeImage             string        `yaml:"openCodeImage"`
+	MaxGatewaysPerPod         int           `yaml:"maxGatewaysPerPod"`
+	GatewayStartInFlightLimit int           `yaml:"gatewayStartInFlightLimit"`
+	GatewayPortStart          int           `yaml:"gatewayPortStart"`
+	GatewayPortEnd            int           `yaml:"gatewayPortEnd"`
 }
 
 // LoggingConfig holds logging configuration
@@ -198,6 +201,14 @@ type SkillScannerConfig struct {
 	APIKey         string `yaml:"apiKey"`
 	TimeoutSeconds int    `yaml:"timeoutSeconds"`
 	Enabled        bool   `yaml:"enabled"`
+}
+
+type SkillMaterializeConfig struct {
+	Enabled                bool `yaml:"enabled"`
+	TickMS                 int  `yaml:"tickMs"`
+	BatchSize              int  `yaml:"batchSize"`
+	Concurrency            int  `yaml:"concurrency"`
+	PerInstanceConcurrency int  `yaml:"perInstanceConcurrency"`
 }
 
 // Load loads configuration from file and environment variables
@@ -270,23 +281,25 @@ func Load() (*Config, error) {
 			WorkspaceAccessMode:      getEnv("K8S_WORKSPACE_ACCESS_MODE", "ReadWriteMany"),
 		},
 		Runtime: RuntimePoolConfig{
-			Namespace:             runtimeNamespace,
-			WorkspaceRoot:         getEnv("RUNTIME_WORKSPACE_ROOT", "/workspaces"),
-			WorkspacePVCClaimName: getEnv("RUNTIME_WORKSPACE_PVC_CLAIM", ""),
-			WorkspaceNFSServer:    getEnv("RUNTIME_WORKSPACE_NFS_SERVER", ""),
-			WorkspaceNFSPath:      getEnv("RUNTIME_WORKSPACE_NFS_PATH", "/"),
-			AgentControlToken:     getEnv("RUNTIME_AGENT_CONTROL_TOKEN", ""),
-			AgentReportToken:      getEnv("RUNTIME_AGENT_REPORT_TOKEN", ""),
-			BackendReplicaID:      getEnv("HOSTNAME", "clawmanager-backend-local"),
-			RedisURL:              getEnv("PLATFORM_REDIS_URL", getEnv("TEAM_REDIS_URL", "")),
-			SchedulerEnabled:      getEnvBool("RUNTIME_SCHEDULER_ENABLED", true),
-			HeartbeatTimeout:      getEnvDuration("RUNTIME_HEARTBEAT_TIMEOUT", 10*time.Second),
-			SchedulerTick:         getEnvDuration("RUNTIME_SCHEDULER_TICK", 2*time.Second),
-			OpenClawImage:         getEnv("OPENCLAW_RUNTIME_IMAGE", "ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest"),
-			HermesImage:           getEnv("HERMES_RUNTIME_IMAGE", "ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest"),
-			MaxGatewaysPerPod:     getEnvInt("RUNTIME_MAX_GATEWAYS_PER_POD", 100),
-			GatewayPortStart:      getEnvInt("RUNTIME_GATEWAY_PORT_START", 20000),
-			GatewayPortEnd:        getEnvInt("RUNTIME_GATEWAY_PORT_END", 20299),
+			Namespace:                 runtimeNamespace,
+			WorkspaceRoot:             getEnv("RUNTIME_WORKSPACE_ROOT", "/workspaces"),
+			WorkspacePVCClaimName:     getEnv("RUNTIME_WORKSPACE_PVC_CLAIM", ""),
+			WorkspaceNFSServer:        getEnv("RUNTIME_WORKSPACE_NFS_SERVER", ""),
+			WorkspaceNFSPath:          getEnv("RUNTIME_WORKSPACE_NFS_PATH", "/"),
+			AgentControlToken:         getEnv("RUNTIME_AGENT_CONTROL_TOKEN", ""),
+			AgentReportToken:          getEnv("RUNTIME_AGENT_REPORT_TOKEN", ""),
+			BackendReplicaID:          getEnv("HOSTNAME", "clawmanager-backend-local"),
+			RedisURL:                  getEnv("PLATFORM_REDIS_URL", getEnv("TEAM_REDIS_URL", "")),
+			SchedulerEnabled:          getEnvBool("RUNTIME_SCHEDULER_ENABLED", true),
+			HeartbeatTimeout:          getEnvDuration("RUNTIME_HEARTBEAT_TIMEOUT", 10*time.Second),
+			SchedulerTick:             getEnvDuration("RUNTIME_SCHEDULER_TICK", 2*time.Second),
+			OpenClawImage:             getEnv("OPENCLAW_RUNTIME_IMAGE", "ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest"),
+			HermesImage:               getEnv("HERMES_RUNTIME_IMAGE", "ghcr.io/yuan-lab-llm/agentsruntime/hermes-lite:latest"),
+			OpenCodeImage:             getEnv("OPENCODE_RUNTIME_IMAGE", "ghcr.io/yuan-lab-llm/agentsruntime/opencode-lite:latest"),
+			MaxGatewaysPerPod:         getEnvInt("RUNTIME_MAX_GATEWAYS_PER_POD", 100),
+			GatewayStartInFlightLimit: getEnvInt("RUNTIME_GATEWAY_START_IN_FLIGHT_LIMIT", 32),
+			GatewayPortStart:          getEnvInt("RUNTIME_GATEWAY_PORT_START", 20000),
+			GatewayPortEnd:            getEnvInt("RUNTIME_GATEWAY_PORT_END", 20299),
 		},
 		ObjectStorage: ObjectStorageConfig{
 			Endpoint:       getEnv("OBJECT_STORAGE_ENDPOINT", ""),
@@ -304,6 +317,13 @@ func Load() (*Config, error) {
 			APIKey:         getEnv("SKILL_SCANNER_API_KEY", ""),
 			TimeoutSeconds: 30,
 			Enabled:        strings.EqualFold(getEnv("SKILL_SCANNER_ENABLED", "false"), "true"),
+		},
+		SkillMaterialize: SkillMaterializeConfig{
+			Enabled:                strings.EqualFold(getEnv("SKILL_MATERIALIZE_WORKER_ENABLED", "true"), "true"),
+			TickMS:                 2000,
+			BatchSize:              5,
+			Concurrency:            5,
+			PerInstanceConcurrency: 2,
 		},
 		LeaderElection: LeaderElectionConfig{
 			Enabled:       strings.EqualFold(getEnv("CLAWMANAGER_LEADER_ELECTION", "true"), "true"),
@@ -447,7 +467,9 @@ func applyEnvOverrides(config *Config) {
 	config.Runtime.SchedulerTick = getEnvDuration("RUNTIME_SCHEDULER_TICK", config.Runtime.SchedulerTick)
 	config.Runtime.OpenClawImage = getEnv("OPENCLAW_RUNTIME_IMAGE", config.Runtime.OpenClawImage)
 	config.Runtime.HermesImage = getEnv("HERMES_RUNTIME_IMAGE", config.Runtime.HermesImage)
+	config.Runtime.OpenCodeImage = getEnv("OPENCODE_RUNTIME_IMAGE", config.Runtime.OpenCodeImage)
 	config.Runtime.MaxGatewaysPerPod = getEnvInt("RUNTIME_MAX_GATEWAYS_PER_POD", config.Runtime.MaxGatewaysPerPod)
+	config.Runtime.GatewayStartInFlightLimit = getEnvInt("RUNTIME_GATEWAY_START_IN_FLIGHT_LIMIT", config.Runtime.GatewayStartInFlightLimit)
 	config.Runtime.GatewayPortStart = getEnvInt("RUNTIME_GATEWAY_PORT_START", config.Runtime.GatewayPortStart)
 	config.Runtime.GatewayPortEnd = getEnvInt("RUNTIME_GATEWAY_PORT_END", config.Runtime.GatewayPortEnd)
 	config.LeaderElection.Enabled = getEnvBool("CLAWMANAGER_LEADER_ELECTION", config.LeaderElection.Enabled)
@@ -496,6 +518,21 @@ func applyEnvOverrides(config *Config) {
 	}
 	if timeoutSeconds := os.Getenv("SKILL_SCANNER_TIMEOUT_SECONDS"); timeoutSeconds != "" {
 		fmt.Sscanf(timeoutSeconds, "%d", &config.SkillScanner.TimeoutSeconds)
+	}
+	if enabled := os.Getenv("SKILL_MATERIALIZE_WORKER_ENABLED"); enabled != "" {
+		config.SkillMaterialize.Enabled = strings.EqualFold(enabled, "true")
+	}
+	if tickMS := os.Getenv("SKILL_MATERIALIZE_TICK_MS"); tickMS != "" {
+		fmt.Sscanf(tickMS, "%d", &config.SkillMaterialize.TickMS)
+	}
+	if batchSize := os.Getenv("SKILL_MATERIALIZE_BATCH_SIZE"); batchSize != "" {
+		fmt.Sscanf(batchSize, "%d", &config.SkillMaterialize.BatchSize)
+	}
+	if concurrency := os.Getenv("SKILL_MATERIALIZE_CONCURRENCY"); concurrency != "" {
+		fmt.Sscanf(concurrency, "%d", &config.SkillMaterialize.Concurrency)
+	}
+	if perInstance := os.Getenv("SKILL_MATERIALIZE_PER_INSTANCE_CONCURRENCY"); perInstance != "" {
+		fmt.Sscanf(perInstance, "%d", &config.SkillMaterialize.PerInstanceConcurrency)
 	}
 }
 

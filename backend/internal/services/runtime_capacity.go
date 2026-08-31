@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	RuntimeTypeOpenClaw = "openclaw"
-	RuntimeTypeHermes   = "hermes"
+	RuntimeTypeOpenClaw        = "openclaw"
+	RuntimeTypeHermes          = "hermes"
+	RuntimeTypeOpenCode        = "opencode"
+	RuntimeTypeDeepSeekHarness = "deepseek-harness"
 
 	InstanceModeLite = "lite"
 	InstanceModePro  = "pro"
@@ -19,12 +21,31 @@ const (
 
 	RuntimeGatewayPortStart = 20000
 	RuntimePodCapacity      = 100
-	// OpenClaw gateway slots reserve adjacent service ports in addition to the
-	// public gateway port. Capacity is instance count, not raw port count.
-	RuntimeGatewayPortsPerInstance = 3
-	RuntimeGatewayPortEnd          = RuntimeGatewayPortStart + RuntimePodCapacity*RuntimeGatewayPortsPerInstance - 1
-	RuntimeLinuxIDBase             = 200000
+	// OpenClaw Lite reserves a primary gateway port plus its adjacent browser
+	// ports. Hermes Lite only exposes the primary dashboard port.
+	RuntimeGatewayPortOffset               = 0
+	RuntimeBrowserCDPPortOffset            = 1
+	RuntimeBrowserControlPortOffset        = 2
+	RuntimeOpenClawPortsPerInstance        = RuntimeBrowserControlPortOffset + 1
+	RuntimeHermesPortsPerInstance          = 1
+	RuntimeDeepSeekHarnessPortsPerInstance = 1
+	// Keep the shared range large enough for the runtime with the largest port
+	// block. Runtime-specific allocation still stops at the Pod slot capacity.
+	RuntimeGatewayPortEnd = RuntimeGatewayPortStart + RuntimePodCapacity*RuntimeOpenClawPortsPerInstance - 1
+	RuntimeLinuxIDBase    = 200000
 )
+
+func RuntimeGatewayPortBlockSize(runtimeType string) int {
+	if normalized, ok := NormalizeV2RuntimeType(runtimeType); ok {
+		switch normalized {
+		case RuntimeTypeHermes:
+			return RuntimeHermesPortsPerInstance
+		case RuntimeTypeDeepSeekHarness:
+			return RuntimeDeepSeekHarnessPortsPerInstance
+		}
+	}
+	return RuntimeOpenClawPortsPerInstance
+}
 
 func NormalizeV2RuntimeType(instanceType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(instanceType)) {
@@ -32,6 +53,10 @@ func NormalizeV2RuntimeType(instanceType string) (string, bool) {
 		return RuntimeTypeOpenClaw, true
 	case RuntimeTypeHermes:
 		return RuntimeTypeHermes, true
+	case RuntimeTypeOpenCode:
+		return RuntimeTypeOpenCode, true
+	case RuntimeTypeDeepSeekHarness:
+		return RuntimeTypeDeepSeekHarness, true
 	default:
 		return "", false
 	}

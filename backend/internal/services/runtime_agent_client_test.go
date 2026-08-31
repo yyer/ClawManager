@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,7 @@ func TestRuntimeAgentClientCreateGateway(t *testing.T) {
 		UserID:        8,
 		AgentType:     "openclaw",
 		WorkspacePath: "/workspaces/openclaw/user-8/instance-7",
+		GatewayPort:   20015,
 		PortRange:     RuntimeAgentPortRange{Start: RuntimeGatewayPortStart, End: RuntimeGatewayPortEnd},
 		UID:           200007,
 		GID:           200007,
@@ -51,7 +53,7 @@ func TestRuntimeAgentClientCreateGateway(t *testing.T) {
 	if gotToken != "secret" {
 		t.Fatalf("unexpected token %q", gotToken)
 	}
-	if gotReq.InstanceID != 7 || gotReq.PortRange.Start != 20000 {
+	if gotReq.InstanceID != 7 || gotReq.GatewayPort != 20015 || gotReq.PortRange.Start != 20000 {
 		t.Fatalf("unexpected request %#v", gotReq)
 	}
 	if resp.GatewayID != "gw-7-3" || resp.Port != 20017 {
@@ -192,6 +194,30 @@ func TestRuntimeAgentClientDrainSendsJSONBody(t *testing.T) {
 	}
 }
 
+func TestRuntimeAgentClientResyncInstanceSkills(t *testing.T) {
+	var gotMethod, gotPath, gotToken string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotToken = r.Header.Get("X-ClawManager-Control-Token")
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := NewRuntimeAgentClient("secret")
+	if err := client.ResyncInstanceSkills(context.Background(), server.URL, 12, "full"); err != nil {
+		t.Fatalf("ResyncInstanceSkills returned error: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/skills/resync" || gotToken != "secret" {
+		t.Fatalf("unexpected request: %s %s token=%q", gotMethod, gotPath, gotToken)
+	}
+	if body["instance_id"] != float64(12) || body["mode"] != "full" {
+		t.Fatalf("unexpected body: %#v", body)
+	}
+}
+
 func TestRuntimeAgentClientConflict(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no free port", http.StatusConflict)
@@ -202,6 +228,9 @@ func TestRuntimeAgentClientConflict(t *testing.T) {
 	_, err := client.CreateGateway(context.Background(), server.URL, RuntimeAgentCreateGatewayRequest{})
 	if err == nil || !strings.Contains(err.Error(), "runtime agent conflict") || !strings.Contains(err.Error(), "no free port") {
 		t.Fatalf("unexpected error %v", err)
+	}
+	if !errors.Is(err, ErrRuntimeAgentConflict) {
+		t.Fatalf("error %v does not wrap ErrRuntimeAgentConflict", err)
 	}
 }
 
@@ -215,6 +244,20 @@ func TestRuntimeAgentClientNonConflictErrorIncludesStatusAndBody(t *testing.T) {
 	_, err := client.CreateGateway(context.Background(), server.URL, RuntimeAgentCreateGatewayRequest{})
 	if err == nil || !strings.Contains(err.Error(), "runtime agent status 500") || !strings.Contains(err.Error(), "agent exploded") {
 		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func TestRuntimeAgentClientDeleteGatewayReturnsNotFoundSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("gateway not found"))
+	}))
+	defer server.Close()
+
+	client := NewRuntimeAgentClientWithHTTPClient("token", server.Client())
+	err := client.DeleteGateway(context.Background(), server.URL, "gw-missing")
+	if !errors.Is(err, ErrRuntimeAgentNotFound) {
+		t.Fatalf("DeleteGateway error = %v, want ErrRuntimeAgentNotFound", err)
 	}
 }
 

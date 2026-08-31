@@ -1,6 +1,6 @@
 import type { AgencyAgentProfileKey } from "./agencyAgentProfiles";
 import type { InstanceMode } from "../types/instance";
-import type { TeamCommunicationMode } from "../types/team";
+import type { TeamCommunicationMode, TeamMemberRoleProfileRequest } from "../types/team";
 
 export type RuntimeType = "openclaw" | "hermes";
 export type ResourcePresetKey = "small" | "medium" | "large" | "custom";
@@ -21,6 +21,7 @@ export type TeamMemberTemplateMember = {
   gpuCount: number;
   image: string;
   agentProfileKey?: AgencyAgentProfileKey;
+  roleProfile?: TeamMemberRoleProfileRequest;
 };
 
 export type TeamMemberTemplate = {
@@ -42,6 +43,8 @@ const BUILTIN_MEMBER_DESCRIPTION_ZH: Record<string, string> = {
     "智能体编排官：拆解需求、设定优先级、分派任务、管理风险，并整合成员结果。",
   "Senior Developer: implements code, integrates interfaces, adds necessary tests, and provides reproducible delivery notes.":
     "资深开发工程师：负责代码实现和接口集成，补充必要测试，并提供可复现的交付说明。",
+  "Evidence Collector / Reviewer: performs proportionate static-first validation with available tools, records actual findings and verification limits, and gives a concise PASS/FAIL verdict.":
+    "验收验证员 / 评审员：优先使用现有工具进行适度的静态验收，记录实际问题和验证限制，并给出简洁的 PASS/FAIL 结论。",
   "Evidence Collector / Reviewer: verifies behavior, checks regressions, gathers evidence, reviews delivery items, and gives a PASS/FAIL verdict.":
     "验收验证员 / 评审员：验证功能行为和回归风险，收集证据、审查交付内容，并给出通过或不通过的结论。",
   "Agents Orchestrator: owns goals, definition of done, task breakdown, dependency coordination, risk management, acceptance, and final decisions.":
@@ -56,8 +59,12 @@ const BUILTIN_MEMBER_DESCRIPTION_ZH: Record<string, string> = {
     "后端架构师：负责 API、数据库、权限、队列、业务逻辑和服务端系统能力。",
   "Software Architect: owns technical choices, system boundaries, availability, extensibility, technical standards, and evolution plans.":
     "软件架构师：负责技术选型、系统边界、可用性、可扩展性、技术标准和演进规划。",
+  "Evidence Collector: performs proportionate static-first validation, records actual evidence and limitations, and provides an acceptance verdict without installing extra tooling.":
+    "验收验证员：进行适度的静态优先验证，记录实际证据和限制，在不安装额外工具的情况下给出验收结论。",
   "Evidence Collector: owns functional validation, regression checks, evidence gathering, reproduction notes, and acceptance verdicts.":
     "验收验证员：负责功能验证、回归检查、证据收集、复现说明和验收结论。",
+  "Code Reviewer: reviews source correctness, architecture consistency, maintainability, security, and regression risk using existing evidence and tests.":
+    "代码审查员：基于现有证据和测试审查源码正确性、架构一致性、可维护性、安全性和回归风险。",
   "Code Reviewer: owns code review, architecture consistency, maintainability, test coverage, risk findings, and pre-merge quality gates.":
     "代码审查员：负责代码评审、架构一致性、可维护性、测试覆盖、风险识别和合并前质量把关。",
 };
@@ -158,7 +165,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "reviewer",
         role: "reviewer",
         description:
-          "Evidence Collector / Reviewer: verifies behavior, checks regressions, gathers evidence, reviews delivery items, and gives a PASS/FAIL verdict.",
+          "Evidence Collector / Reviewer: performs proportionate static-first validation with available tools, records actual findings and verification limits, and gives a concise PASS/FAIL verdict.",
         agentProfileKey: "agency.evidence-collector",
       }),
     ],
@@ -242,7 +249,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "qa-engineer",
         role: "qa-engineer",
         description:
-          "Evidence Collector: owns functional validation, regression checks, evidence gathering, reproduction notes, and acceptance verdicts.",
+          "Evidence Collector: performs proportionate static-first validation, records actual evidence and limitations, and provides an acceptance verdict without installing extra tooling.",
         agentProfileKey: "agency.evidence-collector",
       }),
       baseMember({
@@ -250,7 +257,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "code-reviewer",
         role: "code-reviewer",
         description:
-          "Code Reviewer: owns code review, architecture consistency, maintainability, test coverage, risk findings, and pre-merge quality gates.",
+          "Code Reviewer: reviews source correctness, architecture consistency, maintainability, security, and regression risk using existing evidence and tests.",
         agentProfileKey: "agency.code-reviewer",
       }),
     ],
@@ -358,7 +365,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "code-reviewer",
         role: "code-reviewer",
         description:
-          "Code Reviewer：在最终验收前检查正确性、可维护性、安全性、回归风险和测试覆盖。",
+          "Code Reviewer：基于源码、变更和现有测试进行适度评审，检查正确性、可维护性、安全性和回归风险，不额外安装测试环境。",
         agentProfileKey: "agency.code-reviewer",
       }),
       baseMember({
@@ -366,7 +373,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "qa-engineer",
         role: "qa-engineer",
         description:
-          "Evidence Collector：用可复现步骤、截图或命令输出验证交付行为，并给出明确验收结论。",
+          "Evidence Collector：优先用现有源码、产物和工具进行适度验证；浏览器不可用时记录限制并继续静态验收，不下载额外依赖。",
         agentProfileKey: "agency.evidence-collector",
       }),
     ],
@@ -398,7 +405,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "code-reviewer",
         role: "code-reviewer",
         description:
-          "Code Reviewer：识别正确性缺陷、边界条件、可维护性风险、安全问题和缺失测试。",
+          "Code Reviewer：基于源码、变更和现有测试识别实际的正确性、边界条件、可维护性与安全风险，不追求固定问题数量。",
         agentProfileKey: "agency.code-reviewer",
       }),
       baseMember({
@@ -406,7 +413,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "api-tester",
         role: "api-tester",
         description:
-          "API Tester：验证接口行为、响应结构、鉴权失败、非法输入、不存在资源和延迟预期。",
+          "API Tester：使用现有 HTTP 工具和可用服务验证接口行为与契约；环境不可用时转为静态契约检查，不安装额外测试工具。",
         agentProfileKey: "agency.api-tester",
       }),
       baseMember({
@@ -414,7 +421,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "evidence-collector",
         role: "qa-engineer",
         description:
-          "Evidence Collector：收集直接验证证据，记录复现说明，并给出 PASS/FAIL 结论和必要修复建议。",
+          "Evidence Collector：优先进行适度的静态验证，记录实际证据、验证限制和 PASS/FAIL 结论，不为验收下载额外工具。",
         agentProfileKey: "agency.evidence-collector",
       }),
     ],
@@ -470,7 +477,7 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "api-tester",
         role: "api-tester",
         description:
-          "API Tester：验证正常路径、参数错误、鉴权、响应结构，并提供可复现的 API 命令证据。",
+          "API Tester：使用现有 HTTP 工具验证正常路径、参数错误、鉴权和响应结构；服务不可用时记录限制并完成静态契约审查。",
         agentProfileKey: "agency.api-tester",
       }),
       baseMember({
@@ -478,8 +485,80 @@ export const BUILTIN_MEMBER_TEMPLATES: TeamMemberTemplate[] = [
         name: "code-reviewer",
         role: "code-reviewer",
         description:
-          "Code Reviewer：检查集成改动的回归风险、可维护性、安全性、边界条件和缺失测试。",
+          "Code Reviewer：基于源码、集成改动和现有测试检查回归风险、可维护性、安全性与边界条件，不创建新的测试环境。",
         agentProfileKey: "agency.code-reviewer",
+      }),
+    ],
+  },
+  {
+    id: "builtin-research-publication-team",
+    name: "科研成果六成员团队",
+    teamName: "research-publication-team",
+    communicationMode: "leader_mediated",
+    description:
+      "科研成果 Team：Leader 统筹研究目标和交付节奏，文献调研员梳理证据，实验设计师制定可复现方案，数据处理员完成分析，文章润色员完善论文表达，成果展示师组织最终汇报。",
+    source: "builtin",
+    members: [
+      baseMember({
+        memberId: "leader",
+        name: "research-lead",
+        role: "leader",
+        description:
+          "智能体编排官：明确研究目标和完成标准，协调文献、实验、数据、写作与展示之间的依赖，核验成员产出并整合最终成果。",
+        resourcePreset: "medium",
+        isLeader: true,
+        cpuCores: 4,
+        memoryGb: 8,
+        diskGb: 50,
+        agentProfileKey: "agency.agents-orchestrator",
+      }),
+      baseMember({
+        memberId: "literature",
+        name: "literature-researcher",
+        role: "literature-researcher",
+        description:
+          "文献调研员：界定检索范围，查找和评估可信文献，整理可追溯证据、研究脉络、争议与待解决问题，不编造引用。",
+        agentProfileKey: "agency.literature-researcher",
+      }),
+      baseMember({
+        memberId: "experiment",
+        name: "experiment-designer",
+        role: "experiment-designer",
+        description:
+          "实验设计师：把研究问题转化为假设、变量、对照、样本、步骤、测量和分析计划，并识别混杂因素、复现要求及伦理风险。",
+        resourcePreset: "medium",
+        cpuCores: 4,
+        memoryGb: 8,
+        diskGb: 50,
+        agentProfileKey: "agency.experiment-designer",
+      }),
+      baseMember({
+        memberId: "data",
+        name: "data-analyst",
+        role: "data-analyst",
+        description:
+          "数据处理员：检查数据来源与质量，记录清洗和转换过程，执行与实验设计一致的分析，量化不确定性并生成可复现图表。",
+        resourcePreset: "medium",
+        cpuCores: 4,
+        memoryGb: 8,
+        diskGb: 50,
+        agentProfileKey: "agency.data-analyst",
+      }),
+      baseMember({
+        memberId: "editor",
+        name: "academic-editor",
+        role: "academic-editor",
+        description:
+          "文章润色员：在不改变证据强度和作者原意的前提下，完善论文结构、论证、语言、术语及引用一致性，并标记缺失或无依据内容。",
+        agentProfileKey: "agency.academic-editor",
+      }),
+      baseMember({
+        memberId: "presenter",
+        name: "research-presenter",
+        role: "research-presenter",
+        description:
+          "成果展示师：面向目标受众组织研究叙事、图表、幻灯片或海报，准确呈现已验证结论、方法和局限，避免夸大成果。",
+        agentProfileKey: "agency.research-presenter",
       }),
     ],
   },

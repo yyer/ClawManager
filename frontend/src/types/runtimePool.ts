@@ -1,4 +1,8 @@
-export type RuntimeType = "openclaw" | "hermes";
+export type RuntimeType =
+  | "openclaw"
+  | "hermes"
+  | "opencode"
+  | "deepseek-harness";
 
 export interface RuntimePod {
   id: number;

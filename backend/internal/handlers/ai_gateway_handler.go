@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"clawreef/internal/aigateway"
+	"clawreef/internal/services"
 	"clawreef/internal/utils"
 
 	"github.com/gin-gonic/gin"
@@ -14,12 +15,15 @@ import (
 
 // AIGatewayHandler exposes AI gateway endpoints.
 type AIGatewayHandler struct {
-	service aigateway.Service
+	service                     aigateway.Service
+	instanceService             services.InstanceService
+	workspaceFileService        services.WorkspaceFileService
+	runtimeWorkspaceFileService services.WorkspaceFileService
 }
 
 // NewAIGatewayHandler creates a new AI gateway handler.
-func NewAIGatewayHandler(service aigateway.Service) *AIGatewayHandler {
-	return &AIGatewayHandler{service: service}
+func NewAIGatewayHandler(service aigateway.Service, instanceService services.InstanceService, workspaceFileService, runtimeWorkspaceFileService services.WorkspaceFileService) *AIGatewayHandler {
+	return &AIGatewayHandler{service: service, instanceService: instanceService, workspaceFileService: workspaceFileService, runtimeWorkspaceFileService: runtimeWorkspaceFileService}
 }
 
 // ListModels returns active models available to the current user.
@@ -49,8 +53,9 @@ func (h *AIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	req.RawBody = rawBody
-	if req.SessionID == nil {
-		if sessionKey := strings.TrimSpace(c.GetHeader("x-openclaw-session-key")); sessionKey != "" {
+	if sessionKey := strings.TrimSpace(c.GetHeader("x-openclaw-session-key")); sessionKey != "" {
+		req.OpenClawSessionKey = &sessionKey
+		if req.SessionID == nil {
 			req.SessionID = &sessionKey
 		}
 	}
@@ -59,6 +64,13 @@ func (h *AIGatewayHandler) ChatCompletions(c *gin.Context) {
 			req.TraceID = &runID
 		}
 	}
+	gatewayAuthType, _ := c.Get("gatewayAuthType")
+	instanceType, _ := c.Get("instanceType")
+	aigateway.ApplyManagedInstanceSessionDefaults(
+		&req,
+		stringValue(gatewayAuthType),
+		stringValue(instanceType),
+	)
 
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -157,4 +169,12 @@ func setInt64Metadata(c *gin.Context, field **int64, key string) bool {
 		return true
 	}
 	return **field == value
+}
+
+func stringValue(raw interface{}) string {
+	value, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }

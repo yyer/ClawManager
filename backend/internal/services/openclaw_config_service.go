@@ -263,6 +263,8 @@ type OpenClawConfigService interface {
 	CompilePreview(userID int, plan OpenClawConfigPlan) (*OpenClawConfigCompilePreview, error)
 	PlanWithoutTeamMemberLeaderOnlyChannels(userID int, plan *OpenClawConfigPlan) (*OpenClawConfigPlan, error)
 	CreateSnapshotForInstance(userID int, instance *models.Instance, plan *OpenClawConfigPlan) (*models.OpenClawInjectionSnapshot, error)
+	CreateDefaultLLMGovernanceSnapshot(userID int, instance *models.Instance) (*models.OpenClawInjectionSnapshot, error)
+	EnsurePlatformLLMGatewayResource(userID int) (*models.OpenClawConfigResource, error)
 	MarkSnapshotActive(snapshot *models.OpenClawInjectionSnapshot) error
 	MarkSnapshotFailed(snapshot *models.OpenClawInjectionSnapshot, err error) error
 	EnsureSnapshotSecret(ctx context.Context, userID int, instance *models.Instance, snapshotID int) (string, error)
@@ -496,6 +498,11 @@ func (s *openClawConfigService) ValidateResource(req UpsertOpenClawConfigResourc
 	envelope, err := parseOpenClawEnvelope(resourceType, req.Content)
 	if err != nil {
 		return err
+	}
+	if resourceType == OpenClawConfigResourceTypeScheduledTask {
+		if err := validateScheduledTaskEnvelope(envelope); err != nil {
+			return err
+		}
 	}
 	for _, dep := range envelope.DependsOn {
 		if !isValidOpenClawResourceType(dep.Type) {

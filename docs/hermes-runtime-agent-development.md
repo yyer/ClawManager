@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Hermes Runtime Image and Agent Development Guide
 
 This guide is for Hermes image and agent developers. It explains how to build a ClawManager-managed Hermes runtime image on top of Webtop, and how the embedded Hermes agent should integrate with ClawManager Agent Control Plane so Hermes can behave like OpenClaw: report live runtime status, report health and system metrics, sync skill inventory, upload skill packages, and poll runtime commands.
@@ -147,7 +149,15 @@ At startup, read bootstrap payloads in this priority order. Use the first non-em
 | Agents | `CLAWMANAGER_HERMES_AGENTS_JSON` | `CLAWMANAGER_RUNTIME_AGENTS_JSON`, `CLAWMANAGER_OPENCLAW_AGENTS_JSON` |
 | Scheduled Tasks | `CLAWMANAGER_HERMES_SCHEDULED_TASKS_JSON` | `CLAWMANAGER_RUNTIME_SCHEDULED_TASKS_JSON`, `CLAWMANAGER_OPENCLAW_SCHEDULED_TASKS_JSON` |
 
-If a variable is missing or empty, treat it as an empty config. Do not fail agent startup for missing optional bootstrap payloads. If a variable exists but contains invalid JSON, log a clear error and report `health.bootstrap_config` or `health.config_loader` as `error` in the next state report.
+Scheduled Task resources use the OpenClaw cron benchmark (`schedule` + `payload` + `delivery`, format `task/openclaw-cron@v1`). At Hermes startup the payload is **translated** into native Hermes cron jobs under `~/.hermes/cron/jobs.json` (managed ids `cm-st-*`) and executed by the gateway built-in cron. `delivery.mode=announce` maps to Hermes `deliver` targets; `webhook` maps to `deliver=local`, appends a required HTTP POST instruction to the prompt, and writes `cron/webhooks/cm-st-*.url`.
+
+Hermes notes:
+
+- Apply is soft-fail: parse/translate errors are recorded in bootstrap `scheduled-tasks` state and do not abort startup.
+- Identical payload sha256 + managed job count skips rewriting `jobs.json`.
+- OpenClaw fields `wakeMode` and `sessionTarget` are intentionally ignored on Hermes (`ignored_fields`); Hermes cron always uses a fresh agent session. Keep those fields in the platform resource for OpenClaw compatibility.
+
+If a variable is missing or empty, treat it as an empty config. Do not fail agent startup for missing optional bootstrap payloads. If a variable exists but contains invalid JSON, agent should record a clear error and report `health.bootstrap_config` or `health.config_loader` as `error` in the next state report.
 
 Recommended local bootstrap state:
 
@@ -625,7 +635,7 @@ Recommended behavior:
 
 ### content_md5 Calculation
 
-ClawManager `content_md5` is a skill directory content fingerprint, not a zip file MD5. The full algorithm is defined in [Skill Content MD5 Calculation Spec](skill-content-md5-spec.md).
+ClawManager `content_md5` is the normalized skill-directory content fingerprint used by the control plane contract, not the MD5 of ZIP bytes. Runtime implementations must match the control-plane normalization and contract tests.
 
 The most common mistake is top-level directory handling:
 

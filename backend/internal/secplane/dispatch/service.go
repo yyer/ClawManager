@@ -1056,7 +1056,10 @@ func (s *service) GetLiveAegisConfig(userID, instanceID int) (*LiveAegisConfig, 
 		return nil, fmt.Errorf("clawaegisex skill not registered on instance %d and no runtime_config row (dispatch first)", instanceID)
 	}
 
-	zipBytes, _, err := s.skills.DownloadSkill(userID, aegisSkillID)
+	// Skill Hub 权限模型:DownloadSkill 现在要求 (actorUserID, actorRole, skillID)。
+	// secplane dispatch 是管理面内部操作,按 admin 角色读取实例上挂载的
+	// clawaegisex skill blob(GetLiveAegisConfig 本来就只从 admin 前端调用)。
+	zipBytes, _, err := s.skills.DownloadSkill(userID, "admin", aegisSkillID)
 	if err != nil {
 		return nil, fmt.Errorf("download skill blob (skill_id=%d): %w", aegisSkillID, err)
 	}

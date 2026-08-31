@@ -22,6 +22,7 @@ import (
 	"clawreef/internal/services"
 	"clawreef/internal/services/k8s"
 	"clawreef/internal/services/leader"
+	"clawreef/internal/teamtemplate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -64,6 +65,7 @@ func main() {
 	chatMessageRepo := repository.NewChatMessageRepository(database)
 	riskRuleRepo := repository.NewRiskRuleRepository(database)
 	riskHitRepo := repository.NewRiskHitRepository(database)
+	egressPrivateExceptionRepo := repository.NewEgressPrivateExceptionRepository(database)
 	openClawConfigRepo := repository.NewOpenClawConfigRepository(database)
 	instanceAgentRepo := repository.NewInstanceAgentRepository(database)
 	instanceRuntimeStatusRepo := repository.NewInstanceRuntimeStatusRepository(database)
@@ -75,6 +77,7 @@ func main() {
 	rolloutRepo := repository.NewRuntimeRolloutRepository(database)
 	workspaceFileAuditRepo := repository.NewWorkspaceFileAuditRepository(database)
 	teamRepo := repository.NewTeamRepository(database)
+	customTeamTemplateRepo := repository.NewCustomTeamTemplateRepository(database)
 	skillRepo := repository.NewSkillRepository(database)
 	securityScanRepo := repository.NewSecurityScanRepository(database)
 	instanceExternalAccessRepo := repository.NewInstanceExternalAccessRepository(database)
@@ -99,13 +102,14 @@ func main() {
 	riskDetectionService := services.NewRiskDetectionService(riskRuleRepo)
 	riskHitService := services.NewRiskHitService(riskHitRepo)
 	riskRuleService := services.NewRiskRuleService(riskRuleRepo)
+	egressPrivateExceptionService := services.NewEgressPrivateExceptionService(egressPrivateExceptionRepo, instanceRepo, userRepo)
 	openClawConfigService := services.NewOpenClawConfigService(openClawConfigRepo, skillRepo)
 	objectStorageService, err := services.NewObjectStorageService(cfg.ObjectStorage)
 	if err != nil {
 		log.Fatalf("Failed to initialize object storage: %v", err)
 	}
 	skillScannerClient := services.NewSkillScannerClient(cfg.SkillScanner)
-	aiObservabilityService := services.NewAIObservabilityService(modelInvocationRepo, auditEventRepo, costRecordRepo, riskHitRepo, chatMessageRepo, llmModelRepo, instanceRepo, userRepo)
+	aiObservabilityService := services.NewAIObservabilityService(modelInvocationRepo, auditEventRepo, costRecordRepo, riskHitRepo, chatMessageRepo, chatSessionRepo, llmModelRepo, instanceRepo, userRepo, instanceRuntimeStatusRepo)
 	clusterResourceService := services.NewClusterResourceService(instanceRepo)
 	services.SetRuntimeImageSettingsProvider(systemImageSettingService)
 	services.SetOpenClawTransferRuntimeRepositories(instanceRepo, bindingRepo, runtimePodRepo)
@@ -135,10 +139,23 @@ func main() {
 	runtimeEvents := services.NewRuntimeEventService(platformRedis)
 	workspaceFileService := services.NewWorkspaceFileService(workspaceFileAuditRepo)
 	runtimeWorkspaceFileService := services.NewRuntimeWorkspaceFileService(workspaceFileAuditRepo)
-	skillService := services.NewSkillService(skillRepo, instanceRepo, instanceCommandService, objectStorageService, skillScannerClient)
+	skillService := services.NewSkillService(skillRepo, instanceRepo, userRepo, instanceCommandService, instanceCommandRepo, objectStorageService, skillScannerClient)
+	materializeJobRepo := repository.NewSkillPackageMaterializeJobRepository(database)
+	materializeService := services.NewSkillPackageMaterializeService(materializeJobRepo, skillRepo, services.SkillServiceAsMaterializer(skillService))
+	services.ConfigureSkillPackageMaterialize(skillService, materializeService)
+	materializeWorker := services.NewSkillPackageMaterializeWorker(
+		materializeService,
+		time.Duration(cfg.SkillMaterialize.TickMS)*time.Millisecond,
+		cfg.SkillMaterialize.BatchSize,
+		cfg.SkillMaterialize.Concurrency,
+		cfg.SkillMaterialize.PerInstanceConcurrency,
+		cfg.SkillMaterialize.Enabled,
+	)
+	services.ConfigureSkillRuntimeSync(skillService, bindingRepo, runtimePodRepo, runtimeAgentClient)
 	securityScanService := services.NewSecurityScanService(securityScanRepo, skillRepo, objectStorageService, skillScannerClient)
 	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
+	customTeamTemplateService := teamtemplate.NewService(customTeamTemplateRepo, aiGatewayService)
 
 	// Initialize secplane (security protection platform) module. Keeps all of
 	// its routes, services and tables behind a single facade so the rest of
@@ -167,23 +184,47 @@ func main() {
 		openClawConfigService,
 		skillService,
 		externalAccessService,
+		aiObservabilityService,
+		services.NewInstanceShellService(runtimePodRepo, bindingRepo),
 		services.WithInstanceProxyRuntimeRepositories(instanceRepo, runtimePodRepo, bindingRepo),
 	)
 	systemSettingsHandler := handlers.NewSystemSettingsHandler(systemImageSettingService)
 	llmModelHandler := handlers.NewLLMModelHandler(llmModelService)
-	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGatewayService)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGatewayService, instanceService, workspaceFileService, runtimeWorkspaceFileService)
+	customTeamTemplateHandler := handlers.NewCustomTeamTemplateHandler(customTeamTemplateService)
 	aiObservabilityHandler := handlers.NewAIObservabilityHandler(aiObservabilityService)
 	riskRuleHandler := handlers.NewRiskRuleHandler(riskRuleService)
+	egressPrivateExceptionHandler := handlers.NewEgressPrivateExceptionHandler(egressPrivateExceptionService)
 	clusterResourceHandler := handlers.NewClusterResourceHandler(clusterResourceService)
-	egressProxyHandler := handlers.NewEgressProxyHandler()
+	teamPreviewSecretService := k8s.NewSecretService()
+	teamPreviewOrigin, _ := services.DefaultTeamPreviewOrigin()
+	egressProxyHandler := handlers.NewEgressProxyHandler(
+		auditEventService,
+		handlers.WithTeamArtifactPreview(
+			teamRepo,
+			teamPreviewSecretService,
+			cfg.Runtime.WorkspaceRoot,
+			func(userID int) string {
+				client := k8s.GetClient()
+				if client == nil {
+					return ""
+				}
+				return client.GetNamespace(userID)
+			},
+		),
+		handlers.WithTeamArtifactPreviewOrigin(teamPreviewOrigin),
+		handlers.WithEgressPrivateExceptions(egressPrivateExceptionService, instanceRepo),
+	)
 	openClawConfigHandler := handlers.NewOpenClawConfigHandler(openClawConfigService)
 	skillHandler := handlers.NewSkillHandler(skillService, instanceService)
+	skillHubHandler := handlers.NewSkillHubHandler(skillService, instanceService)
 	securityHandler := handlers.NewSecurityHandler(securityScanService)
 	agentHandler := handlers.NewAgentHandler(instanceAgentService, instanceCommandService, instanceRuntimeStatusService, instanceConfigRevisionService, skillService)
 	teamHandler := handlers.NewTeamHandler(teamService)
 	workspaceFileHandler := handlers.NewWorkspaceFileHandler(instanceService, workspaceFileService, runtimeWorkspaceFileService)
 	workspaceFileHandler.SetSkillRepository(skillRepo)
-	runtimeAgentHandler := handlers.NewRuntimeAgentHandler(cfg.Runtime, runtimePodRepo, bindingRepo, instanceRepo, runtimeEvents)
+	workspaceFileHandler.SetExternalAccessServices(externalAccessService, instanceHandler.InstanceAccessService())
+	runtimeAgentHandler := handlers.NewRuntimeAgentHandler(cfg.Runtime, runtimePodRepo, bindingRepo, instanceRepo, runtimeEvents, skillService)
 
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
@@ -217,6 +258,7 @@ func main() {
 				services.WithRuntimeSchedulerGatewayPortRange(cfg.Runtime.GatewayPortStart, cfg.Runtime.GatewayPortEnd),
 				services.WithRuntimeSchedulerHeartbeatTimeout(cfg.Runtime.HeartbeatTimeout),
 				services.WithRuntimeSchedulerMaxGatewaysPerPod(cfg.Runtime.MaxGatewaysPerPod),
+				services.WithRuntimeSchedulerGatewayStartInFlightLimit(cfg.Runtime.GatewayStartInFlightLimit),
 			}
 			if gatewayEnvProvider, ok := instanceService.(interface {
 				BuildGatewayEnv(*models.Instance) (map[string]string, error)
@@ -248,6 +290,7 @@ func main() {
 	startBackground := func(ctx context.Context) {
 		log.Printf("Starting leader-only background loops (identity=%s)", cfg.LeaderElection.Identity)
 		syncService.Start()
+		materializeWorker.Start()
 		teamService.StartBackground(ctx)
 		if runtimeScheduler != nil {
 			runtimeSchedulerMu.Lock()
@@ -262,6 +305,7 @@ func main() {
 	}
 	stopBackground := func() {
 		log.Printf("Stopping leader-only background loops (identity=%s)", cfg.LeaderElection.Identity)
+		materializeWorker.Stop()
 		runtimeSchedulerMu.Lock()
 		if runtimeSchedulerCancel != nil {
 			runtimeSchedulerCancel()
@@ -304,6 +348,18 @@ func main() {
 
 	api := r.Group("/api/v1")
 	{
+		sharedInstances := api.Group("/shared-instances")
+		{
+			sharedInstances.GET("/:code/session", instanceHandler.GetSharedInstanceSession)
+			sharedInstances.GET("/:code/workspace/files", workspaceFileHandler.SharedList)
+			sharedInstances.GET("/:code/workspace/preview", workspaceFileHandler.SharedPreview)
+			sharedInstances.GET("/:code/workspace/download", workspaceFileHandler.SharedDownload)
+			sharedInstances.POST("/:code/workspace/upload", workspaceFileHandler.SharedUpload)
+			sharedInstances.POST("/:code/workspace/folders", workspaceFileHandler.SharedMkdir)
+			sharedInstances.PATCH("/:code/workspace/entries", workspaceFileHandler.SharedRename)
+			sharedInstances.DELETE("/:code/workspace/entries", workspaceFileHandler.SharedDelete)
+		}
+
 		runtimeAgent := api.Group("/runtime-agent")
 		{
 			runtimeAgent.POST("/register", runtimeAgentHandler.Register)
@@ -362,8 +418,11 @@ func main() {
 			instances.POST("/:id/start", instanceHandler.StartInstance)
 			instances.POST("/:id/stop", instanceHandler.StopInstance)
 			instances.POST("/:id/restart", instanceHandler.RestartInstance)
+			instances.GET("/:id/environment-overrides", instanceHandler.GetInstanceEnvironmentOverrides)
 			instances.GET("/:id/status", instanceHandler.GetInstanceStatus)
 			instances.GET("/:id/runtime", instanceHandler.GetRuntimeDetails)
+			instances.GET("/:id/session-usage", instanceHandler.GetInstanceSessionUsage)
+			instances.GET("/:id/session-usage/detail", instanceHandler.GetInstanceSessionUsageDetail)
 			instances.POST("/:id/runtime/:command", instanceHandler.CreateRuntimeCommand)
 			instances.GET("/:id/config/revisions", instanceHandler.ListConfigRevisions)
 			instances.POST("/:id/config/revisions/publish", instanceHandler.PublishConfigRevision)
@@ -389,11 +448,18 @@ func main() {
 			instances.GET("/:id/skills", skillHandler.ListInstanceSkills)
 			instances.GET("/:id/skills/available", skillHandler.ListAvailableInstanceSkills)
 			instances.POST("/:id/skills", skillHandler.AttachSkillToInstance)
+			instances.POST("/:id/skills/sync", instanceHandler.RefreshInstanceSkills)
+			instances.POST("/:id/skills/:skillId/import-to-library", instanceHandler.ImportInstanceSkillToLibrary)
+			instances.POST("/:id/skills/:skillId/retry-package-collect", instanceHandler.RetrySkillPackageCollect)
+			instances.POST("/:id/skills/:skillId/publish-to-hub", instanceHandler.PublishInstanceSkillToHub)
+			instances.POST("/:id/skills/:skillId/restore", instanceHandler.RestoreInstanceSkill)
+			instances.POST("/:id/skills/:skillId/save-back-to-library", instanceHandler.SaveBackInstanceSkillToLibrary)
+			instances.POST("/:id/skills/:skillId/save-to-my-library", instanceHandler.SaveForeignInstanceSkillToMyLibrary)
 			instances.DELETE("/:id/skills/:skillId", skillHandler.RemoveSkillFromInstance)
 		}
 
 		// Admin console: cross-user instance listing. Gated by admin
-		// middleware — non-admin callers get 403. The workspace
+		// middleware 鈥?non-admin callers get 403. The workspace
 		// /instances endpoint above stays caller-scoped regardless of
 		// role; admin status only unlocks this dedicated surface.
 		adminInstances := api.Group("/admin/instances")
@@ -436,6 +502,21 @@ func main() {
 			teams.DELETE("/:id/members/:memberID", teamHandler.DeleteMember)
 		}
 
+		customTeamTemplates := api.Group("/custom-team-templates")
+		customTeamTemplates.Use(middleware.Auth())
+		customTeamTemplates.Use(middleware.SetUserInfo(userRepo))
+		{
+			customTeamTemplates.GET("", customTeamTemplateHandler.List)
+			customTeamTemplates.POST("", customTeamTemplateHandler.Generate)
+			customTeamTemplates.GET("/:id", customTeamTemplateHandler.Get)
+			customTeamTemplates.PUT("/:id", customTeamTemplateHandler.UpdateMetadata)
+			customTeamTemplates.DELETE("/:id", customTeamTemplateHandler.Delete)
+			customTeamTemplates.POST("/:id/revise", customTeamTemplateHandler.Revise)
+			customTeamTemplates.POST("/:id/regenerate", customTeamTemplateHandler.Regenerate)
+			customTeamTemplates.POST("/:id/members/:memberID/adjust", customTeamTemplateHandler.AdjustMember)
+			customTeamTemplates.POST("/:id/members/:memberID/regenerate", customTeamTemplateHandler.RegenerateMember)
+		}
+
 		openClawConfigs := api.Group("/openclaw-configs")
 		openClawConfigs.Use(middleware.Auth())
 		openClawConfigs.Use(middleware.SetUserInfo(userRepo))
@@ -472,6 +553,41 @@ func main() {
 			skills.GET("/:id/download", skillHandler.DownloadSkill)
 			skills.GET("/:id/versions", skillHandler.ListVersions)
 			skills.GET("/:id/scan-results", skillHandler.ListScanResults)
+		}
+
+		skillHub := api.Group("/skill-hub")
+		skillHub.Use(middleware.Auth())
+		skillHub.Use(middleware.SetUserInfo(userRepo))
+		{
+			skillHub.GET("/catalog", skillHubHandler.ListCatalog)
+			skillHub.GET("/tags", skillHubHandler.ListTags)
+			skillHub.GET("/mine", skillHubHandler.ListMine)
+			skillHub.GET("/attachable", skillHubHandler.ListAttachable)
+			skillHub.POST("/skills/import/preview", skillHubHandler.PreviewImportSkills)
+			skillHub.POST("/skills/import", skillHubHandler.ImportSkills)
+			skillHub.GET("/skills/:id", skillHubHandler.GetSkill)
+			skillHub.POST("/skills/:id/publish", skillHubHandler.PublishSkill)
+			skillHub.POST("/skills/:id/publish-as-new", skillHubHandler.PublishSkillAsNew)
+			skillHub.POST("/skills/:id/unpublish", skillHubHandler.UnpublishSkill)
+			skillHub.PUT("/skills/:id/tags", skillHubHandler.UpdateTags)
+			skillHub.DELETE("/skills/:id", skillHubHandler.DeleteSkill)
+			skillHub.GET("/skills/:id/download", skillHubHandler.DownloadSkill)
+			skillHub.POST("/skills/:id/install", skillHubHandler.InstallSkill)
+			skillHub.POST("/skills/:id/install-batch", skillHubHandler.BatchInstallSkill)
+			skillHub.GET("/skills/:id/skill-md", skillHubHandler.GetSkillMarkdown)
+		}
+
+		adminSkillHub := api.Group("/admin/skill-hub")
+		adminSkillHub.Use(middleware.Auth())
+		adminSkillHub.Use(middleware.SetUserInfo(userRepo))
+		adminSkillHub.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminSkillHub.GET("/skills", skillHubHandler.ListAdminSkills)
+			adminSkillHub.POST("/skills/:id/publish", skillHubHandler.PublishSkill)
+			adminSkillHub.POST("/skills/:id/unpublish", skillHubHandler.UnpublishSkill)
+			adminSkillHub.PUT("/skills/:id/tags", skillHubHandler.UpdateTags)
+			adminSkillHub.DELETE("/skills/:id", skillHubHandler.DeleteSkill)
+			adminSkillHub.POST("/skills/:id/install", skillHubHandler.InstallSkill)
 		}
 
 		systemSettings := api.Group("/system-settings")
@@ -519,6 +635,22 @@ func main() {
 			adminCosts.GET("", aiObservabilityHandler.GetCostOverview)
 		}
 
+		adminLLMGovernance := api.Group("/admin/llm-governance")
+		adminLLMGovernance.Use(middleware.Auth())
+		adminLLMGovernance.Use(middleware.SetUserInfo(userRepo))
+		adminLLMGovernance.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminLLMGovernance.GET("/overview", aiObservabilityHandler.GetLLMGovernanceOverview)
+		}
+
+		adminSessionUsage := api.Group("/admin/session-usage")
+		adminSessionUsage.Use(middleware.Auth())
+		adminSessionUsage.Use(middleware.SetUserInfo(userRepo))
+		adminSessionUsage.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminSessionUsage.GET("/overview", aiObservabilityHandler.GetSessionUsageOverview)
+		}
+
 		adminRiskRules := api.Group("/admin/risk-rules")
 		adminRiskRules.Use(middleware.Auth())
 		adminRiskRules.Use(middleware.SetUserInfo(userRepo))
@@ -529,6 +661,17 @@ func main() {
 			adminRiskRules.POST("/bulk-status", riskRuleHandler.BulkUpdateStatus)
 			adminRiskRules.PUT("", riskRuleHandler.UpsertRule)
 			adminRiskRules.DELETE("/:ruleId", riskRuleHandler.DeleteRule)
+		}
+
+		adminEgressPrivateExceptions := api.Group("/admin/egress-private-exceptions")
+		adminEgressPrivateExceptions.Use(middleware.Auth())
+		adminEgressPrivateExceptions.Use(middleware.SetUserInfo(userRepo))
+		adminEgressPrivateExceptions.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminEgressPrivateExceptions.GET("", egressPrivateExceptionHandler.ListExceptions)
+			adminEgressPrivateExceptions.POST("", egressPrivateExceptionHandler.CreateException)
+			adminEgressPrivateExceptions.PUT("/:id", egressPrivateExceptionHandler.UpdateException)
+			adminEgressPrivateExceptions.DELETE("/:id", egressPrivateExceptionHandler.DeleteException)
 		}
 
 		adminSkills := api.Group("/admin/skills")
@@ -557,6 +700,8 @@ func main() {
 		{
 			gatewayLLM.GET("/models", aiGatewayHandler.ListModels)
 			gatewayLLM.POST("/chat/completions", aiGatewayHandler.ChatCompletions)
+			gatewayLLM.POST("/v1/responses", aiGatewayHandler.Responses)
+			gatewayLLM.POST("/v1/messages", aiGatewayHandler.AnthropicMessages)
 		}
 
 		// Security Protection Platform (secplane) routes. Self-contained.
@@ -572,7 +717,7 @@ func main() {
 			agent.POST("/state/report", agentHandler.ReportState)
 			agent.POST("/skills/inventory", agentHandler.ReportSkillInventory)
 			agent.POST("/skills/upload", agentHandler.UploadSkillPackage)
-			agent.GET("/skills/versions/:skillVersion/download", skillHandler.DownloadSkillVersionForAgent)
+			agent.GET("/skills/versions/:skillVersion/download", agentHandler.DownloadSkillVersion)
 			agent.GET("/config/revisions/:id", agentHandler.GetConfigRevision)
 		}
 

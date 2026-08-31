@@ -17,6 +17,7 @@ import InstanceManagementPage from '../pages/admin/InstanceManagementPage';
 import AIGatewayPage from '../pages/admin/AIGatewayPage';
 import AIAuditPage from '../pages/admin/AIAuditPage';
 import CostsPage from '../pages/admin/CostsPage';
+import SessionUsageOverviewPage from '../pages/admin/SessionUsageOverviewPage';
 import AdminSecurityDashboardPage from '../pages/admin/security/AdminSecurityDashboardPage';
 import AdminSecurityReportsPage from '../pages/admin/security/AdminSecurityReportsPage';
 import AdminSecurityScannerConfigPage from '../pages/admin/security/AdminSecurityScannerConfigPage';
@@ -40,6 +41,7 @@ import CategoryPage from '../pages/admin/protection/CategoryPage';
 import AuditPage from '../pages/admin/protection/scenarios/AuditPage';
 import ApprovalPage from '../pages/admin/protection/scenarios/ApprovalPage';
 import OutboundPage from '../pages/admin/protection/scenarios/OutboundPage';
+import EgressPrivateExceptionPage from '../pages/admin/protection/scenarios/EgressPrivateExceptionPage';
 import ContainerPage from '../pages/admin/protection/scenarios/ContainerPage';
 import PolicyPage from '../pages/admin/protection/scenarios/PolicyPage';
 import BreakerPage from '../pages/admin/protection/scenarios/BreakerPage';
@@ -52,9 +54,12 @@ import InstanceListPage from '../pages/instances/InstanceListPage';
 import CreateInstancePage from '../pages/instances/CreateInstancePage';
 import InstanceDetailPage from '../pages/instances/InstanceDetailPage';
 import InstancePortalPage from '../pages/instances/InstancePortalPage';
+import SharedInstancePage from '../pages/instances/SharedInstancePage';
 import TeamListPage from '../pages/teams/TeamListPage';
 import CreateTeamPage from '../pages/teams/CreateTeamPage';
+import CustomTeamTemplatesPage from '../pages/teams/CustomTeamTemplatesPage';
 import TeamDetailPage from '../pages/teams/TeamDetailPage';
+import SkillHubPage from '../pages/skill-hub/SkillHubPage';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -163,6 +168,7 @@ function AppRoutes() {
           </PublicRoute>
         }
       />
+      <Route path="/share/:code" element={<SharedInstancePage />} />
 
       {/* User Routes */}
       <Route
@@ -224,6 +230,14 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/teams/custom-templates"
+        element={
+          <ProtectedRoute>
+            <CustomTeamTemplatesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/teams/:id"
         element={
           <ProtectedRoute>
@@ -236,6 +250,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <OpenClawConfigCenterPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/skill-hub"
+        element={
+          <ProtectedRoute>
+            <SkillHubPage />
           </ProtectedRoute>
         }
       />
@@ -334,6 +356,14 @@ function AppRoutes() {
         element={
           <AdminRoute>
             <CostsPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/session-usage"
+        element={
+          <AdminRoute>
+            <SessionUsageOverviewPage />
           </AdminRoute>
         }
       />
@@ -439,6 +469,7 @@ function AppRoutes() {
       <Route path="/admin/secplane/cat-comm" element={<AdminRoute><CategoryPage catId="cat-3" /></AdminRoute>} />
       <Route path="/admin/secplane/runtime/approval" element={<AdminRoute><ApprovalPage /></AdminRoute>} />
       <Route path="/admin/secplane/trust/outbound" element={<AdminRoute><OutboundPage /></AdminRoute>} />
+      <Route path="/admin/secplane/trust/egress-private" element={<AdminRoute><EgressPrivateExceptionPage /></AdminRoute>} />
       <Route path="/admin/secplane/govern/breaker" element={<AdminRoute><BreakerPage /></AdminRoute>} />
       <Route path="/admin/secplane/govern/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
       <Route path="/admin/secplane/isolate/container" element={<AdminRoute><ContainerPage /></AdminRoute>} />

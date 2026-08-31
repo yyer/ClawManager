@@ -13,7 +13,10 @@ export interface Instance {
     | "centos"
     | "custom"
     | "webtop"
-    | "hermes";
+    | "hermes"
+    | "opencode"
+    | "workbuddy"
+    | "deepseek-harness";
   runtime_type: "desktop" | "shell" | "gateway";
   instance_mode: "lite" | "pro";
   status: "creating" | "running" | "stopped" | "error" | "deleting";
@@ -44,7 +47,29 @@ export interface Instance {
   stopped_at?: string;
 }
 
-export type V2InstanceType = "openclaw" | "hermes";
+export type V2InstanceType =
+  | "openclaw"
+  | "hermes"
+  | "opencode"
+  | "workbuddy"
+  | "deepseek-harness";
+
+export function formatInstanceType(type: string): string {
+  switch (type) {
+    case "openclaw":
+      return "OpenClaw";
+    case "hermes":
+      return "Hermes";
+    case "opencode":
+      return "OpenCode";
+    case "workbuddy":
+      return "Workbuddy";
+    case "deepseek-harness":
+      return "DeepSeek Harness";
+    default:
+      return type;
+  }
+}
 export type InstanceMode = "lite" | "pro";
 export type InstanceAvailability = "available" | "starting" | "unavailable";
 
@@ -67,6 +92,7 @@ export interface InstanceExternalAccess {
   instance_id: number;
   enabled: boolean;
   auth_mode: "share_link" | "password";
+  workspace_access: "none" | "read" | "write";
   password_hint?: string;
   expires_at?: string;
   created_by?: number;
@@ -82,6 +108,7 @@ export interface ExternalAccessRequest {
   expires_mode?: ExternalAccessExpirationMode;
   expires_preset?: ExternalAccessExpirationPreset;
   expires_at?: string;
+  workspace_access?: "none" | "read" | "write";
 }
 
 export interface ExternalAccessStatusResult {
@@ -150,6 +177,7 @@ export interface InstanceRuntimeDetails {
   agent?: AgentInfo;
   commands: InstanceRuntimeCommand[];
   skills?: InstanceSkill[];
+  llm_governance?: InstanceLLMGovernanceStatus;
 }
 
 export interface InstanceConfigRevision {
@@ -176,7 +204,10 @@ export interface CreateInstanceRequest {
     | "centos"
     | "custom"
     | "webtop"
-    | "hermes";
+    | "hermes"
+    | "opencode"
+    | "workbuddy"
+    | "deepseek-harness";
   mode?: InstanceMode;
   instance_mode?: InstanceMode;
   runtime_type?: "desktop" | "shell" | "gateway";
@@ -238,6 +269,15 @@ export interface UpdateInstanceRequest {
   name?: string;
   description?: string;
   desktop_stream_profile?: DesktopStreamProfile;
+}
+
+export interface RestartInstanceRequest {
+  environment_overrides?: Record<string, string>;
+  environment_override_removals?: string[];
+}
+
+export interface InstanceEnvironmentOverrides {
+  names: string[];
 }
 
 export type DesktopStreamProfile = "low" | "standard" | "high";
@@ -308,6 +348,30 @@ export const INSTANCE_TYPES: InstanceType[] = [
     defaultVersion: "latest",
   },
   {
+    id: "opencode",
+    name: "OpenCode Runtime",
+    description: "OpenCode coding agent runtime",
+    icon: "opencode",
+    defaultOs: "opencode",
+    defaultVersion: "latest",
+  },
+  {
+    id: "deepseek-harness",
+    name: "DeepSeek Harness",
+    description: "DeepSeek Harness workspace managed by ClawManager",
+    icon: "deepseek-harness",
+    defaultOs: "deepseek-harness",
+    defaultVersion: "latest",
+  },
+  {
+    id: "workbuddy",
+    name: "Workbuddy",
+    description: "Managed Workbuddy runtime on a webtop desktop base",
+    icon: "workbuddy",
+    defaultOs: "workbuddy",
+    defaultVersion: "latest",
+  },
+  {
     id: "custom",
     name: "Custom Image",
     description: "Use your own custom image",
@@ -316,6 +380,83 @@ export const INSTANCE_TYPES: InstanceType[] = [
     defaultVersion: "latest",
   },
 ];
+
+export interface InstanceSessionUsageSummary {
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  total_estimated_cost: number;
+  currency: string;
+  session_count: number;
+}
+
+export interface InstanceSessionUsageCompliance {
+  fallback_session_count: number;
+  has_fallback_sessions: boolean;
+  recent_fallback_audit_count: number;
+}
+
+export interface InstanceSessionUsageItem {
+  session_id: string;
+  session_key: string;
+  title?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  currency: string;
+  invocation_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface InstanceSessionUsageResult {
+  summary: InstanceSessionUsageSummary;
+  compliance: InstanceSessionUsageCompliance;
+  items: InstanceSessionUsageItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface InstanceSessionTrace {
+  trace_id: string;
+  requested_model: string;
+  status: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  created_at: string;
+}
+
+export interface InstanceSessionUsageDetail {
+  session_id: string;
+  session_key: string;
+  title?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  currency: string;
+  invocation_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  model_breakdown: Array<{
+    label: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    estimated_cost: number;
+  }>;
+  recent_traces: InstanceSessionTrace[];
+}
+
+export interface InstanceLLMGovernanceStatus {
+  config_status: string;
+  session_fallback_rate: number;
+  recent_egress_block_count: number;
+  is_compliant: boolean;
+}
 
 export const PRESET_CONFIGS = {
   small: {

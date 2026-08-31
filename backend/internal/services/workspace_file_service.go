@@ -38,9 +38,10 @@ var (
 )
 
 type WorkspaceFileScope struct {
-	InstanceID    int
-	UserID        int
-	WorkspacePath string
+	InstanceID        int
+	UserID            int
+	WorkspacePath     string
+	AuditActionPrefix string
 }
 
 type WorkspaceEntry struct {
@@ -450,6 +451,7 @@ func (s *workspaceFileService) recordAudit(ctx context.Context, scope WorkspaceF
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	action = strings.TrimSpace(scope.AuditActionPrefix) + action
 	return s.auditRepo.Create(ctx, &models.WorkspaceFileAudit{
 		InstanceID:   scope.InstanceID,
 		UserID:       scope.UserID,
@@ -615,7 +617,7 @@ func runtimeWorkspaceOwner(scope WorkspaceFileScope) (int, int, bool) {
 	if parts[len(parts)-1] != instancePart || parts[len(parts)-2] != userPart {
 		return 0, 0, false
 	}
-	if runtimeType != RuntimeTypeOpenClaw && runtimeType != RuntimeTypeHermes {
+	if runtimeType != RuntimeTypeOpenClaw && runtimeType != RuntimeTypeHermes && runtimeType != RuntimeTypeOpenCode && runtimeType != RuntimeTypeDeepSeekHarness {
 		return 0, 0, false
 	}
 	linuxID := RuntimeLinuxID(scope.InstanceID)

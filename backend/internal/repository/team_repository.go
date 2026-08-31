@@ -52,6 +52,7 @@ type TeamRepository interface {
 	ListWorkflowPhasesByRootTaskID(rootTaskID int) ([]models.TeamWorkflowPhase, error)
 	AcceptRootCompletion(task *models.TeamTask, expectedLedgerVersion int64, event *models.TeamEvent, outbox *models.TeamEventOutbox) (bool, error)
 	ConfirmWorkItemResult(item *models.TeamWorkItem, event *models.TeamEvent, outbox *models.TeamEventOutbox) error
+	CreateEventWithOutbox(event *models.TeamEvent, outbox *models.TeamEventOutbox) error
 	CreateEventOutbox(outbox *models.TeamEventOutbox) error
 	ListPendingEventOutbox(now time.Time, limit int) ([]models.TeamEventOutbox, error)
 	MarkEventOutboxDelivered(id int, deliveredAt time.Time) error
@@ -352,6 +353,42 @@ func (r *teamRepository) ConfirmWorkItemResult(item *models.TeamWorkItem, event 
 	})
 }
 
+func (r *teamRepository) CreateEventWithOutbox(event *models.TeamEvent, outbox *models.TeamEventOutbox) error {
+	if event == nil || outbox == nil {
+		return fmt.Errorf("event and outbox are required")
+	}
+	return r.sess.Tx(func(sess db.Session) error {
+		txRepo := &teamRepository{sess: sess}
+		if err := txRepo.CreateEvent(event); err != nil && !errors.Is(err, ErrDuplicateTeamEvent) {
+			return err
+		}
+		if outbox.Status == "" {
+			outbox.Status = "pending"
+		}
+		now := time.Now().UTC()
+		if outbox.AvailableAt.IsZero() {
+			outbox.AvailableAt = now
+		}
+		if outbox.CreatedAt.IsZero() {
+			outbox.CreatedAt = now
+		}
+		if outbox.UpdatedAt.IsZero() {
+			outbox.UpdatedAt = now
+		}
+		res, err := sess.Collection("team_event_outbox").Insert(outbox)
+		if err != nil {
+			if strings.Contains(err.Error(), "uk_team_event_outbox_message") {
+				return nil
+			}
+			return fmt.Errorf("failed to create team event outbox: %w", err)
+		}
+		if id, ok := res.ID().(int64); ok {
+			outbox.ID = int(id)
+		}
+		return nil
+	})
+}
+
 func (r *teamRepository) UpsertWorkflowPhase(phase *models.TeamWorkflowPhase) error {
 	if phase == nil || phase.RootTaskID <= 0 || strings.TrimSpace(phase.PhaseID) == "" {
 		return fmt.Errorf("team workflow phase is required")
@@ -421,7 +458,7 @@ UPDATE team_tasks
 SET status = ?, workflow_state = ?, plan_version = ?, ledger_version = ?, current_phase_id = ?,
     accepted_completion_id = ?, result_json = ?, error_message = ?, finished_at = ?, updated_at = ?
 WHERE id = ? AND ledger_version = ? AND accepted_completion_id IS NULL
-  AND status NOT IN (?, ?, ?)
+  AND status NOT IN (?, ?)
 `,
 			task.Status,
 			task.WorkflowState,
@@ -437,7 +474,6 @@ WHERE id = ? AND ledger_version = ? AND accepted_completion_id IS NULL
 			expectedLedgerVersion,
 			models.TeamTaskStatusSucceeded,
 			models.TeamTaskStatusFailed,
-			models.TeamTaskStatusStale,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to atomically accept team completion: %w", err)
@@ -632,14 +668,13 @@ func (r *teamRepository) UpsertWorkItem(item *models.TeamWorkItem) error {
 		item.CreatedAt = existing.CreatedAt
 		newRevision := item.Revision > existing.Revision
 		existingTerminal := existing.Status == models.TeamTaskStatusSucceeded || existing.Status == models.TeamTaskStatusFailed || existing.Status == models.TeamTaskStatusStale
-		itemTerminal := item.Status == models.TeamTaskStatusSucceeded || item.Status == models.TeamTaskStatusFailed || item.Status == models.TeamTaskStatusStale
-		reopeningCurrent := !newRevision && existingTerminal && !itemTerminal &&
-			!item.UpdatedAt.IsZero() &&
-			(existing.UpdatedAt.IsZero() || item.UpdatedAt.After(existing.UpdatedAt))
+		// Terminal state is monotonic for one work_id/revision. A delayed
+		// progress event or duplicate dispatch must not reopen accepted work.
+		// Legitimate rework is represented by a newer revision (and therefore a
+		// distinct projected work_id), never by a newer timestamp alone.
+		reopeningCurrent := false
 		if !newRevision && existingTerminal && !reopeningCurrent {
-			if !itemTerminal {
-				item.Status = existing.Status
-			}
+			item.Status = existing.Status
 		}
 		if item.OwnerMemberID == nil {
 			item.OwnerMemberID = existing.OwnerMemberID
@@ -670,6 +705,12 @@ func (r *teamRepository) UpsertWorkItem(item *models.TeamWorkItem) error {
 		}
 		if item.ValidatedRevision == nil && !newRevision && !reopeningCurrent {
 			item.ValidatedRevision = existing.ValidatedRevision
+		}
+		if item.ReviewTargetAssignmentID == nil && !newRevision && !reopeningCurrent {
+			item.ReviewTargetAssignmentID = existing.ReviewTargetAssignmentID
+		}
+		if item.ReviewTargetRevision == nil && !newRevision && !reopeningCurrent {
+			item.ReviewTargetRevision = existing.ReviewTargetRevision
 		}
 		if existing.ReviewRequired && !newRevision && !reopeningCurrent {
 			item.ReviewRequired = true

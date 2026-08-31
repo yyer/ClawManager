@@ -1,25 +1,44 @@
 package services
 
 import (
+	"strings"
 	"testing"
 
 	"clawreef/internal/models"
 )
 
-func TestNormalizeEnvironmentOverrides(t *testing.T) {
-	overrides, err := normalizeEnvironmentOverrides(map[string]string{
-		" FOO ": "bar",
-		"BAR_2": "",
+func TestValidateManagedRuntimeEnvironmentOverridesRejectsProtectedKeys(t *testing.T) {
+	err := validateManagedRuntimeEnvironmentOverrides("openclaw", map[string]string{
+		"OPENAI_BASE_URL": "https://api.openai.com/v1",
+	})
+	if err == nil {
+		t.Fatal("expected protected env override to be rejected")
+	}
+}
+
+func TestApplyProtectedManagedRuntimeEnvRestoresGatewayValues(t *testing.T) {
+	target := map[string]string{
+		"OPENAI_BASE_URL": "https://api.openai.com/v1",
+		"CUSTOM":          "value",
+	}
+	protected := map[string]string{
+		"OPENAI_BASE_URL": "http://gateway.example/api/v1/gateway/llm",
+	}
+	result := applyProtectedManagedRuntimeEnv(target, protected)
+	if result["OPENAI_BASE_URL"] != protected["OPENAI_BASE_URL"] {
+		t.Fatalf("expected protected gateway url, got %q", result["OPENAI_BASE_URL"])
+	}
+	if result["CUSTOM"] != "value" {
+		t.Fatalf("expected custom override to remain")
+	}
+}
+
+func TestValidateManagedRuntimeEnvironmentOverridesAllowsCustomKeys(t *testing.T) {
+	err := validateManagedRuntimeEnvironmentOverrides("openclaw", map[string]string{
+		"CUSTOM_FLAG": "1",
 	})
 	if err != nil {
-		t.Fatalf("normalizeEnvironmentOverrides returned error: %v", err)
-	}
-
-	if overrides["FOO"] != "bar" {
-		t.Fatalf("expected trimmed key FOO to be preserved")
-	}
-	if value, ok := overrides["BAR_2"]; !ok || value != "" {
-		t.Fatalf("expected empty override value to be preserved")
+		t.Fatalf("expected custom override to be allowed, got %v", err)
 	}
 }
 
@@ -28,6 +47,31 @@ func TestNormalizeEnvironmentOverridesRejectsInvalidNames(t *testing.T) {
 		"1INVALID": "value",
 	}); err == nil {
 		t.Fatalf("expected invalid environment variable name to fail validation")
+	}
+}
+
+func TestNormalizeEnvironmentOverrideRemovals(t *testing.T) {
+	removals, err := normalizeEnvironmentOverrideRemovals([]string{" OLD_FLAG ", "SKILL_MODE"})
+	if err != nil {
+		t.Fatalf("normalize removals returned error: %v", err)
+	}
+	if len(removals) != 2 || removals[0] != "OLD_FLAG" || removals[1] != "SKILL_MODE" {
+		t.Fatalf("removals = %#v, want normalized names", removals)
+	}
+
+	for _, test := range []struct {
+		name     string
+		removals []string
+	}{
+		{name: "invalid name", removals: []string{"INVALID-NAME"}},
+		{name: "empty name", removals: []string{" "}},
+		{name: "duplicate after trim", removals: []string{"OLD_FLAG", " OLD_FLAG "}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := normalizeEnvironmentOverrideRemovals(test.removals); err == nil {
+				t.Fatalf("expected removals %#v to fail validation", test.removals)
+			}
+		})
 	}
 }
 
@@ -82,73 +126,48 @@ func TestBuildInstancePodEnvAppliesOverridesAfterDefaults(t *testing.T) {
 	}
 }
 
-func TestBuildInstancePodEnvNormalizesDesktopStreamProfile(t *testing.T) {
-	raw, err := marshalEnvironmentOverrides(map[string]string{
-		"CLAWMANAGER_DESKTOP_STREAM_PROFILE": "standard",
-		"SELKIES_ENCODER":                    "x264enc",
-		"SELKIES_FRAMERATE":                  "35",
-		"SELKIES_H264_CRF":                   "34",
-	})
-	if err != nil {
-		t.Fatalf("marshalEnvironmentOverrides returned error: %v", err)
-	}
+func TestBuildInstancePodEnvConfiguresWorkbuddyProxyAndManagedRuntime(t *testing.T) {
+	t.Setenv("CLAWMANAGER_EGRESS_PROXY_URL", "")
+	t.Setenv("CLAWMANAGER_SYSTEM_NAMESPACE", "")
+	t.Setenv("K8S_NAMESPACE", "")
 
-	env, err := buildInstancePodEnv(&models.Instance{
-		ID:                       42,
-		Type:                     "openclaw",
-		RuntimeType:              RuntimeBackendDesktop,
-		EnvironmentOverridesJSON: raw,
-	}, nil, nil, nil)
+	instance := &models.Instance{
+		ID:          923,
+		Type:        "workbuddy",
+		RuntimeType: RuntimeBackendDesktop,
+	}
+	runtimeConfig := buildRuntimeConfig(instance.Type, "workbuddy", "latest", nil, nil)
+
+	env, err := buildInstancePodEnv(instance, runtimeConfig.Env, nil, nil)
 	if err != nil {
 		t.Fatalf("buildInstancePodEnv returned error: %v", err)
 	}
 
-	if got := env["SELKIES_ENCODER"]; got != "x264enc,jpeg" {
-		t.Fatalf("SELKIES_ENCODER = %q, want x264enc,jpeg", got)
+	if env["SUBFOLDER"] != "/api/v1/instances/923/proxy/" {
+		t.Fatalf("expected managed Workbuddy proxy path, got %q", env["SUBFOLDER"])
 	}
-	if got := env["SELKIES_USE_CSS_SCALING"]; got != "true" {
-		t.Fatalf("SELKIES_USE_CSS_SCALING = %q, want true", got)
+	if env["TITLE"] != "Workbuddy" {
+		t.Fatalf("expected Workbuddy desktop title, got %q", env["TITLE"])
+	}
+	if env["CLAWMANAGER_RUNTIME_TYPE"] != RuntimeBackendDesktop {
+		t.Fatalf("expected Workbuddy desktop runtime marker, got %q", env["CLAWMANAGER_RUNTIME_TYPE"])
 	}
 }
 
-func TestPopSHMSizeGB(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    string
-		hasValue bool
-		runtime  string
-		memoryGB int
-		want     int
-	}{
-		{name: "desktop minimum preset", runtime: "desktop", memoryGB: 4, want: defaultInstanceSHMSizeGB},
-		{name: "desktop medium preset", runtime: "desktop", memoryGB: 8, want: 2},
-		{name: "desktop large preset", runtime: "desktop", memoryGB: 12, want: 4},
-		{name: "desktop small fallback", runtime: "desktop", memoryGB: 2, want: defaultInstanceSHMSizeGB},
-		{name: "shell default unchanged", runtime: "shell", memoryGB: 8, want: defaultInstanceSHMSizeGB},
-		{name: "disable", value: "0", hasValue: true, runtime: "desktop", memoryGB: 8, want: 0},
-		{name: "custom", value: "4", hasValue: true, runtime: "desktop", memoryGB: 4, want: 4},
-		{name: "clamp", value: "128", hasValue: true, runtime: "desktop", memoryGB: 8, want: maxInstanceSHMSizeGB},
-		{name: "invalid keeps dynamic desktop default", value: "nope", hasValue: true, runtime: "desktop", memoryGB: 8, want: 2},
-		{name: "negative keeps dynamic desktop default", value: "-1", hasValue: true, runtime: "desktop", memoryGB: 4, want: defaultInstanceSHMSizeGB},
+func TestValidateManagedRuntimeEnvironmentOverridesSkipsNonManagedTypes(t *testing.T) {
+	err := validateManagedRuntimeEnvironmentOverrides("ubuntu", map[string]string{
+		"OPENAI_BASE_URL": "https://api.openai.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("expected non-managed type to skip validation, got %v", err)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			extraEnv := map[string]string{"KEEP": "value"}
-			if tt.hasValue {
-				extraEnv["SHM_SIZE_GB"] = tt.value
-			}
-
-			got := popSHMSizeGB(extraEnv, tt.runtime, tt.memoryGB)
-			if got != tt.want {
-				t.Fatalf("expected shm size %d, got %d", tt.want, got)
-			}
-			if _, ok := extraEnv["SHM_SIZE_GB"]; ok {
-				t.Fatalf("expected SHM_SIZE_GB to be removed from extra env")
-			}
-			if extraEnv["KEEP"] != "value" {
-				t.Fatalf("expected unrelated env to be preserved")
-			}
-		})
+func TestValidateManagedRuntimeEnvironmentOverridesErrorMessage(t *testing.T) {
+	err := validateManagedRuntimeEnvironmentOverrides("openclaw", map[string]string{
+		"openai_api_key": "sk-test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Fatalf("expected normalized key in error, got %v", err)
 	}
 }

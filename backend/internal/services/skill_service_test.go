@@ -115,6 +115,54 @@ func TestExtractSkillDirectoriesImportsMultipleManifestDirs(t *testing.T) {
 	}
 }
 
+func TestExtractSkillDirectoriesImportsHermesCategorySkills(t *testing.T) {
+	archive := buildTestZip(t, map[string][]byte{
+		"software-development/systematic-debugging/SKILL.md":         []byte("# Systematic debugging\n"),
+		"software-development/systematic-debugging/scripts/check.sh": []byte("echo check\n"),
+		"software-development/simplify-code/SKILL.md":                []byte("# Simplify code\n"),
+		"mlops/evaluation/weights-and-biases/SKILL.md":               []byte("# Weights and Biases\n"),
+	})
+
+	dirs, err := extractSkillDirectories("hermes-skills.zip", archive)
+	if err != nil {
+		t.Fatalf("extractSkillDirectories() error = %v", err)
+	}
+	if len(dirs) != 3 {
+		t.Fatalf("extractSkillDirectories() returned %d dirs, want 3", len(dirs))
+	}
+	byName := map[string]extractedSkillDirectory{}
+	for _, dir := range dirs {
+		byName[dir.Name] = dir
+	}
+	if _, ok := byName["systematic-debugging"].Files["scripts/check.sh"]; !ok {
+		t.Fatalf("expected nested skill files to be preserved: %#v", byName["systematic-debugging"].Files)
+	}
+	if _, ok := byName["weights-and-biases"].Files["SKILL.md"]; !ok {
+		t.Fatalf("expected deep Hermes skill path to be recognized: %#v", byName)
+	}
+}
+
+func TestExtractSkillDirectoriesDisambiguatesSameSkillNameAcrossHermesCategories(t *testing.T) {
+	archive := buildTestZip(t, map[string][]byte{
+		"creative/review/SKILL.md":             []byte("# Creative review\n"),
+		"software-development/review/SKILL.md": []byte("# Development review\n"),
+	})
+
+	dirs, err := extractSkillDirectories("hermes-skills.zip", archive)
+	if err != nil {
+		t.Fatalf("extractSkillDirectories() error = %v", err)
+	}
+	if len(dirs) != 2 {
+		t.Fatalf("extractSkillDirectories() returned %d dirs, want 2", len(dirs))
+	}
+	if dirs[0].Name == dirs[1].Name {
+		t.Fatalf("same-name skills must be disambiguated: %#v", dirs)
+	}
+	if dirs[0].Name != "creative-review" || dirs[1].Name != "software-development-review" {
+		t.Fatalf("disambiguated names = %q, %q", dirs[0].Name, dirs[1].Name)
+	}
+}
+
 func TestExtractSkillDirectoriesRejectsTopLevelDirWithoutManifest(t *testing.T) {
 	archive := buildTestZip(t, map[string][]byte{
 		"weather/src/main.py": []byte("print('weather')\n"),
@@ -237,6 +285,64 @@ func TestMaterializeLiteInstanceSkillWritesHermesHomeSkill(t *testing.T) {
 	target := filepath.Join(workspacePath, "home", ".hermes", "skills", "paper-ranker")
 	assertFileEquals(t, filepath.Join(target, "SKILL.md"), "# Paper Ranker\n")
 }
+
+func TestMaterializeLiteInstanceSkillWritesOpenCodeGlobalSkillUsingManifestName(t *testing.T) {
+	manifest := "---\nname: ppt-generator\ndescription: Generate presentations\n---\n# PPT Generator\n"
+	archive := buildTestZip(t, map[string][]byte{
+		"ppt-1-0-0/SKILL.md": []byte(manifest),
+	})
+	workspacePath := filepath.Join(t.TempDir(), "opencode", "user-45", "instance-91")
+	if err := os.MkdirAll(workspacePath, 0750); err != nil {
+		t.Fatalf("MkdirAll(workspacePath): %v", err)
+	}
+	instanceRepo := newV2LifecycleInstanceRepo()
+	instanceRepo.byID[91] = &models.Instance{
+		ID: 91, UserID: 45, Type: RuntimeTypeOpenCode,
+		RuntimeType: RuntimeBackendGateway, InstanceMode: InstanceModeLite, WorkspacePath: &workspacePath,
+	}
+	service := &skillService{
+		instanceRepo: instanceRepo,
+		storage:      fakeObjectStorage{"skills/ppt.zip": archive},
+	}
+	if err := service.materializeLiteInstanceSkill(context.Background(), 91, &models.Skill{SkillKey: "ppt-1-0-0"}, &models.SkillBlob{
+		ObjectKey: "skills/ppt.zip", FileName: "ppt.zip",
+	}); err != nil {
+		t.Fatalf("materializeLiteInstanceSkill() error = %v", err)
+	}
+	target := filepath.Join(workspacePath, "home", ".config", "opencode", "skills", "ppt-generator", "SKILL.md")
+	assertFileEquals(t, target, manifest)
+}
+
+func TestMaterializeInstanceSkillWritesOpenCodeProProjectSkill(t *testing.T) {
+	archive := buildTestZip(t, map[string][]byte{
+		"paper-ranker/SKILL.md": []byte("# Paper Ranker\n"),
+	})
+	workspacePath := filepath.Join(t.TempDir(), "opencode", "user-45", "instance-92")
+	if err := os.MkdirAll(workspacePath, 0750); err != nil {
+		t.Fatalf("MkdirAll(workspacePath): %v", err)
+	}
+	instanceRepo := newV2LifecycleInstanceRepo()
+	instanceRepo.byID[92] = &models.Instance{
+		ID:            92,
+		UserID:        45,
+		Type:          RuntimeTypeOpenCode,
+		RuntimeType:   RuntimeBackendDesktop,
+		InstanceMode:  InstanceModePro,
+		WorkspacePath: &workspacePath,
+	}
+	service := &skillService{
+		instanceRepo: instanceRepo,
+		storage:      fakeObjectStorage{"skills/paper-ranker.zip": archive},
+	}
+	if err := service.materializeLiteInstanceSkill(context.Background(), 92, &models.Skill{SkillKey: "paper-ranker"}, &models.SkillBlob{
+		ObjectKey: "skills/paper-ranker.zip",
+		FileName:  "paper-ranker.zip",
+	}); err != nil {
+		t.Fatalf("materializeLiteInstanceSkill() error = %v", err)
+	}
+	assertFileEquals(t, filepath.Join(workspacePath, "workspace", ".opencode", "skills", "paper-ranker", "SKILL.md"), "---\nname: paper-ranker\ndescription: \"ClawManager managed skill paper-ranker\"\n---\n\n# Paper Ranker\n")
+}
+
 func TestChownRuntimePathToleratesNonRootPermissionDenied(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "skill-file")
 	if err := os.WriteFile(target, []byte("skill"), 0644); err != nil {
@@ -290,8 +396,21 @@ func TestChownRuntimePathReportsRootPermissionDenied(t *testing.T) {
 	}
 
 	err := chownRuntimePath(target, RuntimeLinuxID(90), RuntimeLinuxID(90), 0600)
-	if err == nil || !strings.Contains(err.Error(), "failed to set lite runtime owner") {
+	if err == nil || !strings.Contains(err.Error(), "failed to set runtime owner") {
 		t.Fatalf("chownRuntimePath() error = %v, want owner error", err)
+	}
+}
+func TestWriteSkillDirectoryAtomicallyNestedCategoryPath(t *testing.T) {
+	targetRoot := t.TempDir()
+	err := writeSkillDirectoryAtomically(targetRoot, "productivity/my-skill", map[string][]byte{
+		"SKILL.md": []byte("# Nested Skill\n"),
+	})
+	if err != nil {
+		t.Fatalf("writeSkillDirectoryAtomically() error = %v", err)
+	}
+	target := filepath.Join(targetRoot, "productivity", "my-skill", "SKILL.md")
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected nested skill directory, stat err = %v", err)
 	}
 }
 func TestWriteSkillDirectoryAtomicallyUsesNestedTempRoot(t *testing.T) {
@@ -387,6 +506,20 @@ func TestLiteRuntimePersistentAncestorsIncludeOpenClawHome(t *testing.T) {
 	}
 }
 
+func TestLiteRuntimePersistentRootUsesOpenCodeConfigDirectory(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "opencode", "user-1", "instance-90")
+	instance := &models.Instance{
+		Type:          RuntimeTypeOpenCode,
+		RuntimeType:   RuntimeBackendGateway,
+		InstanceMode:  InstanceModeLite,
+		WorkspacePath: &workspacePath,
+	}
+	want := filepath.Join(workspacePath, "home", ".config", "opencode")
+	if got := liteRuntimePersistentRoot(instance); got != want {
+		t.Fatalf("OpenCode persistent root = %q, want %q", got, want)
+	}
+}
+
 type fakeObjectStorage map[string][]byte
 
 func (f fakeObjectStorage) PutObject(context.Context, string, []byte, string) error {
@@ -479,4 +612,36 @@ func splitTestPath(value string) []string {
 		}
 	}
 	return result
+}
+
+func TestSanitizeSkillKeyKeepsUnicodeLetters(t *testing.T) {
+	got := sanitizeSkillKey("股票价值投资分析")
+	if got != "股票价值投资分析" {
+		t.Fatalf("sanitizeSkillKey(chinese) = %q, want chinese key", got)
+	}
+
+	// Mixed Chinese + ASCII keeps both; no longer collapses to only "top20".
+	got = sanitizeSkillKey("股票成交额TOP20")
+	if got != "股票成交额top20" {
+		t.Fatalf("sanitizeSkillKey(mixed) = %q, want 股票成交额top20", got)
+	}
+
+	if sanitizeSkillKey("My Skill") != "my-skill" {
+		t.Fatalf("sanitizeSkillKey(ascii) = %q, want my-skill", sanitizeSkillKey("My Skill"))
+	}
+
+	got = sanitizeSkillKey("../evil/name")
+	if got != "evilname" {
+		t.Fatalf("sanitizeSkillKey(path) = %q, want evilname", got)
+	}
+	got = sanitizeSkillKey(`a/b\c:d*e?f"g<h>i|j`)
+	if strings.ContainsAny(got, `/\:*?"<>|`) || got == "" {
+		t.Fatalf("sanitizeSkillKey(dangerous) = %q, want safe non-empty key", got)
+	}
+
+	long := strings.Repeat("技", skillKeyMaxRunes+10)
+	got = sanitizeSkillKey(long)
+	if len([]rune(got)) != skillKeyMaxRunes {
+		t.Fatalf("sanitizeSkillKey(long) rune count = %d, want %d", len([]rune(got)), skillKeyMaxRunes)
+	}
 }

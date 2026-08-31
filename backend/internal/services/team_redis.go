@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,40 @@ type redisBus struct {
 	password string
 	db       int
 	useTLS   bool
+	pool     *redisConnPool
+}
+
+const (
+	redisPoolMaxOpen = 256
+	redisPoolMaxIdle = 128
+	redisDialTimeout = 5 * time.Second
+)
+
+// redisConnPool is intentionally small and shared by all redisBus values with
+// identical connection settings. Team services create redisBus values while
+// processing events, so opening a new TCP connection per command creates a
+// connection storm under normal heartbeat and gateway-report traffic.
+type redisConnPool struct {
+	address  string
+	username string
+	password string
+	db       int
+	useTLS   bool
+
+	idle chan *redisPooledConn
+	open chan struct{}
+}
+
+type redisPooledConn struct {
+	conn   net.Conn
+	reader *bufio.Reader
+}
+
+var redisConnPools = struct {
+	sync.Mutex
+	byKey map[string]*redisConnPool
+}{
+	byKey: make(map[string]*redisConnPool),
 }
 
 func newRedisBus(rawURL string) (*redisBus, error) {
@@ -48,13 +83,15 @@ func newRedisBus(rawURL string) (*redisBus, error) {
 		}
 		dbIndex = parsedDB
 	}
-	return &redisBus{
+	bus := &redisBus{
 		address:  address,
 		username: username,
 		password: password,
 		db:       dbIndex,
 		useTLS:   parsed.Scheme == "rediss",
-	}, nil
+	}
+	bus.pool = sharedRedisConnPool(bus.address, bus.username, bus.password, bus.db, bus.useTLS)
+	return bus, nil
 }
 
 func (b *redisBus) XAdd(ctx context.Context, key string, fields map[string]string) (string, error) {
@@ -94,6 +131,21 @@ func (b *redisBus) Set(ctx context.Context, key, value string, ttl time.Duration
 	}
 	_, err := b.do(ctx, args...)
 	return err
+}
+
+func (b *redisBus) Get(ctx context.Context, key string) (string, bool, error) {
+	reply, err := b.do(ctx, "GET", key)
+	if err != nil {
+		return "", false, err
+	}
+	if reply == nil {
+		return "", false, nil
+	}
+	value, ok := reply.(string)
+	if !ok {
+		return "", false, fmt.Errorf("unexpected redis GET response")
+	}
+	return value, true, nil
 }
 
 func (b *redisBus) Del(ctx context.Context, key string) error {
@@ -304,61 +356,134 @@ func parseRedisStreamEntries(entries []interface{}) []redisStreamMessage {
 }
 
 func (b *redisBus) do(ctx context.Context, args ...string) (interface{}, error) {
-	conn, reader, err := b.connect(ctx)
+	if b == nil || b.pool == nil {
+		return nil, fmt.Errorf("redis bus is not initialized")
+	}
+	pooled, err := b.pool.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	reusable := false
+	defer func() {
+		b.pool.release(pooled, reusable)
+	}()
 
-	if err := writeRedisCommand(conn, args...); err != nil {
+	if err := writeRedisCommand(pooled.conn, args...); err != nil {
 		return nil, err
 	}
-	return readRedisReply(reader)
+	reply, err := readRedisReply(pooled.reader)
+	if err != nil {
+		return nil, err
+	}
+	reusable = true
+	return reply, nil
 }
 
-func (b *redisBus) connect(ctx context.Context) (net.Conn, *bufio.Reader, error) {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+func sharedRedisConnPool(address, username, password string, db int, useTLS bool) *redisConnPool {
+	key := fmt.Sprintf("%t|%s|%s|%d|%s", useTLS, address, username, db, password)
+	redisConnPools.Lock()
+	defer redisConnPools.Unlock()
+	if pool := redisConnPools.byKey[key]; pool != nil {
+		return pool
+	}
+	pool := &redisConnPool{
+		address:  address,
+		username: username,
+		password: password,
+		db:       db,
+		useTLS:   useTLS,
+		idle:     make(chan *redisPooledConn, redisPoolMaxIdle),
+		open:     make(chan struct{}, redisPoolMaxOpen),
+	}
+	redisConnPools.byKey[key] = pool
+	return pool
+}
+
+func (p *redisConnPool) acquire(ctx context.Context) (*redisPooledConn, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case pooled := <-p.idle:
+		return pooled, nil
+	default:
+	}
+
+	select {
+	case pooled := <-p.idle:
+		return pooled, nil
+	case p.open <- struct{}{}:
+		pooled, err := p.dial(ctx)
+		if err != nil {
+			<-p.open
+			return nil, err
+		}
+		return pooled, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (p *redisConnPool) release(pooled *redisPooledConn, reusable bool) {
+	if pooled == nil {
+		return
+	}
+	if !reusable {
+		_ = pooled.conn.Close()
+		<-p.open
+		return
+	}
+	select {
+	case p.idle <- pooled:
+	default:
+		_ = pooled.conn.Close()
+		<-p.open
+	}
+}
+
+func (p *redisConnPool) dial(ctx context.Context) (*redisPooledConn, error) {
+	dialer := &net.Dialer{Timeout: redisDialTimeout}
 	var conn net.Conn
 	var err error
-	if b.useTLS {
-		conn, err = tls.DialWithDialer(dialer, "tcp", b.address, &tls.Config{MinVersion: tls.VersionTLS12})
+	if p.useTLS {
+		conn, err = tls.DialWithDialer(dialer, "tcp", p.address, &tls.Config{MinVersion: tls.VersionTLS12})
 	} else {
-		conn, err = dialer.DialContext(ctx, "tcp", b.address)
+		conn, err = dialer.DialContext(ctx, "tcp", p.address)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect redis: %w", err)
+		return nil, fmt.Errorf("failed to connect redis: %w", err)
 	}
 	reader := bufio.NewReader(conn)
-	if b.username != "" && b.password != "" {
-		if err := writeRedisCommand(conn, "AUTH", b.username, b.password); err != nil {
+	if p.username != "" && p.password != "" {
+		if err := writeRedisCommand(conn, "AUTH", p.username, p.password); err != nil {
 			_ = conn.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		if _, err := readRedisReply(reader); err != nil {
 			_ = conn.Close()
-			return nil, nil, fmt.Errorf("redis auth failed: %w", err)
+			return nil, fmt.Errorf("redis auth failed: %w", err)
 		}
-	} else if b.password != "" {
-		if err := writeRedisCommand(conn, "AUTH", b.password); err != nil {
+	} else if p.password != "" {
+		if err := writeRedisCommand(conn, "AUTH", p.password); err != nil {
 			_ = conn.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		if _, err := readRedisReply(reader); err != nil {
 			_ = conn.Close()
-			return nil, nil, fmt.Errorf("redis auth failed: %w", err)
+			return nil, fmt.Errorf("redis auth failed: %w", err)
 		}
 	}
-	if b.db > 0 {
-		if err := writeRedisCommand(conn, "SELECT", strconv.Itoa(b.db)); err != nil {
+	if p.db > 0 {
+		if err := writeRedisCommand(conn, "SELECT", strconv.Itoa(p.db)); err != nil {
 			_ = conn.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		if _, err := readRedisReply(reader); err != nil {
 			_ = conn.Close()
-			return nil, nil, fmt.Errorf("redis select db failed: %w", err)
+			return nil, fmt.Errorf("redis select db failed: %w", err)
 		}
 	}
-	return conn, reader, nil
+	return &redisPooledConn{conn: conn, reader: reader}, nil
 }
 
 func writeRedisCommand(conn net.Conn, args ...string) error {

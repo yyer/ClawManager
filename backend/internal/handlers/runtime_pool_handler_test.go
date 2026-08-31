@@ -426,6 +426,9 @@ func (r *runtimePoolHandlerBindingRepo) ListByRuntimePodIDs(ctx context.Context,
 func (r *runtimePoolHandlerBindingRepo) UpdateRunning(ctx context.Context, instanceID int, generation int, gatewayID string, port int, pid *int) error {
 	return nil
 }
+func (r *runtimePoolHandlerBindingRepo) UpdateGatewayAssignment(ctx context.Context, instanceID int, generation int, gatewayID string, pid *int, state string, lastHealthAt *time.Time) error {
+	return nil
+}
 func (r *runtimePoolHandlerBindingRepo) UpdateState(ctx context.Context, instanceID int, generation int, state string, message *string) error {
 	return nil
 }
@@ -536,3 +539,6 @@ func (c *runtimePoolHandlerAgentClient) DeleteGateway(ctx context.Context, endpo
 	return nil
 }
 func (c *runtimePoolHandlerAgentClient) Drain(ctx context.Context, endpoint string) error { return nil }
+func (c *runtimePoolHandlerAgentClient) ResyncInstanceSkills(ctx context.Context, endpoint string, instanceID int, mode string) error {
+	return nil
+}

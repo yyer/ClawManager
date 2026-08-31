@@ -65,6 +65,19 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 		config.MountPath = "/config"
 		config.Env = defaultWebtopDesktopEnv("Hermes Runtime")
 		config.Env["HERMES_HOME"] = "/config/.hermes"
+	case "opencode":
+		config.Image = defaultSystemImageSettings["opencode"]
+		config.Port = 3001
+		config.MountPath = "/config"
+		config.Env = defaultWebtopDesktopEnv("OpenCode Runtime")
+		config.Env["OPENCODE_CONFIG_DIR"] = "/config/.opencode"
+		config.Env["CLAWMANAGER_SKILL_DIR"] = "/config/workspace/.opencode/skills"
+		config.Env["CLAWMANAGER_PROJECT_PATH"] = "/config/workspace"
+	case "workbuddy":
+		config.Image = defaultSystemImageSettings["workbuddy"]
+		config.Port = 3001
+		config.MountPath = "/config"
+		config.Env = defaultWebtopDesktopEnv("Workbuddy")
 	case "openclaw":
 		config.MountPath = "/config"
 		if (registry == nil || strings.TrimSpace(*registry) == "") && (tag == nil || strings.TrimSpace(*tag) == "") {
@@ -73,6 +86,12 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 			config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "openclaw-desktop", defaultTag)
 		}
 		config.Env = defaultWebtopDesktopEnv("ClawManager Desktop")
+	case RuntimeTypeDeepSeekHarness:
+		config.Image = defaultSystemImageSettings[RuntimeTypeDeepSeekHarness]
+		config.Port = 3001
+		config.MountPath = "/config"
+		config.Env = defaultWebtopDesktopEnv("DeepSeek Harness Pro")
+		config.Env["DSH_HOME"] = "/config/.dsh"
 	case "debian":
 		config.Image = fmt.Sprintf("%s/%s:%s", defaultRegistry, "debian-desktop", defaultTag)
 	case "centos":
@@ -85,7 +104,7 @@ func buildRuntimeConfig(instanceType, osType, osVersion string, registry, tag *s
 
 func defaultPortForInstanceType(instanceType string) int32 {
 	switch instanceType {
-	case "ubuntu", "webtop", "hermes":
+	case "ubuntu", "webtop", "hermes", "opencode", "workbuddy":
 		return 3001
 	default:
 		return 3001
@@ -94,9 +113,7 @@ func defaultPortForInstanceType(instanceType string) int32 {
 
 func defaultMountPathForInstanceType(instanceType string) string {
 	switch instanceType {
-	case "ubuntu", "webtop", "openclaw":
-		return "/config"
-	case "hermes":
+	case "ubuntu", "webtop", "openclaw", "hermes", "opencode", "workbuddy", RuntimeTypeDeepSeekHarness:
 		return "/config"
 	default:
 		return "/home/user/data"
@@ -111,6 +128,18 @@ func defaultEnvForInstanceType(instanceType string) map[string]string {
 		env := defaultWebtopDesktopEnv("Hermes Runtime")
 		env["HERMES_HOME"] = "/config/.hermes"
 		return env
+	case RuntimeTypeDeepSeekHarness:
+		env := defaultWebtopDesktopEnv("DeepSeek Harness Pro")
+		env["DSH_HOME"] = "/config/.dsh"
+		return env
+	case "opencode":
+		env := defaultWebtopDesktopEnv("OpenCode Runtime")
+		env["OPENCODE_CONFIG_DIR"] = "/config/.opencode"
+		env["CLAWMANAGER_SKILL_DIR"] = "/config/workspace/.opencode/skills"
+		env["CLAWMANAGER_PROJECT_PATH"] = "/config/workspace"
+		return env
+	case "workbuddy":
+		return defaultWebtopDesktopEnv("Workbuddy")
 	default:
 		return map[string]string{}
 	}
@@ -142,6 +171,7 @@ func withInstanceProxyEnv(instanceType string, instanceID int, env map[string]st
 		merged["https_proxy"] = proxyURL
 		merged["NO_PROXY"] = noProxy
 		merged["no_proxy"] = noProxy
+		merged["CLAWMANAGER_EGRESS_INSTANCE_ID"] = fmt.Sprintf("%d", instanceID)
 	}
 
 	if usesWebtopImage(instanceType) {
@@ -153,7 +183,7 @@ func withInstanceProxyEnv(instanceType string, instanceID int, env map[string]st
 
 func usesWebtopImage(instanceType string) bool {
 	switch instanceType {
-	case "ubuntu", "webtop", "hermes", "openclaw":
+	case "ubuntu", "webtop", "hermes", "openclaw", "opencode", "workbuddy", RuntimeTypeDeepSeekHarness:
 		return true
 	default:
 		return false
@@ -203,6 +233,22 @@ func defaultEgressProxyURL() (string, bool) {
 	}
 
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%s", serviceName, systemNamespace, port), true
+}
+
+func defaultTeamPreviewOrigin() (string, bool) {
+	if override := strings.TrimSpace(os.Getenv("CLAWMANAGER_TEAM_PREVIEW_ORIGIN")); override != "" {
+		return strings.TrimRight(override, "/"), true
+	}
+	// Reuse the already-deployed managed proxy Service as the signed preview
+	// endpoint. This keeps preview links resolvable without requiring a second
+	// Service to be applied during an image-only rolling upgrade.
+	return defaultEgressProxyURL()
+}
+
+// DefaultTeamPreviewOrigin returns the internal, resolvable service origin used
+// by Team Browser previews.
+func DefaultTeamPreviewOrigin() (string, bool) {
+	return defaultTeamPreviewOrigin()
 }
 
 func defaultGatewayBaseURL() (string, bool) {

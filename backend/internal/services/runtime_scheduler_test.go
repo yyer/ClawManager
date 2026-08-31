@@ -89,6 +89,9 @@ func TestRuntimeSchedulerAssignsCreatingInstanceToReadyPod(t *testing.T) {
 	if req.req.PortRange.Start != RuntimeGatewayPortStart || req.req.PortRange.End != RuntimeGatewayPortEnd {
 		t.Fatalf("port range = %+v", req.req.PortRange)
 	}
+	if req.req.GatewayPort != RuntimeGatewayPortStart {
+		t.Fatalf("gateway port = %d, want %d", req.req.GatewayPort, RuntimeGatewayPortStart)
+	}
 	if req.req.UID != RuntimeLinuxID(17) || req.req.GID != RuntimeLinuxID(17) {
 		t.Fatalf("linux IDs = %d/%d", req.req.UID, req.req.GID)
 	}
@@ -100,7 +103,7 @@ func TestRuntimeSchedulerAssignsCreatingInstanceToReadyPod(t *testing.T) {
 	if binding == nil {
 		t.Fatal("binding was not created")
 	}
-	if binding.RuntimePodID != 9 || binding.GatewayPort != 20017 {
+	if binding.RuntimePodID != 9 || binding.GatewayPort != RuntimeGatewayPortStart {
 		t.Fatalf("binding pod/port = %d/%d", binding.RuntimePodID, binding.GatewayPort)
 	}
 	if instanceRepo.workspacePaths[17] != "/workspaces/openclaw/user-45/instance-17" {
@@ -118,6 +121,196 @@ func TestRuntimeSchedulerAssignsCreatingInstanceToReadyPod(t *testing.T) {
 	}
 	if events.published[0].eventType != "runtime.instance.running" {
 		t.Fatalf("published event = %q, want runtime.instance.running", events.published[0].eventType)
+	}
+}
+
+func TestRuntimeSchedulerReplacesOlderGenerationBindingForCreatingInstance(t *testing.T) {
+	ctx := context.Background()
+	endpoint := "http://agent.runtime"
+	workspacePath := "/workspaces/openclaw/user-45/instance-18"
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	podRepo := &fakeRuntimePodRepo{
+		pods: map[int64]*models.RuntimePod{
+			9: {ID: 9, RuntimeType: RuntimeTypeOpenClaw, AgentEndpoint: &endpoint, State: "ready", Capacity: 2},
+		},
+		schedulable: []models.RuntimePod{
+			{ID: 9, RuntimeType: RuntimeTypeOpenClaw, AgentEndpoint: &endpoint, State: "ready", Capacity: 2},
+		},
+	}
+	bindingRepo := newFakeRuntimeBindingRepo()
+	bindingRepo.bindings[18] = &models.InstanceRuntimeBinding{
+		InstanceID:   18,
+		RuntimePodID: 9,
+		RuntimeType:  RuntimeTypeOpenClaw,
+		GatewayID:    "gw-18-3",
+		GatewayPort:  RuntimeGatewayPortStart,
+		State:        "error",
+		Generation:   3,
+	}
+	agent := &fakeRuntimeAgentClient{createResponse: &RuntimeAgentCreateGatewayResponse{
+		GatewayID: "gw-18-4",
+		Status:    "running",
+	}}
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		podRepo,
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		&fakeRuntimeEventService{},
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+	)
+	instance := models.Instance{
+		ID:                18,
+		UserID:            45,
+		Type:              RuntimeTypeOpenClaw,
+		RuntimeType:       RuntimeBackendGateway,
+		InstanceMode:      InstanceModeLite,
+		Status:            "creating",
+		WorkspacePath:     &workspacePath,
+		RuntimeGeneration: 4,
+		MemoryGB:          2,
+		DiskGB:            8,
+	}
+
+	if errs := scheduler.reconcileCreatingInstance(ctx, instance); len(errs) != 0 {
+		t.Fatalf("reconcileCreatingInstance errors = %v", errs)
+	}
+
+	if len(agent.deleteRequests) != 1 || agent.deleteRequests[0].gatewayID != "gw-18-3" {
+		t.Fatalf("stale gateway delete requests = %#v", agent.deleteRequests)
+	}
+	if len(agent.createRequests) != 1 || agent.createRequests[0].req.Generation != 4 {
+		t.Fatalf("new gateway create requests = %#v", agent.createRequests)
+	}
+	binding := bindingRepo.bindings[18]
+	if binding == nil || binding.Generation != 4 || binding.State != "running" {
+		t.Fatalf("replacement binding = %+v, want running generation 4", binding)
+	}
+	state := instanceRepo.runtimeStates[18]
+	if state.status != "running" || state.generation != 4 {
+		t.Fatalf("instance runtime state = %+v, want running generation 4", state)
+	}
+}
+
+func TestRuntimeSchedulerDoesNotDeleteNewerGenerationBinding(t *testing.T) {
+	ctx := context.Background()
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	bindingRepo := newFakeRuntimeBindingRepo()
+	bindingRepo.bindings[19] = &models.InstanceRuntimeBinding{
+		InstanceID:   19,
+		RuntimePodID: 9,
+		GatewayID:    "gw-19-5",
+		State:        "running",
+		Generation:   5,
+	}
+	agent := &fakeRuntimeAgentClient{}
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		&fakeRuntimePodRepo{},
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		&fakeRuntimeEventService{},
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+	)
+
+	if errs := scheduler.reconcileCreatingInstance(ctx, models.Instance{
+		ID:                19,
+		Status:            "creating",
+		RuntimeGeneration: 4,
+	}); len(errs) != 0 {
+		t.Fatalf("reconcileCreatingInstance errors = %v", errs)
+	}
+
+	if len(agent.deleteRequests) != 0 || bindingRepo.deleteAndReleaseCalls[19] != 0 {
+		t.Fatalf("newer binding was deleted: agent=%#v calls=%d", agent.deleteRequests, bindingRepo.deleteAndReleaseCalls[19])
+	}
+	state := instanceRepo.runtimeStates[19]
+	if state.status != "running" || state.generation != 5 {
+		t.Fatalf("instance runtime state = %+v, want running generation 5", state)
+	}
+}
+
+func TestRuntimeSchedulerSkipsAgentRejectedGatewayPort(t *testing.T) {
+	ctx := context.Background()
+	endpoint := "http://agent.runtime"
+	workspacePath := "/workspaces/openclaw/user-45/instance-73"
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	podRepo := &fakeRuntimePodRepo{
+		pods: map[int64]*models.RuntimePod{
+			9: {
+				ID:            9,
+				RuntimeType:   RuntimeTypeOpenClaw,
+				AgentEndpoint: &endpoint,
+				State:         "ready",
+				Capacity:      100,
+			},
+		},
+		schedulable: []models.RuntimePod{{
+			ID:            9,
+			RuntimeType:   RuntimeTypeOpenClaw,
+			AgentEndpoint: &endpoint,
+			State:         "ready",
+			Capacity:      100,
+		}},
+	}
+	bindingRepo := newFakeRuntimeBindingRepo()
+	agent := &fakeRuntimeAgentClient{
+		createErrors: []error{
+			fmt.Errorf("%w: requested gateway port 20000 is unavailable: no free port", ErrRuntimeAgentConflict),
+			nil,
+		},
+		createResponse: &RuntimeAgentCreateGatewayResponse{
+			GatewayID: "gw-73",
+			Status:    "running",
+		},
+	}
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		podRepo,
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		&fakeRuntimeEventService{},
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+	)
+
+	err := scheduler.assignInstance(ctx, models.Instance{
+		ID:                73,
+		UserID:            45,
+		Type:              RuntimeTypeOpenClaw,
+		RuntimeType:       RuntimeBackendGateway,
+		InstanceMode:      InstanceModeLite,
+		Status:            "creating",
+		WorkspacePath:     &workspacePath,
+		RuntimeGeneration: 1,
+	})
+	if err != nil {
+		t.Fatalf("assignInstance returned error: %v", err)
+	}
+	if got := len(agent.createRequests); got != 2 {
+		t.Fatalf("CreateGateway calls = %d, want 2", got)
+	}
+	if got := agent.createRequests[0].req.GatewayPort; got != RuntimeGatewayPortStart {
+		t.Fatalf("first gateway port = %d, want %d", got, RuntimeGatewayPortStart)
+	}
+	wantPort := RuntimeGatewayPortStart + RuntimeOpenClawPortsPerInstance
+	if got := agent.createRequests[1].req.GatewayPort; got != wantPort {
+		t.Fatalf("second gateway port = %d, want %d", got, wantPort)
+	}
+	binding := bindingRepo.bindings[73]
+	if binding == nil || binding.GatewayPort != wantPort || binding.State != "running" {
+		t.Fatalf("binding = %+v, want running on port %d", binding, wantPort)
+	}
+	if podRepo.claims[9] != 1 {
+		t.Fatalf("pod claims = %d, want 1", podRepo.claims[9])
 	}
 }
 
@@ -312,6 +505,7 @@ func TestRuntimeSchedulerThrottlesGatewayStartsWhenPodHasCreatingBinding(t *test
 		nil,
 		&fakeRuntimeDeploymentService{},
 		time.Second,
+		WithRuntimeSchedulerGatewayStartInFlightLimit(1),
 	)
 
 	err := scheduler.assignInstance(ctx, models.Instance{
@@ -384,6 +578,7 @@ func TestRuntimeSchedulerReconcileWaitsWhenGatewayStartInFlight(t *testing.T) {
 		nil,
 		&fakeRuntimeDeploymentService{},
 		time.Second,
+		WithRuntimeSchedulerGatewayStartInFlightLimit(1),
 	)
 
 	if err := scheduler.reconcile(ctx); err != nil {
@@ -399,7 +594,52 @@ func TestRuntimeSchedulerReconcileWaitsWhenGatewayStartInFlight(t *testing.T) {
 		t.Fatalf("runtime state was updated to %+v, want waiting without error", state)
 	}
 }
-func TestRuntimeSchedulerSerializesGatewayCreationPerPod(t *testing.T) {
+
+func TestRuntimeSchedulerAllowsGatewayStartsBelowConfiguredInFlightLimit(t *testing.T) {
+	bindingRepo := newFakeRuntimeBindingRepo()
+	for instanceID := 81; instanceID <= 83; instanceID++ {
+		bindingRepo.bindings[instanceID] = &models.InstanceRuntimeBinding{
+			InstanceID:   instanceID,
+			RuntimePodID: 9,
+			State:        "starting",
+		}
+	}
+	scheduler := NewRuntimeScheduler(
+		newFakeRuntimeInstanceRepo(),
+		&fakeRuntimePodRepo{},
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		&fakeRuntimeAgentClient{},
+		&fakeRuntimeEventService{},
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+		WithRuntimeSchedulerGatewayStartInFlightLimit(4),
+	)
+
+	canStart, err := scheduler.podCanStartGateway(context.Background(), 9)
+	if err != nil {
+		t.Fatalf("podCanStartGateway returned error: %v", err)
+	}
+	if !canStart {
+		t.Fatal("podCanStartGateway = false with 3 starts in flight, want true")
+	}
+
+	bindingRepo.bindings[84] = &models.InstanceRuntimeBinding{
+		InstanceID:   84,
+		RuntimePodID: 9,
+		State:        "creating",
+	}
+	canStart, err = scheduler.podCanStartGateway(context.Background(), 9)
+	if err != nil {
+		t.Fatalf("podCanStartGateway returned error: %v", err)
+	}
+	if canStart {
+		t.Fatal("podCanStartGateway = true with 4 starts in flight, want false")
+	}
+}
+
+func TestRuntimeSchedulerAllowsConcurrentGatewayCreationPerPodWithinLimit(t *testing.T) {
 	ctx := context.Background()
 	endpoint := "http://agent.runtime"
 	workspace81 := "/workspaces/openclaw/user-45/instance-81"
@@ -448,7 +688,7 @@ func TestRuntimeSchedulerSerializesGatewayCreationPerPod(t *testing.T) {
 		bindingRepo,
 		&fakeRuntimeRolloutRepo{},
 		agent,
-		&fakeRuntimeEventService{},
+		nil,
 		nil,
 		&fakeRuntimeDeploymentService{},
 		time.Second,
@@ -467,13 +707,162 @@ func TestRuntimeSchedulerSerializesGatewayCreationPerPod(t *testing.T) {
 		}
 	}
 
-	if got := atomic.LoadInt32(&agent.maxActiveCreates); got != 1 {
-		t.Fatalf("concurrent CreateGateway calls = %d, want 1", got)
+	if got := atomic.LoadInt32(&agent.maxActiveCreates); got != 2 {
+		t.Fatalf("concurrent CreateGateway calls = %d, want 2", got)
 	}
 	if got := len(agent.createRequests); got != 2 {
 		t.Fatalf("CreateGateway calls = %d, want 2", got)
 	}
 }
+
+func TestRuntimeSchedulerReconcileStartsBatchConcurrently(t *testing.T) {
+	ctx := context.Background()
+	endpoint := "http://agent.runtime"
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	for instanceID := 81; instanceID <= 84; instanceID++ {
+		workspacePath := fmt.Sprintf("/workspaces/openclaw/user-45/instance-%d", instanceID)
+		instanceRepo.creating = append(instanceRepo.creating, models.Instance{
+			ID:                instanceID,
+			UserID:            45,
+			Type:              RuntimeTypeOpenClaw,
+			RuntimeType:       RuntimeBackendGateway,
+			InstanceMode:      InstanceModeLite,
+			Status:            "creating",
+			WorkspacePath:     &workspacePath,
+			RuntimeGeneration: 1,
+		})
+	}
+	pod := models.RuntimePod{
+		ID:            9,
+		RuntimeType:   RuntimeTypeOpenClaw,
+		AgentEndpoint: &endpoint,
+		State:         "ready",
+		Capacity:      100,
+	}
+	agent := &fakeRuntimeAgentClient{
+		createResponse: &RuntimeAgentCreateGatewayResponse{GatewayID: "gw", Status: "starting"},
+		createDelay:    25 * time.Millisecond,
+	}
+	bindingRepo := newFakeRuntimeBindingRepo()
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		&fakeRuntimePodRepo{
+			pods:        map[int64]*models.RuntimePod{9: &pod},
+			schedulable: []models.RuntimePod{pod},
+		},
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		nil,
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+		WithRuntimeSchedulerGatewayStartInFlightLimit(4),
+	)
+
+	if err := scheduler.reconcile(ctx); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+	if got := atomic.LoadInt32(&agent.maxActiveCreates); got != 4 {
+		t.Fatalf("concurrent CreateGateway calls = %d, want 4", got)
+	}
+	if got := len(agent.createRequests); got != 4 {
+		t.Fatalf("CreateGateway calls = %d, want 4", got)
+	}
+	usedPorts := map[int]int{}
+	for _, request := range agent.createRequests {
+		port := request.req.GatewayPort
+		if port < RuntimeGatewayPortStart || port+RuntimeBrowserControlPortOffset > RuntimeGatewayPortEnd {
+			t.Fatalf("gateway port block %d-%d is outside configured range", port, port+RuntimeBrowserControlPortOffset)
+		}
+		if offset := (port - RuntimeGatewayPortStart) % RuntimeOpenClawPortsPerInstance; offset != RuntimeGatewayPortOffset {
+			t.Fatalf("gateway port %d is not aligned to a %d-port block", port, RuntimeOpenClawPortsPerInstance)
+		}
+		for member := port; member <= port+RuntimeBrowserControlPortOffset; member++ {
+			if owner, exists := usedPorts[member]; exists {
+				t.Fatalf("port %d is shared by gateway blocks %d and %d", member, owner, port)
+			}
+			usedPorts[member] = port
+		}
+	}
+	if got, want := len(usedPorts), 4*RuntimeOpenClawPortsPerInstance; got != want {
+		t.Fatalf("reserved port members = %d, want %d", got, want)
+	}
+	if got := len(bindingRepo.bindings); got != 4 {
+		t.Fatalf("reserved bindings = %d, want 4", got)
+	}
+}
+
+func TestRuntimeSchedulerReconcileAssignsSinglePortsToHermesBatch(t *testing.T) {
+	ctx := context.Background()
+	endpoint := "http://agent.runtime"
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	for instanceID := 91; instanceID <= 94; instanceID++ {
+		workspacePath := fmt.Sprintf("/workspaces/hermes/user-45/instance-%d", instanceID)
+		instanceRepo.creating = append(instanceRepo.creating, models.Instance{
+			ID:                instanceID,
+			UserID:            45,
+			Type:              RuntimeTypeHermes,
+			RuntimeType:       RuntimeBackendGateway,
+			InstanceMode:      InstanceModeLite,
+			Status:            "creating",
+			WorkspacePath:     &workspacePath,
+			RuntimeGeneration: 1,
+		})
+	}
+	pod := models.RuntimePod{
+		ID:            10,
+		RuntimeType:   RuntimeTypeHermes,
+		AgentEndpoint: &endpoint,
+		State:         "ready",
+		Capacity:      100,
+	}
+	agent := &fakeRuntimeAgentClient{
+		createResponse: &RuntimeAgentCreateGatewayResponse{GatewayID: "gw", Status: "starting"},
+		createDelay:    25 * time.Millisecond,
+	}
+	bindingRepo := newFakeRuntimeBindingRepo()
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		&fakeRuntimePodRepo{
+			pods:        map[int64]*models.RuntimePod{10: &pod},
+			schedulable: []models.RuntimePod{pod},
+		},
+		bindingRepo,
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		nil,
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+		WithRuntimeSchedulerGatewayStartInFlightLimit(4),
+	)
+
+	if err := scheduler.reconcile(ctx); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+	if got := atomic.LoadInt32(&agent.maxActiveCreates); got != 4 {
+		t.Fatalf("concurrent CreateGateway calls = %d, want 4", got)
+	}
+	if got := len(agent.createRequests); got != 4 {
+		t.Fatalf("CreateGateway calls = %d, want 4", got)
+	}
+	usedPorts := map[int]struct{}{}
+	for _, request := range agent.createRequests {
+		port := request.req.GatewayPort
+		if port < RuntimeGatewayPortStart || port >= RuntimeGatewayPortStart+4 {
+			t.Fatalf("Hermes gateway port = %d, want one of %d-%d", port, RuntimeGatewayPortStart, RuntimeGatewayPortStart+3)
+		}
+		if _, exists := usedPorts[port]; exists {
+			t.Fatalf("Hermes gateway port %d was assigned more than once", port)
+		}
+		usedPorts[port] = struct{}{}
+	}
+	if got := len(bindingRepo.bindings); got != 4 {
+		t.Fatalf("reserved bindings = %d, want 4", got)
+	}
+}
+
 func TestRuntimeSchedulerPassesGatewayEnvironmentToRuntimeAgent(t *testing.T) {
 	ctx := context.Background()
 	endpoint := "http://agent.runtime"
@@ -942,6 +1331,60 @@ func TestRuntimeSchedulerReconcileRetriesRecoverableNoSchedulableError(t *testin
 	}
 }
 
+func TestRuntimeSchedulerReconcileRetriesUnboundGatewayStartFailureAfterRuntimeUpgrade(t *testing.T) {
+	ctx := context.Background()
+	endpoint := "http://agent.runtime"
+	workspacePath := "/workspaces/openclaw/user-46/instance-970"
+	errorMessage := "gateway start failed: exit status 1"
+	instanceRepo := newFakeRuntimeInstanceRepo()
+	instanceRepo.desiredRunning = []models.Instance{{
+		ID:                  970,
+		UserID:              46,
+		Type:                RuntimeTypeOpenClaw,
+		RuntimeType:         RuntimeBackendGateway,
+		InstanceMode:        InstanceModeLite,
+		Status:              "error",
+		RuntimeErrorMessage: &errorMessage,
+		MemoryGB:            1,
+		DiskGB:              1,
+		WorkspacePath:       &workspacePath,
+		RuntimeGeneration:   26,
+	}}
+	podRepo := &fakeRuntimePodRepo{
+		pods: map[int64]*models.RuntimePod{
+			51: {ID: 51, RuntimeType: RuntimeTypeOpenClaw, AgentEndpoint: &endpoint, State: "ready", Capacity: 100},
+		},
+		schedulable: []models.RuntimePod{
+			{ID: 51, RuntimeType: RuntimeTypeOpenClaw, AgentEndpoint: &endpoint, State: "ready", Capacity: 100},
+		},
+	}
+	agent := &fakeRuntimeAgentClient{
+		createResponse: &RuntimeAgentCreateGatewayResponse{GatewayID: "gw-970-26", Port: 20000, Status: "running"},
+	}
+	scheduler := NewRuntimeScheduler(
+		instanceRepo,
+		podRepo,
+		newFakeRuntimeBindingRepo(),
+		&fakeRuntimeRolloutRepo{},
+		agent,
+		NewRuntimeEventService(nil),
+		nil,
+		&fakeRuntimeDeploymentService{},
+		time.Second,
+	)
+
+	if err := scheduler.reconcile(ctx); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+	if got := len(agent.createRequests); got != 1 {
+		t.Fatalf("CreateGateway calls = %d, want one retry after the runtime upgrade", got)
+	}
+	state := instanceRepo.runtimeStates[970]
+	if state.status != "running" || state.generation != 26 || state.message != nil {
+		t.Fatalf("runtime state = %+v, want recovered generation 26 without an error", state)
+	}
+}
+
 func TestRuntimeSchedulerReconcileSkipsNonRecoverableErrorInstance(t *testing.T) {
 	ctx := context.Background()
 	endpoint := "http://agent.runtime"
@@ -1248,11 +1691,11 @@ func TestRuntimeSchedulerCleansUpGatewayAndReleasesSlotWhenBindingCreateFails(t 
 	if !errors.Is(err, createErr) {
 		t.Fatalf("assignInstance error = %v, want binding create error", err)
 	}
-	if got := len(agent.deleteRequests); got != 1 {
-		t.Fatalf("DeleteGateway calls = %d, want 1", got)
+	if got := len(agent.createRequests); got != 0 {
+		t.Fatalf("CreateGateway calls = %d, want 0 because port reservation failed", got)
 	}
-	if agent.deleteRequests[0].gatewayID != "gw-22" {
-		t.Fatalf("deleted gateway = %q, want gw-22", agent.deleteRequests[0].gatewayID)
+	if got := len(agent.deleteRequests); got != 0 {
+		t.Fatalf("DeleteGateway calls = %d, want 0 because gateway was not created", got)
 	}
 	if podRepo.releases[9] != 1 {
 		t.Fatalf("pod releases = %d, want 1", podRepo.releases[9])
@@ -1995,6 +2438,7 @@ func TestRuntimeSchedulerReconcileStartsPendingRollouts(t *testing.T) {
 }
 
 type fakeRuntimeInstanceRepo struct {
+	mu                    sync.Mutex
 	creating              []models.Instance
 	desiredRunning        []models.Instance
 	byID                  map[int]*models.Instance
@@ -2020,7 +2464,12 @@ func newFakeRuntimeInstanceRepo() *fakeRuntimeInstanceRepo {
 
 func (r *fakeRuntimeInstanceRepo) Create(instance *models.Instance) error { return nil }
 func (r *fakeRuntimeInstanceRepo) GetByID(id int) (*models.Instance, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.byID[id], nil
+}
+func (r *fakeRuntimeInstanceRepo) FindByPodIP(string) (*models.Instance, error) {
+	return nil, nil
 }
 func (r *fakeRuntimeInstanceRepo) GetByAccessToken(accessToken string) (*models.Instance, error) {
 	return nil, nil
@@ -2050,6 +2499,8 @@ func (r *fakeRuntimeInstanceRepo) GetV2Creating(ctx context.Context, limit int) 
 	return r.creating, nil
 }
 func (r *fakeRuntimeInstanceRepo) UpdateRuntimeState(ctx context.Context, id int, status string, generation int, message *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.updateRuntimeStateErr != nil {
 		return r.updateRuntimeStateErr
 	}
@@ -2057,6 +2508,8 @@ func (r *fakeRuntimeInstanceRepo) UpdateRuntimeState(ctx context.Context, id int
 	return nil
 }
 func (r *fakeRuntimeInstanceRepo) SetWorkspacePath(ctx context.Context, id int, workspacePath string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.setWorkspacePathErr != nil {
 		return r.setWorkspacePathErr
 	}
@@ -2227,6 +2680,19 @@ func (r *fakeRuntimeBindingRepo) ListByRuntimePodIDs(ctx context.Context, runtim
 func (r *fakeRuntimeBindingRepo) UpdateRunning(ctx context.Context, instanceID int, generation int, gatewayID string, port int, pid *int) error {
 	return nil
 }
+func (r *fakeRuntimeBindingRepo) UpdateGatewayAssignment(ctx context.Context, instanceID int, generation int, gatewayID string, pid *int, state string, lastHealthAt *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	binding := r.bindings[instanceID]
+	if binding == nil {
+		return repository.ErrStaleRuntimeGeneration
+	}
+	binding.GatewayID = gatewayID
+	binding.GatewayPID = pid
+	binding.State = state
+	binding.LastHealthAt = lastHealthAt
+	return nil
+}
 func (r *fakeRuntimeBindingRepo) UpdateState(ctx context.Context, instanceID int, generation int, state string, message *string) error {
 	return nil
 }
@@ -2311,6 +2777,7 @@ type fakeRuntimeAgentClient struct {
 	mu             sync.Mutex
 	createResponse *RuntimeAgentCreateGatewayResponse
 	createErr      error
+	createErrors   []error
 	deleteErr      error
 	createDelay    time.Duration
 	createRequests []fakeCreateGatewayRequest
@@ -2351,13 +2818,24 @@ func (c *fakeRuntimeAgentClient) CreateGateway(ctx context.Context, endpoint str
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.createRequests = append(c.createRequests, fakeCreateGatewayRequest{endpoint: endpoint, req: req})
+	if len(c.createErrors) > 0 {
+		err := c.createErrors[0]
+		c.createErrors = c.createErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if c.createErr != nil {
 		return nil, c.createErr
 	}
 	if c.createResponse == nil {
 		return nil, errors.New("missing create response")
 	}
-	return c.createResponse, nil
+	response := *c.createResponse
+	if req.GatewayPort > 0 {
+		response.Port = req.GatewayPort
+	}
+	return &response, nil
 }
 func (c *fakeRuntimeAgentClient) DeleteGateway(ctx context.Context, endpoint, gatewayID string) error {
 	c.deleteRequests = append(c.deleteRequests, fakeDeleteGatewayRequest{endpoint: endpoint, gatewayID: gatewayID})
@@ -2365,6 +2843,9 @@ func (c *fakeRuntimeAgentClient) DeleteGateway(ctx context.Context, endpoint, ga
 }
 func (c *fakeRuntimeAgentClient) Drain(ctx context.Context, endpoint string) error {
 	c.drainEndpoints = append(c.drainEndpoints, endpoint)
+	return nil
+}
+func (c *fakeRuntimeAgentClient) ResyncInstanceSkills(ctx context.Context, endpoint string, instanceID int, mode string) error {
 	return nil
 }
 

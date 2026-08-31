@@ -94,6 +94,7 @@ func GatewayAuth(instanceRepo repository.InstanceRepository, bindingRepos ...rep
 
 		c.Set("userID", instance.UserID)
 		c.Set("instanceID", instance.ID)
+		c.Set("instanceType", strings.TrimSpace(instance.Type))
 		c.Set("instanceMode", gatewayInstanceMode(instance.InstanceMode, instance.RuntimeType))
 		c.Set("runtimeType", strings.TrimSpace(instance.RuntimeType))
 		if bindingRepo != nil {
@@ -130,6 +131,9 @@ func extractToken(c *gin.Context) (string, bool) {
 			return "", false
 		}
 		return parts[1], true
+	}
+	if token := strings.TrimSpace(c.GetHeader("x-api-key")); token != "" {
+		return token, true
 	}
 
 	// Browsers cannot set custom Authorization headers for native WebSocket

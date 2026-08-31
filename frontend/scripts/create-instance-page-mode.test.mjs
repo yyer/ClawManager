@@ -70,5 +70,15 @@ assert(
   source.includes("...(usesDedicatedResources"),
   "Quota validation must include CPU/memory/storage/GPU only for Pro mode.",
 );
+assert(
+  source.includes('TEMPORARILY_HIDDEN_CREATE_INSTANCE_TYPE_IDS') &&
+    source.includes('TEMPORARILY_HIDDEN_CREATE_INSTANCE_TYPE_IDS.has(type.id)'),
+  "Create page must hide temporarily unavailable runtime types from every new-instance chooser.",
+);
+assert(
+  source.includes('const isLiteOnlyInstanceType = (type: string) => type === "opencode";') &&
+    source.includes('!isLiteOnlyInstanceType(item.id)'),
+  "Create page must expose OpenCode only in Lite mode.",
+);
 
 console.log("Create instance mode selector placement is valid.");

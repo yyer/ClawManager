@@ -20,6 +20,7 @@ var ErrStaleRuntimeGeneration = errors.New("stale runtime generation")
 type InstanceRepository interface {
 	Create(instance *models.Instance) error
 	GetByID(id int) (*models.Instance, error)
+	FindByPodIP(podIP string) (*models.Instance, error)
 	GetByAccessToken(accessToken string) (*models.Instance, error)
 	GetByAgentBootstrapToken(bootstrapToken string) (*models.Instance, error)
 	GetAll(offset, limit int) ([]models.Instance, error)
@@ -70,6 +71,23 @@ func (r *instanceRepository) GetByID(id int) (*models.Instance, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get instance: %w", err)
+	}
+	return &instance, nil
+}
+
+// FindByPodIP returns the first instance whose recorded pod_ip matches.
+func (r *instanceRepository) FindByPodIP(podIP string) (*models.Instance, error) {
+	podIP = strings.TrimSpace(podIP)
+	if podIP == "" {
+		return nil, nil
+	}
+	var instance models.Instance
+	err := r.sess.Collection("instances").Find(db.Cond{"pod_ip": podIP}).OrderBy("id").One(&instance)
+	if err != nil {
+		if err == db.ErrNoMoreRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get instance by pod ip: %w", err)
 	}
 	return &instance, nil
 }
@@ -304,11 +322,11 @@ func buildV2SchedulerInstanceQuery(statuses []string, limit int) (string, []any)
 		statuses = []string{"creating", "running"}
 	}
 	statusPlaceholders := strings.TrimRight(strings.Repeat("?, ", len(statuses)), ", ")
-	args := make([]any, 0, len(statuses)+5)
+	args := make([]any, 0, len(statuses)+7)
 	for _, status := range statuses {
 		args = append(args, status)
 	}
-	args = append(args, "gateway", "lite", "openclaw", "hermes", limit)
+	args = append(args, "gateway", "lite", "openclaw", "hermes", "opencode", "deepseek-harness", limit)
 	return fmt.Sprintf(`
 		SELECT *
 		FROM instances
@@ -317,7 +335,7 @@ func buildV2SchedulerInstanceQuery(statuses []string, limit int) (string, []any)
 			AND instance_mode = ?
 			AND workspace_path IS NOT NULL
 			AND TRIM(workspace_path) <> ''
-			AND type IN (?, ?)
+			AND type IN (?, ?, ?, ?)
 		ORDER BY id
 		LIMIT ?
 	`, statusPlaceholders), args

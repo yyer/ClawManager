@@ -183,3 +183,131 @@ func TestMigration038AddsGatewayTokenAliases(t *testing.T) {
 		t.Fatalf("migration 038 must not store raw access tokens")
 	}
 }
+
+func TestMigration041AddsSessionUsageIndexes(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/041_add_session_usage_indexes.sql")
+	if err != nil {
+		t.Fatalf("read migration 041: %v", err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"idx_cost_records_instance_id",
+		"idx_cost_records_session_id",
+		"idx_model_invocations_instance_session",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration 041 must contain %s", required)
+		}
+	}
+}
+
+func TestMigration042AddsImmutableReviewContractTarget(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/042_add_team_review_contract.sql")
+	if err != nil {
+		t.Fatalf("read migration 042: %v", err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"review_target_assignment_id",
+		"review_target_revision",
+		"idx_team_work_items_review_target",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration 042 must contain %s", required)
+		}
+	}
+}
+
+func TestMigration044AddsWorkbuddyRuntime(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/044_add_workbuddy_instance_type.sql")
+	if err != nil {
+		t.Fatalf("read migration 044: %v", err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"'workbuddy'",
+		"instance_type = 'workbuddy'",
+		"LOWER(TRIM(display_name)) = 'workbuddy'",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration 044 must contain %s", required)
+		}
+	}
+}
+
+func TestMigration045BootstrapsAndUpgradesLLMModels(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/045_add_llm_model_reasoning_control.sql")
+	if err != nil {
+		t.Fatalf("read migration 045: %v", err)
+	}
+
+	sql := string(raw)
+	createTable := "CREATE TABLE IF NOT EXISTS llm_models"
+	guardColumn := "information_schema.COLUMNS"
+	addColumn := "ALTER TABLE llm_models ADD COLUMN reasoning_enabled"
+	for _, required := range []string{
+		createTable,
+		guardColumn,
+		"TABLE_NAME = 'llm_models'",
+		"COLUMN_NAME = 'reasoning_enabled'",
+		addColumn,
+		"PREPARE stmt FROM @stmt",
+		"EXECUTE stmt",
+		"DEALLOCATE PREPARE stmt",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration 045 must contain %s", required)
+		}
+	}
+
+	if strings.Index(sql, createTable) > strings.Index(sql, addColumn) {
+		t.Fatalf("migration 045 must create the legacy llm_models table before adding reasoning_enabled")
+	}
+}
+
+func TestMigration047AddsDeepSeekHarnessRuntimes(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/047_add_deepseek_harness_runtime.sql")
+	if err != nil {
+		t.Fatalf("read migration 047: %v", err)
+	}
+
+	sql := string(raw)
+	for _, required := range []string{
+		"'deepseek-harness'",
+		"'desktop'",
+		"'gateway'",
+		"'DeepSeek Harness Pro'",
+		"'DeepSeek Harness Lite'",
+		"ghcr.io/yuan-lab-llm/agentsruntime/deepseek-harness:latest",
+		"ghcr.io/yuan-lab-llm/agentsruntime/deepseek-harness-lite:latest",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration 047 must contain %s", required)
+		}
+	}
+}
+
+func TestMigration048PreservesAllInstanceTypes(t *testing.T) {
+	raw, err := embeddedMigrations.ReadFile("migrations/048_fix_instance_type_enum.sql")
+	if err != nil {
+		t.Fatalf("read migration 048: %v", err)
+	}
+
+	sql := string(raw)
+	for _, instanceType := range []string{
+		"'openclaw'",
+		"'ubuntu'",
+		"'debian'",
+		"'centos'",
+		"'custom'",
+		"'webtop'",
+		"'hermes'",
+		"'workbuddy'",
+		"'opencode'",
+		"'deepseek-harness'",
+	} {
+		if !strings.Contains(sql, instanceType) {
+			t.Fatalf("migration 048 must preserve instance type %s", instanceType)
+		}
+	}
+}

@@ -300,7 +300,11 @@ func (s *runtimeWorkspaceFileService) openRemoteFile(ctx context.Context, scope 
 		return nil, "", 0, err
 	}
 	if audit {
-		if err := s.recordAudit(ctx, scope, "download", relative, entry.Size); err != nil {
+		action := "download"
+		if strings.HasPrefix(strings.TrimSpace(scope.AuditActionPrefix), "llm_") {
+			action = "input_file"
+		}
+		if err := s.recordAudit(ctx, scope, action, relative, entry.Size); err != nil {
 			return nil, "", 0, err
 		}
 	}
@@ -337,6 +341,7 @@ func (s *runtimeWorkspaceFileService) recordAudit(ctx context.Context, scope Wor
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	action = strings.TrimSpace(scope.AuditActionPrefix) + action
 	return s.auditRepo.Create(ctx, &models.WorkspaceFileAudit{
 		InstanceID:   scope.InstanceID,
 		UserID:       scope.UserID,

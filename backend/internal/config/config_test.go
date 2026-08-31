@@ -9,12 +9,14 @@ func TestLoadRuntimeDefaults(t *testing.T) {
 	for _, key := range []string{
 		"HERMES_RUNTIME_IMAGE",
 		"OPENCLAW_RUNTIME_IMAGE",
+		"OPENCODE_RUNTIME_IMAGE",
 		"RUNTIME_NAMESPACE",
 		"K8S_NAMESPACE",
 		"HOSTNAME",
 		"PLATFORM_REDIS_URL",
 		"TEAM_REDIS_URL",
 		"RUNTIME_WORKSPACE_NFS_SERVER",
+		"RUNTIME_GATEWAY_START_IN_FLIGHT_LIMIT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -29,6 +31,25 @@ func TestLoadRuntimeDefaults(t *testing.T) {
 	}
 	if got, want := cfg.Runtime.OpenClawImage, "ghcr.io/yuan-lab-llm/agentsruntime/openclaw-lite:latest"; got != want {
 		t.Fatalf("expected OpenClaw default image %q, got %q", want, got)
+	}
+	if got, want := cfg.Runtime.OpenCodeImage, "ghcr.io/yuan-lab-llm/agentsruntime/opencode-lite:latest"; got != want {
+		t.Fatalf("expected OpenCode default image %q, got %q", want, got)
+	}
+	if got, want := cfg.Runtime.GatewayStartInFlightLimit, 32; got != want {
+		t.Fatalf("gateway start in-flight limit = %d, want %d", got, want)
+	}
+}
+
+func TestLoadRuntimeGatewayStartInFlightLimitOverride(t *testing.T) {
+	t.Setenv("RUNTIME_GATEWAY_START_IN_FLIGHT_LIMIT", "100")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if got, want := cfg.Runtime.GatewayStartInFlightLimit, 100; got != want {
+		t.Fatalf("gateway start in-flight limit = %d, want %d", got, want)
 	}
 }
 

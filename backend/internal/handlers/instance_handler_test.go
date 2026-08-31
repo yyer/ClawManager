@@ -1,17 +1,326 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"clawreef/internal/models"
+	"clawreef/internal/repository"
 	"clawreef/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
+
+type blockingBatchInstanceService struct {
+	fakeWorkspaceHandlerInstanceService
+	started chan string
+	release <-chan struct{}
+}
+
+type restartRecordingInstanceService struct {
+	fakeWorkspaceHandlerInstanceService
+	restartCalls        int
+	restartedInstanceID int
+	environment         map[string]string
+	removals            []string
+	restartErr          error
+	environmentNames    []string
+	environmentNamesErr error
+}
+
+func (s *restartRecordingInstanceService) GetEnvironmentOverrideNames(instanceID int) ([]string, error) {
+	return s.environmentNames, s.environmentNamesErr
+}
+
+func (s *restartRecordingInstanceService) RestartWithEnvironment(instanceID int, environmentOverrides map[string]string, environmentOverrideRemovals []string) error {
+	s.restartCalls++
+	s.restartedInstanceID = instanceID
+	s.environment = environmentOverrides
+	s.removals = environmentOverrideRemovals
+	return s.restartErr
+}
+
+func (s *blockingBatchInstanceService) CreatePrevalidated(userID int, req services.CreateInstanceRequest) (*models.Instance, error) {
+	s.started <- req.Name
+	<-s.release
+	return &models.Instance{
+		ID:     len(req.Name),
+		UserID: userID,
+		Name:   req.Name,
+	}, nil
+}
+
+func TestBatchCreateLiteInstancesUsesBoundedConcurrencyAndPreservesOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	release := make(chan struct{})
+	instanceService := &blockingBatchInstanceService{
+		started: make(chan string, 10),
+		release: release,
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/instances/batch/lite",
+		strings.NewReader(`{"name_prefix":"batch-lite","count":6}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{instanceService: instanceService}
+	done := make(chan struct{})
+	go func() {
+		handler.BatchCreateLiteInstances(c)
+		close(done)
+	}()
+
+	for idx := 0; idx < liteBatchCreateConcurrency; idx++ {
+		select {
+		case <-instanceService.started:
+		case <-time.After(time.Second):
+			t.Fatalf("only %d batch workers started", idx)
+		}
+	}
+	select {
+	case name := <-instanceService.started:
+		t.Fatalf("batch concurrency exceeded %d; unexpected start for %q", liteBatchCreateConcurrency, name)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch handler did not finish")
+	}
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+	var payload struct {
+		Data BatchCreateLiteInstancesResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	if payload.Data.Created != 6 || payload.Data.Failed != 0 || len(payload.Data.Results) != 6 {
+		t.Fatalf("unexpected batch response: %#v", payload.Data)
+	}
+	for idx, result := range payload.Data.Results {
+		want := fmt.Sprintf("batch-lite-%03d", idx+1)
+		if result.Name != want {
+			t.Fatalf("result %d name = %q, want %q", idx, result.Name, want)
+		}
+	}
+}
+
+func TestRestartInstanceAcceptsOptionalEnvironmentOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name            string
+		body            string
+		userID          int
+		userRole        string
+		wantStatus      int
+		wantCalls       int
+		wantEnvironment map[string]string
+		wantRemovals    []string
+		restartErr      error
+	}{
+		{
+			name:            "merge environment and restart",
+			body:            `{"environment_overrides":{"SKILL_CACHE_PATH":"/workspace/cache","LOG_LEVEL":"debug"}}`,
+			userID:          7,
+			userRole:        "user",
+			wantStatus:      http.StatusOK,
+			wantCalls:       1,
+			wantEnvironment: map[string]string{"SKILL_CACHE_PATH": "/workspace/cache", "LOG_LEVEL": "debug"},
+		},
+		{
+			name:         "remove environment and restart",
+			body:         `{"environment_override_removals":["OLD_SKILL_TOKEN","LEGACY_MODE"]}`,
+			userID:       7,
+			userRole:     "user",
+			wantStatus:   http.StatusOK,
+			wantCalls:    1,
+			wantRemovals: []string{"OLD_SKILL_TOKEN", "LEGACY_MODE"},
+		},
+		{
+			name:       "empty body keeps plain restart compatible",
+			userID:     7,
+			userRole:   "user",
+			wantStatus: http.StatusOK,
+			wantCalls:  1,
+		},
+		{
+			name:       "other user cannot restart",
+			body:       `{"environment_overrides":{"LOG_LEVEL":"debug"}}`,
+			userID:     8,
+			userRole:   "user",
+			wantStatus: http.StatusForbidden,
+			wantCalls:  0,
+		},
+		{
+			name:       "invalid json is rejected",
+			body:       `{"environment_overrides":`,
+			userID:     7,
+			userRole:   "user",
+			wantStatus: http.StatusBadRequest,
+			wantCalls:  0,
+		},
+		{
+			name:       "service validation is a bad request",
+			body:       `{"environment_overrides":{"INVALID-NAME":"value"}}`,
+			userID:     7,
+			userRole:   "user",
+			wantStatus: http.StatusBadRequest,
+			wantCalls:  1,
+			wantEnvironment: map[string]string{
+				"INVALID-NAME": "value",
+			},
+			restartErr: fmt.Errorf(
+				"%w: invalid environment variable name: INVALID-NAME",
+				services.ErrInvalidEnvironmentOverrides,
+			),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			instanceService := &restartRecordingInstanceService{
+				fakeWorkspaceHandlerInstanceService: fakeWorkspaceHandlerInstanceService{
+					instances: map[int]*models.Instance{
+						42: {ID: 42, UserID: 7, Name: "skill-runtime"},
+					},
+				},
+				restartErr: test.restartErr,
+			}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Params = gin.Params{{Key: "id", Value: "42"}}
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/instances/42/restart", strings.NewReader(test.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("userID", test.userID)
+			c.Set("userRole", test.userRole)
+
+			handler := &InstanceHandler{instanceService: instanceService}
+			handler.RestartInstance(c)
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+			if instanceService.restartCalls != test.wantCalls {
+				t.Fatalf("restart calls = %d, want %d", instanceService.restartCalls, test.wantCalls)
+			}
+			if test.wantCalls == 1 && instanceService.restartedInstanceID != 42 {
+				t.Fatalf("restarted instance id = %d, want 42", instanceService.restartedInstanceID)
+			}
+			if !reflect.DeepEqual(instanceService.environment, test.wantEnvironment) {
+				t.Fatalf("environment = %#v, want %#v", instanceService.environment, test.wantEnvironment)
+			}
+			if !reflect.DeepEqual(instanceService.removals, test.wantRemovals) {
+				t.Fatalf("removals = %#v, want %#v", instanceService.removals, test.wantRemovals)
+			}
+		})
+	}
+}
+
+func TestGetInstanceEnvironmentOverridesReturnsNamesOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		id         string
+		userID     int
+		userRole   string
+		names      []string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "owner receives configured names",
+			id:         "42",
+			userID:     7,
+			userRole:   "user",
+			names:      []string{"LOG_LEVEL", "SKILL_CACHE_PATH"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "other user is forbidden",
+			id:         "42",
+			userID:     8,
+			userRole:   "user",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "invalid instance id",
+			id:         "bad",
+			userID:     7,
+			userRole:   "user",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "service failure",
+			id:         "42",
+			userID:     7,
+			userRole:   "user",
+			serviceErr: fmt.Errorf("failed to decode environment overrides"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			instanceService := &restartRecordingInstanceService{
+				fakeWorkspaceHandlerInstanceService: fakeWorkspaceHandlerInstanceService{
+					instances: map[int]*models.Instance{
+						42: {ID: 42, UserID: 7, Name: "skill-runtime"},
+					},
+				},
+				environmentNames:    test.names,
+				environmentNamesErr: test.serviceErr,
+			}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Params = gin.Params{{Key: "id", Value: test.id}}
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/"+test.id+"/environment-overrides", nil)
+			c.Set("userID", test.userID)
+			c.Set("userRole", test.userRole)
+
+			handler := &InstanceHandler{instanceService: instanceService}
+			handler.GetInstanceEnvironmentOverrides(c)
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+			if test.wantStatus == http.StatusOK {
+				var payload struct {
+					Data struct {
+						Names []string `json:"names"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if !reflect.DeepEqual(payload.Data.Names, test.names) {
+					t.Fatalf("names = %#v, want %#v", payload.Data.Names, test.names)
+				}
+				if strings.Contains(recorder.Body.String(), "secret-value") {
+					t.Fatal("response must not expose environment values")
+				}
+			}
+		})
+	}
+}
 
 func TestWorkspaceArchiveMaxMiB(t *testing.T) {
 	t.Setenv(workspaceArchiveMaxMiBEnv, "")
@@ -150,12 +459,12 @@ func TestShortExternalAccessEntryRedirectTarget(t *testing.T) {
 		want          string
 	}{
 		{
-			name:          "html entry redirects to canonical proxy path",
+			name:          "html entry redirects to shared instance shell",
 			method:        http.MethodGet,
 			requestPath:   "/s/sl_abc123/",
 			code:          "sl_abc123",
 			canonicalPath: "/api/v1/instances/71/proxy/chat/",
-			want:          "/api/v1/instances/71/proxy/chat/",
+			want:          "/share/sl_abc123",
 		},
 		{
 			name:          "entry without trailing slash redirects",
@@ -163,7 +472,7 @@ func TestShortExternalAccessEntryRedirectTarget(t *testing.T) {
 			requestPath:   "/s/sl_abc123",
 			code:          "sl_abc123",
 			canonicalPath: "/api/v1/instances/71/proxy/chat/",
-			want:          "/api/v1/instances/71/proxy/chat/",
+			want:          "/share/sl_abc123",
 		},
 		{
 			name:          "asset path keeps short proxy handling",
@@ -182,12 +491,28 @@ func TestShortExternalAccessEntryRedirectTarget(t *testing.T) {
 			want:          "",
 		},
 		{
-			name:          "target strips accidental token query",
+			name:          "canonical proxy validation does not expose token query",
 			method:        http.MethodGet,
 			requestPath:   "/s/sl_abc123/",
 			code:          "sl_abc123",
 			canonicalPath: "/api/v1/instances/71/proxy/chat/?token=secret",
-			want:          "/api/v1/instances/71/proxy/chat/",
+			want:          "/share/sl_abc123",
+		},
+		{
+			name:          "dedicated runtime origin redirects to shared instance shell",
+			method:        http.MethodGet,
+			requestPath:   "/s/sl_abc123/",
+			code:          "sl_abc123",
+			canonicalPath: "https://deepseek-harness-71.example.test/",
+			want:          "/share/sl_abc123",
+		},
+		{
+			name:          "unsupported absolute scheme does not redirect",
+			method:        http.MethodGet,
+			requestPath:   "/s/sl_abc123/",
+			code:          "sl_abc123",
+			canonicalPath: "file:///tmp/runtime.html",
+			want:          "",
 		},
 	}
 
@@ -224,6 +549,213 @@ func TestRenderShortLinkPasswordForm(t *testing.T) {
 	}
 	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
 		t.Fatalf("content type = %q, want text/html", contentType)
+	}
+}
+
+func TestSharedInstanceSessionIssuesScopedRuntimeAndWorkspaceSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	workspacePath := t.TempDir()
+	instanceService := &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+		77: {
+			ID:            77,
+			UserID:        20,
+			Name:          "shared-openclaw",
+			Type:          "openclaw",
+			Status:        "running",
+			RuntimeType:   services.RuntimeBackendGateway,
+			InstanceMode:  services.InstanceModeLite,
+			WorkspacePath: &workspacePath,
+		},
+	}}
+	accessTokens := services.NewInstanceAccessService()
+	defer accessTokens.Stop()
+	handler := &InstanceHandler{
+		instanceService: instanceService,
+		externalAccessService: &fakeSharedExternalAccessService{access: &models.InstanceExternalAccess{
+			InstanceID:      77,
+			Enabled:         true,
+			AuthMode:        services.ExternalAccessModeShareLink,
+			WorkspaceAccess: services.ExternalWorkspaceAccessWrite,
+		}},
+		accessService: accessTokens,
+		proxyService:  services.NewInstanceProxyService(accessTokens),
+	}
+	router := gin.New()
+	router.GET("/api/v1/shared-instances/:code/session", handler.GetSharedInstanceSession)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	for _, value := range []string{
+		`"workspace_access":"write"`,
+		`"workspace_available":true`,
+		`"csrf_token":"`,
+		`"access_url":"`,
+	} {
+		if !strings.Contains(rec.Body.String(), value) {
+			t.Fatalf("session response missing %q: %s", value, rec.Body.String())
+		}
+	}
+	setCookies := rec.Header().Values("Set-Cookie")
+	joinedCookies := strings.Join(setCookies, "\n")
+	for _, path := range []string{
+		"Path=/api/v1/instances/77/proxy",
+		"Path=/api/v1/shared-instances/sl_test",
+		"Path=/s/sl_test",
+	} {
+		if !strings.Contains(joinedCookies, path) {
+			t.Fatalf("session cookies missing %q:\n%s", path, joinedCookies)
+		}
+	}
+}
+
+func TestSharedDeepSeekHarnessSessionBootstrapsDedicatedRuntimeOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv(
+		"CLAWMANAGER_DEEPSEEK_HARNESS_PUBLIC_URL_TEMPLATE",
+		"https://deepseek-harness-{instance_id}.example.test/",
+	)
+	workspacePath := t.TempDir()
+	instanceService := &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+		78: {
+			ID:            78,
+			UserID:        20,
+			Name:          "shared-deepseek-harness",
+			Type:          services.RuntimeTypeDeepSeekHarness,
+			Status:        "running",
+			RuntimeType:   services.RuntimeBackendGateway,
+			InstanceMode:  services.InstanceModeLite,
+			WorkspacePath: &workspacePath,
+		},
+	}}
+	accessTokens := services.NewInstanceAccessService()
+	defer accessTokens.Stop()
+	handler := &InstanceHandler{
+		instanceService: instanceService,
+		externalAccessService: &fakeSharedExternalAccessService{access: &models.InstanceExternalAccess{
+			InstanceID:      78,
+			Enabled:         true,
+			AuthMode:        services.ExternalAccessModeShareLink,
+			WorkspaceAccess: services.ExternalWorkspaceAccessWrite,
+		}},
+		accessService: accessTokens,
+		proxyService:  services.NewInstanceProxyService(accessTokens),
+	}
+	router := gin.New()
+	router.GET("/api/v1/shared-instances/:code/session", handler.GetSharedInstanceSession)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			AccessURL string `json:"access_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode session response: %v", err)
+	}
+	parsed, err := url.Parse(response.Data.AccessURL)
+	if err != nil {
+		t.Fatalf("parse access URL %q: %v", response.Data.AccessURL, err)
+	}
+	if got, want := parsed.Host, "deepseek-harness-78.example.test"; got != want {
+		t.Fatalf("access URL host = %q, want %q", got, want)
+	}
+	token := parsed.Query().Get("token")
+	if token == "" {
+		t.Fatalf("dedicated runtime access URL is missing bootstrap token: %q", response.Data.AccessURL)
+	}
+	accessToken, err := accessTokens.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("validate bootstrap token: %v", err)
+	}
+	if accessToken.InstanceID != 78 {
+		t.Fatalf("bootstrap token instance ID = %d, want 78", accessToken.InstanceID)
+	}
+	if got, want := accessToken.SessionBinding, sharedExternalAccessSessionBinding("sl_test"); got != want {
+		t.Fatalf("bootstrap token session binding = %q, want %q", got, want)
+	}
+}
+
+func TestSharedInstanceSessionRequiresPasswordEntrySession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	workspacePath := t.TempDir()
+	instanceService := &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+		77: {
+			ID:            77,
+			UserID:        20,
+			Name:          "shared-openclaw",
+			Type:          "openclaw",
+			Status:        "running",
+			RuntimeType:   services.RuntimeBackendGateway,
+			InstanceMode:  services.InstanceModeLite,
+			WorkspacePath: &workspacePath,
+		},
+	}}
+	accessTokens := services.NewInstanceAccessService()
+	defer accessTokens.Stop()
+	handler := &InstanceHandler{
+		instanceService: instanceService,
+		externalAccessService: &fakeSharedExternalAccessService{access: &models.InstanceExternalAccess{
+			InstanceID:      77,
+			Enabled:         true,
+			AuthMode:        services.ExternalAccessModePassword,
+			WorkspaceAccess: services.ExternalWorkspaceAccessWrite,
+		}},
+		accessService: accessTokens,
+		proxyService:  services.NewInstanceProxyService(accessTokens),
+	}
+	router := gin.New()
+	router.GET("/api/v1/shared-instances/:code/session", handler.GetSharedInstanceSession)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s, want 401", rec.Code, rec.Body.String())
+	}
+
+	unboundToken, err := accessTokens.GenerateToken(20, 77, "openclaw", "/api/v1/instances/77/proxy/", "", 3001, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	req.AddCookie(&http.Cookie{Name: shortExternalAccessCookieName("sl_test"), Value: unboundToken.Token})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unbound instance token status = %d, body = %s, want 401", rec.Code, rec.Body.String())
+	}
+
+	boundToken, err := accessTokens.GenerateBoundToken(
+		20,
+		77,
+		"openclaw",
+		"/api/v1/instances/77/proxy/",
+		"",
+		3001,
+		time.Hour,
+		sharedExternalAccessSessionBinding("sl_test"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	req.AddCookie(&http.Cookie{Name: shortExternalAccessCookieName("sl_test"), Value: boundToken.Token})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bound password session status = %d, body = %s, want 200", rec.Code, rec.Body.String())
 	}
 }
 
@@ -269,6 +801,34 @@ func TestProxyAccessTokenRejectsRuntimeQueryTokenWithoutCookie(t *testing.T) {
 	}
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestBrowserAccessEntryURLBootstrapsDedicatedOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		accessURL string
+		proxyURL  string
+		want      string
+	}{
+		{
+			name:      "same origin keeps token out of entry URL",
+			accessURL: "/api/v1/instances/76/proxy/",
+			proxyURL:  "/api/v1/instances/76/proxy/?token=jwt",
+			want:      "/api/v1/instances/76/proxy/",
+		},
+		{
+			name:      "dedicated origin uses token bootstrap URL",
+			accessURL: "https://deepseek-harness-76.example.test/",
+			proxyURL:  "https://deepseek-harness-76.example.test/?token=jwt",
+			want:      "https://deepseek-harness-76.example.test/?token=jwt",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := browserAccessEntryURL(tc.accessURL, tc.proxyURL); got != tc.want {
+				t.Fatalf("browserAccessEntryURL() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -321,5 +881,168 @@ func TestBatchDeleteLiteInstancesRejectsProInstance(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "not a lite instance") {
 		t.Fatalf("response did not explain lite-only rejection: %s", recorder.Body.String())
+	}
+}
+
+type stubSessionUsageObservabilityService struct {
+	usage  *services.InstanceSessionUsageResult
+	detail *services.InstanceSessionUsageDetail
+	err    error
+}
+
+func (s *stubSessionUsageObservabilityService) ListAuditItems(services.AuditQuery) (*services.AuditListResult, error) {
+	return nil, nil
+}
+func (s *stubSessionUsageObservabilityService) GetTraceDetail(string) (*services.AuditTraceDetail, error) {
+	return nil, nil
+}
+func (s *stubSessionUsageObservabilityService) GetCostOverview(services.CostQuery) (*services.CostOverview, error) {
+	return nil, nil
+}
+func (s *stubSessionUsageObservabilityService) GetInstanceSessionUsage(int, services.InstanceSessionUsageQuery) (*services.InstanceSessionUsageResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.usage, nil
+}
+func (s *stubSessionUsageObservabilityService) GetInstanceSessionUsageDetail(int, string, repository.SessionUsageFilter) (*services.InstanceSessionUsageDetail, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.detail == nil {
+		return nil, fmt.Errorf("session usage not found")
+	}
+	return s.detail, nil
+}
+func (s *stubSessionUsageObservabilityService) GetInstanceLLMGovernanceStatus(int, map[string]interface{}) (*services.InstanceLLMGovernanceStatus, error) {
+	return nil, nil
+}
+func (s *stubSessionUsageObservabilityService) GetLLMGovernanceOverview() (*services.LLMGovernanceOverview, error) {
+	return nil, nil
+}
+func (s *stubSessionUsageObservabilityService) GetAdminSessionUsageOverview(services.InstanceSessionUsageOverviewQuery) (*services.InstanceSessionUsageOverview, error) {
+	return nil, nil
+}
+
+func TestGetInstanceSessionUsageReturns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/9/session-usage?page=1&limit=10", nil)
+	c.Params = gin.Params{{Key: "id", Value: "9"}}
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{
+		instanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			9: {ID: 9, UserID: 7, Name: "openclaw-lite", Type: "openclaw"},
+		}},
+		aiObservabilityService: &stubSessionUsageObservabilityService{
+			usage: &services.InstanceSessionUsageResult{
+				Summary: services.InstanceSessionUsageSummary{Currency: "USD"},
+				Items:   []services.InstanceSessionUsageItem{},
+			},
+		},
+	}
+
+	handler.GetInstanceSessionUsage(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "Instance session usage retrieved successfully") {
+		t.Fatalf("unexpected body: %s", recorder.Body.String())
+	}
+}
+
+func TestGetInstanceSessionUsageInvalidSince(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/9/session-usage?since=bad-timestamp", nil)
+	c.Params = gin.Params{{Key: "id", Value: "9"}}
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{
+		instanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			9: {ID: 9, UserID: 7, Name: "openclaw-lite", Type: "openclaw"},
+		}},
+		aiObservabilityService: &stubSessionUsageObservabilityService{},
+	}
+
+	handler.GetInstanceSessionUsage(c)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestGetInstanceSessionUsageRejectsUntilBeforeSince(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/9/session-usage?since=2026-07-10T00:00:00Z&until=2026-07-01T00:00:00Z", nil)
+	c.Params = gin.Params{{Key: "id", Value: "9"}}
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{
+		instanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			9: {ID: 9, UserID: 7, Name: "openclaw-lite", Type: "openclaw"},
+		}},
+		aiObservabilityService: &stubSessionUsageObservabilityService{},
+	}
+
+	handler.GetInstanceSessionUsage(c)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestGetInstanceSessionUsageDetailRequiresSessionID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/9/session-usage/detail", nil)
+	c.Params = gin.Params{{Key: "id", Value: "9"}}
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{
+		instanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			9: {ID: 9, UserID: 7, Name: "openclaw-lite", Type: "openclaw"},
+		}},
+		aiObservabilityService: &stubSessionUsageObservabilityService{},
+	}
+
+	handler.GetInstanceSessionUsageDetail(c)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestGetInstanceSessionUsageDetailNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/instances/9/session-usage/detail?session_id=missing", nil)
+	c.Params = gin.Params{{Key: "id", Value: "9"}}
+	c.Set("userID", 7)
+	c.Set("userRole", "user")
+
+	handler := &InstanceHandler{
+		instanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			9: {ID: 9, UserID: 7, Name: "openclaw-lite", Type: "openclaw"},
+		}},
+		aiObservabilityService: &stubSessionUsageObservabilityService{},
+	}
+
+	handler.GetInstanceSessionUsageDetail(c)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }

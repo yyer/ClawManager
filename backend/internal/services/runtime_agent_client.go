@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,11 +13,17 @@ import (
 	"time"
 )
 
+var (
+	ErrRuntimeAgentConflict = errors.New("runtime agent conflict")
+	ErrRuntimeAgentNotFound = errors.New("runtime agent resource not found")
+)
+
 type RuntimeAgentClient interface {
 	Health(ctx context.Context, endpoint string) error
 	CreateGateway(ctx context.Context, endpoint string, req RuntimeAgentCreateGatewayRequest) (*RuntimeAgentCreateGatewayResponse, error)
 	DeleteGateway(ctx context.Context, endpoint, gatewayID string) error
 	Drain(ctx context.Context, endpoint string) error
+	ResyncInstanceSkills(ctx context.Context, endpoint string, instanceID int, mode string) error
 }
 
 type RuntimeAgentPortRange struct {
@@ -25,6 +32,10 @@ type RuntimeAgentPortRange struct {
 }
 
 type RuntimeAgentCreateGatewayRequest struct {
+	// GatewayPort is the exact primary port allocated by ClawManager. Runtime
+	// agents use PortRange only for backwards-compatible callers that have not
+	// yet been upgraded to control-plane port assignment.
+	GatewayPort   int                   `json:"gateway_port,omitempty"`
 	InstanceID    int                   `json:"instance_id"`
 	UserID        int                   `json:"user_id"`
 	AgentType     string                `json:"agent_type"`
@@ -91,6 +102,19 @@ func (c *runtimeAgentHTTPClient) Drain(ctx context.Context, endpoint string) err
 	return c.do(ctx, http.MethodPost, endpoint, "/v1/drain", map[string]bool{"draining": true}, nil)
 }
 
+func (c *runtimeAgentHTTPClient) ResyncInstanceSkills(ctx context.Context, endpoint string, instanceID int, mode string) error {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "full"
+	}
+	body := map[string]any{
+		"instance_id": instanceID,
+		"mode":        mode,
+		"trigger":     "manual",
+	}
+	return c.do(ctx, http.MethodPost, endpoint, "/v1/skills/resync", body, nil)
+}
+
 func (c *runtimeAgentHTTPClient) do(ctx context.Context, method, endpoint, path string, body any, out any) error {
 	endpoint = strings.TrimRight(endpoint, "/")
 	var reader io.Reader
@@ -119,7 +143,10 @@ func (c *runtimeAgentHTTPClient) do(ctx context.Context, method, endpoint, path 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if resp.StatusCode == http.StatusConflict {
-			return fmt.Errorf("runtime agent conflict: %s", string(msg))
+			return fmt.Errorf("%w: %s", ErrRuntimeAgentConflict, string(msg))
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: %s", ErrRuntimeAgentNotFound, string(msg))
 		}
 		return fmt.Errorf("runtime agent status %d: %s", resp.StatusCode, string(msg))
 	}

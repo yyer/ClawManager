@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MonitorUp } from "lucide-react";
+import { Download, MonitorUp } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import UserLayout from "../../components/UserLayout";
 import { useAuth } from "../../contexts/AuthContext";
@@ -159,7 +159,33 @@ const oldestID = (items: { id: number }[]) =>
 const normalizeEventPayload = (event: TeamEvent) => {
   const payload = event.payload || {};
   const embedded = parseJsonRecord(payload.payload);
-  return embedded ? { ...embedded, ...payload } : payload;
+  const merged = embedded ? { ...embedded, ...payload } : { ...payload };
+  const eventType = String(event.event_type || "").toLowerCase();
+  const eventKind = payloadText(merged, ["eventKind", "event_kind", "kind", "chatKind", "chat_kind"]).toLowerCase();
+  if (eventType === "completion_deferred" || eventKind === "completion_deferred") {
+    for (const key of [
+      "resultMarkdown",
+      "result_markdown",
+      "result",
+      "answer",
+      "completionDraftMarkdown",
+      "completion_draft_markdown",
+      "completionDraftSummary",
+      "completion_draft_summary",
+    ]) {
+      delete merged[key];
+    }
+    for (const stepKey of ["collaborationStep", "collaboration_step"]) {
+      const step = parseJsonRecord(merged[stepKey]);
+      if (!step) continue;
+      const sanitizedStep = { ...step };
+      for (const key of ["content", "result", "resultMarkdown", "result_markdown", "answer"]) {
+        delete sanitizedStep[key];
+      }
+      merged[stepKey] = sanitizedStep;
+    }
+  }
+  return merged;
 };
 
 const payloadText = (
@@ -428,11 +454,11 @@ const teamWorkspaceHeight = (
   }
   switch (detailSize) {
     case "long":
-      return 1220;
+      return 1110;
     case "medium":
-      return 1040;
+      return 945;
     default:
-      return 820;
+      return 740;
   }
 };
 
@@ -513,6 +539,34 @@ const eventTimeMs = (event: TeamEvent) => {
   const ms = value ? new Date(value).getTime() : 0;
   return Number.isFinite(ms) ? ms : 0;
 };
+
+const WorkspaceMarkdownPreview = React.lazy(
+  () => import("../../components/WorkspaceMarkdownPreview"),
+);
+
+const chatEventTimeValue = (
+  event: TeamEvent,
+  payload: Record<string, unknown>,
+) => {
+  if (payloadBool(payload, ["chatOrderTrusted", "chat_order_trusted"]) !== true) {
+    return eventTimeValue(event);
+  }
+  const trustedValue = payloadText(payload, ["chatOrderAt", "chat_order_at"]);
+  return trustedValue && Number.isFinite(new Date(trustedValue).getTime())
+    ? trustedValue
+    : eventTimeValue(event);
+};
+
+const chatEventKind = (payload: Record<string, unknown>) =>
+  payloadText(payload, [
+    "chatBusinessKind",
+    "chat_business_kind",
+    "semanticEventKind",
+    "semantic_event_kind",
+    "eventKind",
+    "event_kind",
+    "kind",
+  ]).toLowerCase();
 
 const collaborationEventType = (
   event: TeamEvent,
@@ -638,10 +692,14 @@ const collaborationContent = (
   eventType = "",
 ) => {
   const eventKind = payloadText(payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
+  if (eventType === "completion_deferred" || eventKind === "completion_deferred") {
+    return (
+      payloadText(payload, ["summary", "diagnostic", "message"]) ||
+      "最终交付正在等待其余任务完成。"
+    );
+  }
   const isBusinessResult =
     isTerminalResultEventType(eventType) ||
-    eventType === "completion_deferred" ||
-    eventKind === "completion_deferred" ||
     payloadBool(payload, ["assignmentResultOnly", "assignment_result_only"]) === true;
   if (isBusinessResult) {
     const fullResult = terminalResultText(payload);
@@ -782,17 +840,16 @@ const isFailedCollaborationItem = (item: CollaborationItem) => {
   }
   const eventType = item.eventType;
   if (eventType !== "task_failed" && eventType !== "message_failed") {
-    return status === "failed" || status === "failure" || status === "error" || status === "blocked";
+    return status === "failed" || status === "failure" || status === "error";
   }
   const content = item.content.toLowerCase();
   if (content.includes("dispatch finished without reply/completion") || content.includes("without reply/completion")) {
     return false;
   }
-  return /error|failed|failure|exception|timeout|forbidden|失败|错误|异常|超时|blocked/.test(content) ||
+  return /error|failed|failure|exception|timeout|forbidden|失败|错误|异常|超时/.test(content) ||
     status === "failed" ||
     status === "failure" ||
-    status === "error" ||
-    status === "blocked";
+    status === "error";
 };
 
 const buildCollaborationGroups = (
@@ -859,6 +916,8 @@ const buildCollaborationGroups = (
       taskByKey.get(taskKey) ||
       (event.task_id ? taskByID.get(event.task_id) : undefined);
     const actor = eventActorKey(event, payload, eventType, from, memberById, existingTask);
+    const chatOccurredAt = chatEventTimeValue(event, payload);
+    const chatTimeMs = chatOccurredAt ? new Date(chatOccurredAt).getTime() : 0;
     const item: CollaborationItem = {
       event,
       payload,
@@ -870,8 +929,8 @@ const buildCollaborationGroups = (
       taskKey,
       taskLabel: taskLabelFromKey(taskKey, event),
       content: collaborationContent(payload, eventType),
-      occurredAt: eventTimeValue(event),
-      timeMs: eventTimeMs(event),
+      occurredAt: chatOccurredAt,
+      timeMs: Number.isFinite(chatTimeMs) ? chatTimeMs : eventTimeMs(event),
     };
     const current = groups.get(taskKey);
     if (current) {
@@ -942,7 +1001,6 @@ const TeamDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [targetMember] = useState("");
-  const [taskTitle] = useState("server-smoke");
   const [taskPrompt, setTaskPrompt] = useState("");
   const [dispatching, setDispatching] = useState(false);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
@@ -1056,28 +1114,40 @@ const TeamDetailPage: React.FC = () => {
     }
   };
 
-  const handlePreviewWorkspacePath = useCallback(
+  const handleOpenWorkspacePath = useCallback(
     async (workspacePath: string) => {
       if (!details?.team.id) {
         return;
       }
-      const relPath = workspaceLinkToRelativePath(workspacePath);
-      if (!relPath || !isPreviewableWorkspacePath(relPath)) {
-        window.alert("当前文件不支持在线预览");
+      const relPath = canonicalizeLegacyPlanWorkspacePath(
+        workspacePath,
+        details.team.id,
+        activeProcessGroup?.task?.id,
+      );
+      const action = workspaceFileAction(relPath);
+      if (!relPath || !action) {
         return;
       }
       try {
-        const result = await teamService.previewWorkspaceFile(details.team.id, relPath);
-        setWorkspacePreview({
-          path: result.path,
-          name: result.name,
-          content: result.content,
-        });
+        if (action === "preview") {
+          const result = await teamService.previewWorkspaceFile(details.team.id, relPath);
+          setWorkspacePreview({
+            path: result.path,
+            name: result.name,
+            content: result.content,
+          });
+          return;
+        }
+        const blob = await teamService.downloadWorkspaceFile(details.team.id, relPath);
+        downloadBlob(blob, workspacePathDownloadName(relPath));
       } catch (err: any) {
-        window.alert(err.response?.data?.error || "预览文件失败");
+        window.alert(
+          err.response?.data?.error ||
+            (action === "preview" ? "预览文件失败" : "下载文件失败"),
+        );
       }
     },
-    [details?.team.id],
+    [activeProcessGroup?.task?.id, details?.team.id],
   );
 
   const handleDownloadWorkspacePreview = useCallback(async () => {
@@ -1101,15 +1171,16 @@ const TeamDetailPage: React.FC = () => {
     try {
       setDispatching(true);
       setDispatchError(null);
-      setSelectedGroupKey(null);
-      await teamService.dispatchTask(teamId, {
+      const dispatchedTask = await teamService.dispatchTask(teamId, {
         target_member_id: targetMember.trim(),
         payload: {
-          title: taskTitle.trim() || "Team task",
+          title: taskPrompt.trim(),
           prompt: taskPrompt.trim(),
           responseLocale: "zh-CN",
         },
       });
+      setLoadedTasks((current) => mergeTasksByLatestState(current, [dispatchedTask]));
+      setSelectedGroupKey(canonicalTaskKey(dispatchedTask.id));
       setTaskPrompt("");
       await loadTeam({ background: true });
     } catch (err: any) {
@@ -1242,7 +1313,7 @@ const TeamDetailPage: React.FC = () => {
                 onSelectGroup={setSelectedGroupKey}
                 sidePanelView={sidePanelView}
                 onSidePanelViewChange={setSidePanelView}
-                onWorkspaceFileOpen={handlePreviewWorkspacePath}
+                onWorkspaceFileOpen={handleOpenWorkspacePath}
               />
             </div>
           </div>
@@ -1269,7 +1340,7 @@ const TeamDetailPage: React.FC = () => {
                 heightClass="h-full"
                 showToggle={false}
                 onDetailSizeChange={setKanbanDetailSize}
-                onWorkspaceFileOpen={handlePreviewWorkspacePath}
+                onWorkspaceFileOpen={handleOpenWorkspacePath}
               />
             )}
           </aside>
@@ -1753,6 +1824,7 @@ function WorkspacePreviewModal({
   onDownload: () => void;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const isMarkdown = isMarkdownWorkspacePath(preview.path || preview.name);
 
   const handleCopy = async () => {
     try {
@@ -1767,7 +1839,7 @@ function WorkspacePreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
-      <div className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Preview</div>
@@ -1797,10 +1869,22 @@ function WorkspacePreviewModal({
             </button>
           </div>
         </div>
-        <div className="min-h-0 overflow-auto bg-slate-50 p-5">
-          <pre className="whitespace-pre-wrap break-words rounded-xl bg-white p-4 text-sm leading-6 text-slate-800 shadow-inner">
-            {preview.content}
-          </pre>
+        <div className="min-h-0 overflow-auto bg-slate-50 p-5 sm:p-6">
+          {isMarkdown ? (
+            <React.Suspense
+              fallback={
+                <div className="flex min-h-48 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm text-slate-500">
+                  正在渲染 Markdown…
+                </div>
+              }
+            >
+              <WorkspaceMarkdownPreview content={preview.content} />
+            </React.Suspense>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words rounded-xl bg-white p-4 text-sm leading-6 text-slate-800 shadow-inner">
+              {preview.content}
+            </pre>
+          )}
         </div>
       </div>
     </div>
@@ -1936,6 +2020,10 @@ function workspaceDownloadName(entry: TeamWorkspaceFileEntry) {
   return entry.type === "directory" ? `${entry.name}.zip` : entry.name;
 }
 
+function workspacePathDownloadName(path: string) {
+  return path.split("/").filter(Boolean).pop() || "team-file";
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1948,7 +2036,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 function workspaceLinkToRelativePath(raw: string) {
-  const normalized = raw.trim().replace(/\\/g, "/").replace(/[，。；;,.、)）\]}]+$/g, "");
+  const normalized = raw.trim().replace(/\\/g, "/").replace(/[，。；：;,:.、)）\]}】》]+$/g, "");
   if (normalized === "/team") {
     return "";
   }
@@ -1966,8 +2054,104 @@ function workspaceLinkToRelativePath(raw: string) {
   return normalized.replace(/^\/+/, "");
 }
 
+function isMarkdownWorkspacePath(path: string) {
+  return /\.(md|markdown|mdown|mkd)$/i.test(path.trim());
+}
+
+function canonicalizeLegacyPlanWorkspacePath(
+  path: string,
+  teamId?: number,
+  taskId?: number,
+) {
+  const normalized = workspaceLinkToRelativePath(path);
+  if (!/^plan\/[^/].+/i.test(normalized) || !teamId || !taskId) {
+    return normalized;
+  }
+  return `results/team-${teamId}-task-${taskId}/${normalized}`;
+}
+
 function isPreviewableWorkspacePath(path: string) {
   return /\.(md|txt|json)$/i.test(path.trim());
+}
+
+type WorkspaceFileAction = "preview" | "download";
+
+const DOWNLOADABLE_WORKSPACE_EXTENSIONS = new Set([
+  "7z",
+  "avi",
+  "bin",
+  "bmp",
+  "csv",
+  "css",
+  "doc",
+  "docx",
+  "gif",
+  "go",
+  "gz",
+  "htm",
+  "html",
+  "ico",
+  "java",
+  "jpeg",
+  "jpg",
+  "js",
+  "jsx",
+  "log",
+  "mov",
+  "mp3",
+  "mp4",
+  "pdf",
+  "png",
+  "ppt",
+  "pptx",
+  "ps1",
+  "py",
+  "rs",
+  "sh",
+  "sql",
+  "svg",
+  "tar",
+  "tgz",
+  "ts",
+  "tsx",
+  "tsv",
+  "wasm",
+  "wav",
+  "webm",
+  "webp",
+  "xls",
+  "xlsx",
+  "xml",
+  "yaml",
+  "yml",
+  "zip",
+]);
+const DOWNLOADABLE_EXTENSIONLESS_WORKSPACE_FILES = new Set([
+  "dockerfile",
+  "license",
+  "makefile",
+]);
+
+function workspaceFileAction(path: string): WorkspaceFileAction | null {
+  const normalized = workspaceLinkToRelativePath(path).trim();
+  if (
+    !normalized ||
+    normalized.endsWith("/") ||
+    /[<>{}*?$]/.test(normalized) ||
+    normalized.includes("[") ||
+    normalized.includes("]")
+  ) {
+    return null;
+  }
+  const filename = normalized.split("/").filter(Boolean).pop() || "";
+  if (isPreviewableWorkspacePath(normalized)) {
+    return "preview";
+  }
+  const extension = filename.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "";
+  return DOWNLOADABLE_WORKSPACE_EXTENSIONS.has(extension) ||
+    DOWNLOADABLE_EXTENSIONLESS_WORKSPACE_FILES.has(filename.toLowerCase())
+    ? "download"
+    : null;
 }
 
 function isTeamWorkspaceLink(path: string) {
@@ -1977,6 +2161,62 @@ function isTeamWorkspaceLink(path: string) {
     /^\.?\/?team\/.+/i.test(normalized) ||
     /^\/workspaces\/teams\/user-\d+\/team-\d+-shared\//i.test(normalized)
   );
+}
+
+const TEAM_CHAT_COMPOSER_HEIGHTS = {
+  compact: 34,
+  medium: 64,
+  expanded: 94,
+} as const;
+
+function resizeTeamChatComposer(composer: HTMLTextAreaElement) {
+  composer.style.height = `${TEAM_CHAT_COMPOSER_HEIGHTS.compact}px`;
+  if (!composer.value) {
+    composer.style.overflowY = "hidden";
+    return;
+  }
+  const contentHeight = composer.scrollHeight;
+  const targetHeight =
+    contentHeight <= TEAM_CHAT_COMPOSER_HEIGHTS.compact + 2
+      ? TEAM_CHAT_COMPOSER_HEIGHTS.compact
+      : contentHeight <= TEAM_CHAT_COMPOSER_HEIGHTS.medium
+        ? TEAM_CHAT_COMPOSER_HEIGHTS.medium
+        : TEAM_CHAT_COMPOSER_HEIGHTS.expanded;
+  composer.style.height = `${targetHeight}px`;
+  composer.style.overflowY =
+    contentHeight > TEAM_CHAT_COMPOSER_HEIGHTS.expanded ? "auto" : "hidden";
+}
+
+function teamArtifactRefsFromPayload(payload: Record<string, unknown>, step?: Record<string, unknown>) {
+  const candidates = [
+    payload.artifactRefs,
+    payload.artifact_refs,
+    step?.artifactRefs,
+    step?.artifact_refs,
+  ];
+  const refs: string[] = [];
+  const seenPaths = new Set<string>();
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+    for (const raw of candidate) {
+      if (typeof raw !== "string") {
+        continue;
+      }
+      const value = raw.trim();
+      if (!value || !isTeamWorkspaceLink(value)) {
+        continue;
+      }
+      const relativePath = workspaceLinkToRelativePath(value);
+      if (!relativePath || seenPaths.has(relativePath)) {
+        continue;
+      }
+      seenPaths.add(relativePath);
+      refs.push(`/team/${relativePath}`);
+    }
+  }
+  return refs;
 }
 
 function formatWorkspaceSize(size: number) {
@@ -2095,6 +2335,23 @@ function CollaborationPanel({
     (member) => !["offline", "deleted", "deleting"].includes(member.status),
   ).length;
   const messageAnchorRefs = useRef(new Map<string, HTMLDivElement | null>());
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) {
+      return;
+    }
+    resizeTeamChatComposer(composer);
+  }, [taskPrompt]);
+  useEffect(() => {
+    const handleResize = () => {
+      if (composerRef.current) {
+        resizeTeamChatComposer(composerRef.current);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   const firstMessageByGroup = useMemo(() => {
     const result = new Map<string, string>();
     for (const message of messages) {
@@ -2227,7 +2484,7 @@ function CollaborationPanel({
         )}
       </div>
 
-      {queryAnchors.length >= 3 && (
+      {queryAnchors.length >= 2 && (
         <QuestionAnchorRail
           groups={queryAnchors}
           activeGroupKey={activeGroupKey}
@@ -2243,8 +2500,16 @@ function CollaborationPanel({
         )}
         <form onSubmit={onDispatch} className="flex items-end gap-2">
           <textarea
+            ref={composerRef}
             value={taskPrompt}
-            onChange={(event) => onTaskPromptChange(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              onTaskPromptChange(value);
+              if (!value) {
+                resizeTeamChatComposer(event.target);
+              }
+            }}
+            onInput={(event) => resizeTeamChatComposer(event.currentTarget)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
@@ -2253,7 +2518,7 @@ function CollaborationPanel({
             }}
             rows={1}
             placeholder="发送消息..."
-            className="max-h-20 min-h-[34px] flex-1 resize-none rounded-full border border-[#d9d9d9] bg-white px-4 py-1.5 text-xs leading-5 text-gray-900 outline-none transition focus:border-[#9ca3af] focus:ring-2 focus:ring-gray-100"
+            className="h-[34px] min-h-[34px] flex-1 resize-none overflow-y-hidden rounded-[18px] border border-[#d9d9d9] bg-white px-4 py-1.5 text-xs leading-5 text-gray-900 outline-none transition-[height,border-color,box-shadow] duration-150 focus:border-[#9ca3af] focus:ring-2 focus:ring-gray-100"
           />
           <button
             type="submit"
@@ -2328,8 +2593,12 @@ function InteractionProcessPanel({
       : processProgress(group, steps, visualStatus, peerRoot)
     : 0;
   const isTerminal = ["succeeded", "failed", "stale"].includes(visualStatus);
-  const statusText = workflowStatusText(group?.task?.workflow_state) || processStatusText(visualStatus);
-  const title = group?.task ? taskTitleText(group.task) : group?.title || "等待任务";
+  const latestRuntimeStatus = group ? latestGroupRuntimeStatus(group) : "";
+  const statusText = isTerminal
+    ? processStatusText(visualStatus)
+    : latestRuntimeStatus === "waiting_completion"
+      ? "等待显式完成确认"
+      : workflowStatusText(group?.task?.workflow_state) || processStatusText(visualStatus);
   const queryText = group?.task
     ? taskPromptText(group.task) || group.title
     : group?.items.find((item) => item.content)?.content || "";
@@ -2415,8 +2684,10 @@ function InteractionProcessPanel({
                 {statusText}
               </span>
             </div>
-            <div className="mt-2 text-sm font-semibold leading-5">{title}</div>
-            <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-600">
+            <div
+              className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-800"
+              title={queryText || undefined}
+            >
               {queryText || "用户提交 query 后，这里会展示拆解、执行和汇总。"}
             </div>
             <div className="mt-1.5 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden text-[10px] leading-4 text-slate-500">
@@ -3011,6 +3282,13 @@ function isProtocolNoiseItem(item: CollaborationItem) {
   const visibleRaw = payloadText(item.payload, ["visibleToChat", "visible_to_chat"]).toLowerCase();
   const explicitlyHidden = ["false", "0", "no", "off"].includes(visibleRaw);
   const chatPolicy = payloadText(item.payload, ["chatPolicy", "chat_policy"]).toLowerCase();
+  const eventKind = chatEventKind(item.payload);
+  if (
+    eventKind === "turn_finished_without_completion" ||
+    eventKind === "assignment_attempt_failed"
+  ) {
+    return true;
+  }
   if (isBusinessChatItem(item)) {
     return false;
   }
@@ -3045,9 +3323,9 @@ function hasMeaningfulChatBody(item: CollaborationItem) {
 }
 
 function isBusinessChatItem(item: CollaborationItem) {
-  const eventKind = payloadText(item.payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
+  const eventKind = chatEventKind(item.payload);
   const businessKinds = new Set([
-    "leader_plan", "worker_plan", "worker_progress", "leader_synthesis", "leader_synthesis_reminder", "leader_decision_reminder",
+    "leader_plan", "leader_progress", "worker_plan", "worker_progress", "leader_synthesis", "leader_synthesis_reminder", "leader_decision_reminder",
     "agent_narrative", "agent_plan", "agent_assignment", "agent_handoff", "agent_progress", "agent_delivery", "agent_review", "agent_synthesis",
     "completion_deferred", "completion_candidate", "completion_validation_warning", "assignment_recovery_started", "assignment_reissued", "assignment_recovery_exhausted",
   ]);
@@ -3171,8 +3449,11 @@ function isTerminalEventType(eventType: string) {
 }
 
 function kanbanColumnForStep(step: ProcessStep, visualStatus: string, steps: ProcessStep[] = []): KanbanColumnKey {
-  if (["succeeded", "success", "completed", "complete", "done", "finished", "ok", "failed", "failure", "error", "blocked", "stale"].includes((step.status || "").toLowerCase())) {
+  if (["succeeded", "success", "completed", "complete", "done", "finished", "ok", "failed", "failure", "error", "stale"].includes((step.status || "").toLowerCase())) {
     return "done";
+  }
+  if (["waiting", "blocked", "waiting_dependency", "waiting_dependencies"].includes((step.status || "").toLowerCase())) {
+    return "doing";
   }
   if (isCompletionEvidenceStep(step, steps) || isFailureEvidenceStep(step)) {
     return "done";
@@ -3212,7 +3493,7 @@ function buildWorkItemKanbanColumns(
     const column: KanbanColumnKey =
       item.status === "succeeded" || item.status === "failed" || item.status === "stale"
         ? "done"
-        : item.status === "running"
+        : item.status === "running" || item.status === "waiting"
           ? "doing"
           : "todo";
     const owner = item.owner_member_id
@@ -3244,11 +3525,11 @@ function buildWorkItemKanbanColumns(
           ? "task_completed"
           : item.status === "failed" || item.status === "stale"
             ? "task_failed"
-            : item.status === "running"
+            : item.status === "running" || item.status === "waiting"
               ? "task_progress"
               : "task_assigned",
       time: new Date(item.updated_at).getTime(),
-      progress: item.status === "succeeded" ? 100 : item.status === "running" ? 50 : undefined,
+      progress: item.status === "succeeded" ? 100 : item.status === "running" ? 50 : item.status === "waiting" ? 35 : undefined,
       statusLabel:
         item.status === "succeeded"
           ? "已完成"
@@ -3256,7 +3537,9 @@ function buildWorkItemKanbanColumns(
             ? "失败"
             : item.status === "stale"
               ? "超时"
-              : item.status === "running"
+              : item.status === "waiting"
+                ? "等待中"
+                : item.status === "running"
                 ? "执行中"
                 : item.status === "dispatched"
                   ? "已分派"
@@ -3582,6 +3865,13 @@ function buildPeerCollaborationModel(
         actorLane.waitingOn = displayMemberName(targetKey, memberByKey, leaderMemberId);
         setLaneCard(actorLane, step, "working", "等待协作", `${actorLane.label} 等待 ${actorLane.waitingOn}`);
       }
+      continue;
+    }
+
+    const stepStatus = (step.status || "").toLowerCase();
+    if (["waiting", "blocked", "waiting_dependency", "waiting_dependencies"].includes(stepStatus) && !isFailureEvidenceStep(step)) {
+      const lane = ensureLane(actorKey);
+      setLaneCard(lane, step, "waiting", "等待中", `${lane.label} 正在等待条件满足`);
       continue;
     }
 
@@ -4364,6 +4654,19 @@ function workflowStatusText(state?: string) {
   }
 }
 
+function latestGroupRuntimeStatus(group: CollaborationGroup) {
+  const latest = [...group.items].sort((left, right) => right.timeMs - left.timeMs)[0];
+  if (!latest) {
+    return "";
+  }
+  return payloadText(latest.payload, [
+    "runtimeStatus",
+    "runtime_status",
+    "availability",
+    "status",
+  ]).toLowerCase();
+}
+
 function peerLaneStatusClass(status: PeerLaneStatus) {
   switch (status) {
     case "done":
@@ -4598,10 +4901,12 @@ type TeamChatMessage = {
   content: string;
   time: number;
   sequence?: number;
-  tone?: "normal" | "leader" | "assignment" | "feedback" | "error";
+  tone?: "normal" | "leader" | "assignment" | "feedback" | "warning" | "error";
   dedupeKey?: string;
   threadKey?: string;
   sortPhase?: number;
+  artifactRefs?: string[];
+  presentationKey?: string;
 };
 
 const TEAM_CHAT_WAIT_DIGEST_MS = 3 * 60 * 1000;
@@ -4877,7 +5182,7 @@ function uniqueRecentHeartbeatActors(
 }
 
 function isUserVisibleProcessItem(item: CollaborationItem) {
-  const eventKind = payloadText(item.payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
+  const eventKind = chatEventKind(item.payload);
   const visibleRaw = payloadText(item.payload, ["visibleToChat", "visible_to_chat"]).toLowerCase();
   const explicitlyHidden = ["false", "0", "no", "off"].includes(visibleRaw);
   const explicitlyVisible = payloadBool(item.payload, ["visibleToChat", "visible_to_chat"]) === true;
@@ -4896,6 +5201,7 @@ function isUserVisibleProcessItem(item: CollaborationItem) {
   }
   const processKinds = new Set([
     "leader_plan",
+    "leader_progress",
     "worker_plan",
     "worker_progress",
     "leader_synthesis",
@@ -4915,7 +5221,7 @@ function isUserVisibleProcessItem(item: CollaborationItem) {
 }
 
 function isAssignmentMonitorDigestItem(item: CollaborationItem) {
-  const eventKind = payloadText(item.payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
+  const eventKind = chatEventKind(item.payload);
   const chatPolicy = payloadText(item.payload, ["chatPolicy", "chat_policy"]).toLowerCase();
   if (["visible", "replaceable", "warning"].includes(chatPolicy)) {
     return false;
@@ -4951,6 +5257,11 @@ function chatMessageFromItem(
   const targetLabel = item.to
     ? displayMemberName(item.to, memberByKey, leaderMemberId)
     : "";
+  const eventKind = chatEventKind(item.payload);
+  const visibleItemContent = normalizeTeamChatVisibleControlText(item.content, item.payload);
+  if (eventKind === "agent_narrative" && item.content.trim() && !visibleItemContent) {
+    return null;
+  }
   const isAssignmentEvent =
     item.eventType === "outbound" ||
     item.eventType === "task_assigned" ||
@@ -4958,11 +5269,10 @@ function chatMessageFromItem(
     item.eventType === "peer_request" ||
     item.eventType === "peer_handoff" ||
     item.eventType === "peer_review_request";
-  const hasContent = Boolean(item.content.trim());
+  const hasContent = Boolean(visibleItemContent.trim());
   const isFeedbackEvent =
     isWorkerToLeaderMessage(senderKey, item.to, leaderMemberId) ||
     isWorkerFeedbackEvent(item, senderKey, leaderMemberId, hasContent);
-  const eventKind = payloadText(item.payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
   const isSystemProcess =
     senderKey === "clawmanager-monitor" ||
     eventKind === "assignment_check_requested" ||
@@ -4974,7 +5284,7 @@ function chatMessageFromItem(
     isAssignmentEvent && !hasContent
       ? assignmentEventFallback(item, senderLabel, targetLabel, isFeedbackEvent)
       : chatFallbackText(item, progress, status);
-  const content = item.content || fallbackContent;
+  const content = visibleItemContent || fallbackContent;
   const isTerminalFeedback = isTerminalFeedbackItem(item, content, isFeedbackEvent);
   return {
     id: `event-${item.event.id}`,
@@ -4993,7 +5303,9 @@ function chatMessageFromItem(
           ? "feedback"
         : item.eventType === "task_failed" || item.eventType === "message_failed" || eventKind === "assignment_recovery_exhausted"
           ? "error"
-          : item.eventType === "completion_deferred" || eventKind === "completion_deferred" || eventKind === "completion_rejected" || eventKind === "completion_needs_confirmation"
+          : item.eventType === "completion_deferred" || eventKind === "completion_deferred"
+            ? "warning"
+          : eventKind === "completion_rejected" || eventKind === "completion_needs_confirmation"
             ? "error"
           : item.eventType.startsWith("peer_")
             ? "assignment"
@@ -5003,7 +5315,29 @@ function chatMessageFromItem(
     dedupeKey: chatItemDedupeKey(item, senderKey, content, isAssignmentEvent, isFeedbackEvent),
     threadKey: item.taskKey,
     sortPhase: chatItemSortPhase(item, isAssignmentEvent, isTerminalFeedback),
+    artifactRefs: teamArtifactRefsFromPayload(item.payload, item.collaborationStep),
+    presentationKey: chatPresentationTurnKey(item, senderKey, content),
   };
+}
+
+function normalizeTeamChatVisibleControlText(
+  content: string,
+  payload: Record<string, unknown>,
+) {
+  const eventKind = String(
+    payload.eventKind ?? payload.event_kind ?? payload.kind ?? "",
+  ).trim().toLowerCase();
+  if (eventKind !== "agent_narrative") {
+    return content;
+  }
+  const value = content.trim();
+  if (!value) {
+    return "";
+  }
+  if (/^NO_REPLY$/i.test(value)) {
+    return "";
+  }
+  return value.replace(/(?:^|\r?\n[\t ]*|\*+)NO_REPLY[\t ]*$/i, "").trim();
 }
 
 function chatItemSortPhase(
@@ -5045,14 +5379,35 @@ const finalFeedbackContentPattern =
   /\bDONE\b|team_complete_task|任务核心结果|完整详细产出|结果已反馈|已完成|执行完成|完成任务/;
 
 function dedupeTeamChatMessages(messages: TeamChatMessage[]) {
+  const mergedMessages: TeamChatMessage[] = [];
+  const presentationIndexes = new Map<string, number>();
+  for (const message of messages) {
+    const candidate: TeamChatMessage = {
+      ...message,
+      artifactRefs: message.artifactRefs ? [...message.artifactRefs] : undefined,
+    };
+    if (candidate.presentationKey) {
+      const existingIndex = presentationIndexes.get(candidate.presentationKey);
+      if (existingIndex !== undefined) {
+        const existing = mergedMessages[existingIndex];
+        existing.artifactRefs = mergeTeamChatArtifactRefs(existing.artifactRefs, candidate.artifactRefs);
+        if ((!existing.tone || existing.tone === "normal") && candidate.tone && candidate.tone !== "normal") {
+          existing.tone = candidate.tone;
+        }
+        continue;
+      }
+      presentationIndexes.set(candidate.presentationKey, mergedMessages.length);
+    }
+    mergedMessages.push(candidate);
+  }
   const lastReplaceable = new Map<string, number>();
-  messages.forEach((message, index) => {
+  mergedMessages.forEach((message, index) => {
     if (message.dedupeKey?.startsWith("replaceable:")) {
       lastReplaceable.set(message.dedupeKey, index);
     }
   });
   const seen = new Set<string>();
-  return messages.filter((message, index) => {
+  return mergedMessages.filter((message, index) => {
     if (!message.dedupeKey) {
       return true;
     }
@@ -5067,6 +5422,48 @@ function dedupeTeamChatMessages(messages: TeamChatMessage[]) {
   });
 }
 
+function chatPresentationTurnKey(
+  item: CollaborationItem,
+  senderKey: string,
+  content: string,
+) {
+  const sourceMessageId = payloadTextDeep(item.payload, [
+    "sourceMessageId",
+    "source_message_id",
+    "inReplyTo",
+    "in_reply_to",
+  ]);
+  const assignmentId = payloadTextDeep(item.payload, [
+    "assignmentId",
+    "assignment_id",
+    "canonicalWorkId",
+    "canonical_work_id",
+    "workId",
+    "work_id",
+  ]);
+  const normalizedContent = normalizeChatIdentityContent(content);
+  if (!sourceMessageId || !normalizedContent) {
+    return undefined;
+  }
+  return `turn:${item.taskKey}:${senderKey}:${assignmentId}:${sourceMessageId}:${chatContentHash(normalizedContent)}`;
+}
+
+function mergeTeamChatArtifactRefs(...groups: Array<string[] | undefined>) {
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const raw of group || []) {
+      const relativePath = workspaceLinkToRelativePath(raw);
+      if (!relativePath || seen.has(relativePath)) {
+        continue;
+      }
+      seen.add(relativePath);
+      refs.push(`/team/${relativePath}`);
+    }
+  }
+  return refs.length > 0 ? refs : undefined;
+}
+
 function chatItemDedupeKey(
   item: CollaborationItem,
   senderKey: string,
@@ -5074,17 +5471,28 @@ function chatItemDedupeKey(
   isAssignmentEvent: boolean,
   isFeedbackEvent: boolean,
 ) {
-  const eventKind = payloadText(item.payload, ["eventKind", "event_kind", "kind"]).toLowerCase();
+  const eventKind = chatEventKind(item.payload);
   const messageId =
     payloadTextDeep(item.payload, ["messageId", "message_id", "inReplyTo", "in_reply_to"]) ||
     item.event.message_id ||
     "";
+  const sourceTurnId =
+    payloadTextDeep(item.payload, ["sourceMessageId", "source_message_id", "inReplyTo", "in_reply_to"]) ||
+    messageId;
   const taskId =
     payloadTextDeep(item.payload, ["rootTaskId", "root_task_id", "taskId", "task_id", "runtimeTaskId"]) ||
     (item.event.task_id ? canonicalTaskKey(item.event.task_id) : item.taskKey);
   const assignmentId =
     payloadTextDeep(item.payload, ["assignmentId", "assignment_id", "workId", "work_id"]);
   const displayKey = payloadTextDeep(item.payload, ["displayKey", "display_key"]);
+  if (item.eventType === "completion_deferred" || eventKind === "completion_deferred") {
+    const completionId =
+      payloadTextDeep(item.payload, ["completionId", "completion_id"]) ||
+      displayKey.replace(/:\d+$/, "");
+    return completionId
+      ? `replaceable:completion-deferred:${completionId}`
+      : `replaceable:completion-deferred:${taskId}:${senderKey}`;
+  }
   // Only root-final/completion display keys represent a singleton business
   // fact. Older worker-plan/progress keys can be shared by different workers
   // when assignmentId was absent, so content identity must win for them.
@@ -5110,19 +5518,23 @@ function chatItemDedupeKey(
     // Result IDs are transport/audit identifiers. Chat de-duplication is based
     // on the actual business content, so a corrected second result remains
     // visible while a re-delivered identical result does not appear twice.
-    return `feedback:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${contentHash}`;
+    return `feedback:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${sourceTurnId}:${contentHash}`;
   }
   if (item.eventType === "task_completed" || item.eventType === "completion" || item.eventType === "reply") {
-    return `feedback:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${contentHash || resultScope || chatContentHash(contentKey)}`;
+    return `feedback:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${sourceTurnId}:${contentHash || resultScope || chatContentHash(contentKey)}`;
   }
   if (isBusinessChatItem(item)) {
-    return `narrative:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${eventKind}:${contentHash}`;
+    return `narrative:${taskId}:${senderKey}:${item.to || ""}:${assignmentId}:${sourceTurnId}:${eventKind}:${contentHash}`;
   }
   return "";
 }
 
 function normalizeChatDedupeContent(content: string) {
   return content.trim().replace(/\s+/g, " ").slice(0, 240);
+}
+
+function normalizeChatIdentityContent(content: string) {
+  return content.trim().replace(/\r\n/g, "\n").replace(/\s+/g, " ");
 }
 
 function chatContentHash(content: string) {
@@ -5251,6 +5663,10 @@ function TeamChatMessageRow({
   message: TeamChatMessage;
   onWorkspaceFileOpen?: (path: string) => void;
 }) {
+  const [artifactsExpanded, setArtifactsExpanded] = useState(false);
+  const artifactRefs = message.artifactRefs || [];
+  const hiddenArtifactCount = Math.max(artifactRefs.length - 5, 0);
+  const visibleArtifactRefs = artifactsExpanded ? artifactRefs : artifactRefs.slice(0, 5);
   const bubbleClass =
     message.tone === "assignment"
       ? "relative overflow-hidden border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50 text-gray-950 shadow-[0_14px_28px_-22px_rgba(180,83,9,0.8)]"
@@ -5258,6 +5674,8 @@ function TeamChatMessageRow({
       ? "relative overflow-hidden border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-green-50 text-gray-950 shadow-[0_14px_28px_-22px_rgba(5,150,105,0.55)]"
       : message.tone === "error"
       ? "border border-red-100 bg-red-50 text-red-800"
+      : message.tone === "warning"
+      ? "border border-amber-200 bg-amber-50 text-amber-900"
       : "bg-white text-gray-950";
   const isAssignment = message.tone === "assignment";
   const isFeedback = message.tone === "feedback";
@@ -5289,6 +5707,53 @@ function TeamChatMessageRow({
             compact
             onWorkspaceFileOpen={onWorkspaceFileOpen}
           />
+          {artifactRefs.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
+              {visibleArtifactRefs.map((artifactRef) => {
+                const relativePath = workspaceLinkToRelativePath(artifactRef);
+                const action = workspaceFileAction(relativePath);
+                if (!action) {
+                  return (
+                    <span
+                      key={artifactRef}
+                      title="共享目录或路径模板"
+                      className="inline-flex max-w-full items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500"
+                    >
+                      <span className="truncate">{artifactRef}</span>
+                    </span>
+                  );
+                }
+                const previewable = action === "preview";
+                return (
+                  <button
+                    key={artifactRef}
+                    type="button"
+                    disabled={!onWorkspaceFileOpen}
+                    onClick={() => onWorkspaceFileOpen?.(artifactRef)}
+                    title={previewable ? `预览 ${artifactRef}` : `下载 ${artifactRef}`}
+                    className={`inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] font-medium transition disabled:cursor-default disabled:opacity-60 ${
+                      previewable
+                        ? "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                        : "border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="truncate">{artifactRef}</span>
+                    {!previewable && <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+              {hiddenArtifactCount > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={artifactsExpanded}
+                  onClick={() => setArtifactsExpanded((current) => !current)}
+                  className="inline-flex items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:border-slate-400 hover:bg-slate-100"
+                >
+                  {artifactsExpanded ? "收起文件" : `展开其余 ${hiddenArtifactCount} 个文件`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -5547,7 +6012,7 @@ function renderInlineMarkdown(
   onWorkspaceFileOpen?: (path: string) => void,
 ) {
   const nodes: React.ReactNode[] = [];
-  const pattern = /(`[^`]+`|\/workspaces\/teams\/user-\d+\/team-\d+-shared\/[^\s`<>"')\]}]+|\/team\/[^\s`<>"')\]}]+|\.?\/?team\/[^\s`<>"')\]}]+|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  const pattern = /(`[^`]+`|\/workspaces\/teams\/user-\d+\/team-\d+-shared\/[^\s`<>"')\]}，。；：、】【》]+|\/team\/[^\s`<>"')\]}，。；：、】【》]+|\.?\/?team\/[^\s`<>"')\]}，。；：、】【》]+|\*\*[^*]+\*\*|\*[^*]+\*)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
@@ -5559,19 +6024,23 @@ function renderInlineMarkdown(
     if (token.startsWith("`")) {
       const codeValue = token.slice(1, -1);
       const workspacePath = workspaceLinkToRelativePath(codeValue);
-      if (
-        onWorkspaceFileOpen &&
-        isTeamWorkspaceLink(codeValue) &&
-        isPreviewableWorkspacePath(workspacePath)
-      ) {
+      const workspaceAction = workspaceFileAction(workspacePath);
+      if (onWorkspaceFileOpen && isTeamWorkspaceLink(codeValue) && workspaceAction) {
+        const previewable = workspaceAction === "preview";
         nodes.push(
           <button
             key={key}
             type="button"
             onClick={() => onWorkspaceFileOpen(codeValue)}
-            className="rounded bg-cyan-50 px-1 py-0.5 font-mono text-xs font-semibold text-cyan-700 underline decoration-cyan-300 underline-offset-2 hover:bg-cyan-100"
+            title={previewable ? `预览 ${codeValue}` : `下载 ${codeValue}`}
+            className={`inline-flex max-w-full items-center gap-1 rounded px-1 py-0.5 align-middle font-mono text-xs font-semibold underline underline-offset-2 transition ${
+              previewable
+                ? "bg-cyan-50 text-cyan-700 decoration-cyan-300 hover:bg-cyan-100"
+                : "bg-slate-100 text-slate-700 decoration-slate-300 hover:bg-slate-200"
+            }`}
           >
-            {codeValue}
+            <span className="break-all">{codeValue}</span>
+            {!previewable && <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
           </button>,
         );
       } else {
@@ -5582,25 +6051,40 @@ function renderInlineMarkdown(
         );
       }
     } else if (isTeamWorkspaceLink(token)) {
-      const displayToken = token.replace(/[，。；;,.、)）\]}]+$/g, "");
+      const displayToken = token.replace(/[，。；：;,:.、)）\]}】》]+$/g, "");
       const suffix = token.slice(displayToken.length);
       const workspacePath = workspaceLinkToRelativePath(displayToken);
-      if (onWorkspaceFileOpen && isPreviewableWorkspacePath(workspacePath)) {
+      const workspaceAction = workspaceFileAction(workspacePath);
+      if (onWorkspaceFileOpen && workspaceAction) {
+        const previewable = workspaceAction === "preview";
         nodes.push(
           <button
             key={key}
             type="button"
             onClick={() => onWorkspaceFileOpen(displayToken)}
-            className="rounded-md bg-cyan-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-cyan-700 underline decoration-cyan-300 underline-offset-2 hover:bg-cyan-100"
+            title={previewable ? `预览 ${displayToken}` : `下载 ${displayToken}`}
+            className={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 align-middle font-mono text-xs font-semibold underline underline-offset-2 transition ${
+              previewable
+                ? "bg-cyan-50 text-cyan-700 decoration-cyan-300 hover:bg-cyan-100"
+                : "bg-slate-100 text-slate-700 decoration-slate-300 hover:bg-slate-200"
+            }`}
           >
-            {displayToken}
+            <span className="break-all">{displayToken}</span>
+            {!previewable && <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
           </button>,
         );
         if (suffix) {
           nodes.push(suffix);
         }
       } else {
-        nodes.push(token);
+        nodes.push(
+          <code key={key} className="rounded bg-white px-1 py-0.5 font-mono text-xs text-gray-700">
+            {displayToken}
+          </code>,
+        );
+        if (suffix) {
+          nodes.push(suffix);
+        }
       }
     } else if (token.startsWith("**")) {
       nodes.push(
