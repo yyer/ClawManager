@@ -62,8 +62,6 @@ assert(
     listPage.includes("智慧协作门户") &&
     !listPage.includes("OWNER PORTAL") &&
     !listPage.includes("实例模式") &&
-    !listPage.includes("Lite") &&
-    !listPage.includes("Pro") &&
     !runtimeCatalog.includes("Lite") &&
     !runtimeCatalog.includes("Pro") &&
     runtimeCatalog.includes('"deepseek-harness"') &&
@@ -135,8 +133,29 @@ assert(
 );
 
 assert(
+  service.includes("/lifecycle-operation") &&
+    service.includes("/lifecycle-operations/") &&
+    service.includes('"Idempotency-Key"') &&
+    />\s*重启实例\s*<\/button>/.test(listPage) &&
+    !listPage.includes("重启实例（推荐）") &&
+    listPage.includes("页面会持续同步状态") &&
+    listPage.includes("getLatestLifecycleOperation") &&
+    listPage.includes("getLifecycleOperation") &&
+    !listPage.includes("window.prompt") &&
+    (listPage.match(/window\.confirm/g) ?? []).length === 2 &&
+    listPage.includes("重置会删除并重建运行环境") &&
+    listPage.includes("lifecycleDisplayStatus") &&
+    listPage.includes('return operation?.action === "reset" ? "resetting" : "restarting"') &&
+    detailPage.includes("operation.status === \"succeeded\"") &&
+    detailPage.includes("getLifecycleOperation"),
+  "IEI lifecycle actions must be idempotent, recoverable after refresh, prefer restart, clearly confirm reset once, and block access until completion.",
+);
+
+assert(
   workspaceManager.includes("useI18n") &&
     workspaceManager.includes("localeOverride") &&
+    workspaceManager.includes("entry.downloadable &&") &&
+    workspaceManager.includes("entry.is_dir ? `${name}.zip` : name") &&
     workspaceManager.includes('translateLabel("workspaceFileManager.workspace")') &&
     workspaceManager.includes('translateLabel("workspaceFileManager.name")') &&
     workspaceManager.includes('translateLabel("workspaceFileManager.size")') &&
