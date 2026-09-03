@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +22,9 @@ import (
 	"clawreef/internal/services/k8s"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // InstanceService defines the interface for instance operations
@@ -2125,10 +2128,268 @@ func (s *instanceService) Restart(instanceID int) error {
 }
 
 // InstanceResetService is deliberately separate from InstanceService so that
-// consumers must opt in to the destructive-looking rebuild operation. The
-// implementation preserves the instance record and its managed workspace PVC.
+// consumers must opt in to the destructive factory reset operation.
 type InstanceResetService interface {
 	Reset(instanceID int) error
+}
+
+// InstanceReplacementResetService implements a factory reset by provisioning a
+// clean instance first. The source remains untouched until the replacement is
+// healthy, which makes reset safe for already-broken runtimes as well.
+type InstanceReplacementResetService interface {
+	CreateResetReplacement(sourceInstanceID int, operationID string) (*models.Instance, error)
+	FinalizeResetReplacement(sourceInstanceID, replacementInstanceID int) (cleanupPending bool, warning string, err error)
+	DiscardResetReplacement(replacementInstanceID int) error
+}
+
+const (
+	factoryResetStagingOwner    = "factory-reset-staging@clawmanager.local"
+	factoryResetQuarantineOwner = "admin@clawmanager.local"
+)
+
+func factoryResetStagingName(sourceID int, operationID string) string {
+	suffix := strings.TrimPrefix(strings.TrimSpace(operationID), "op_")
+	if len(suffix) > 12 {
+		suffix = suffix[len(suffix)-12:]
+	}
+	if suffix == "" {
+		suffix = strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return fmt.Sprintf("reset-%d-%s", sourceID, suffix)
+}
+
+func factoryResetQuarantineName(sourceID int) string {
+	return fmt.Sprintf("cleanup-pending-%d", sourceID)
+}
+
+func factoryResetString(value string) *string { return &value }
+
+// CreateResetReplacement deliberately uses the normal instance provisioning
+// path and current system image selection. It copies only deployment shape;
+// workspace contents, runtime-local configuration, tokens and snapshots are
+// never copied from the source.
+func (s *instanceService) CreateResetReplacement(sourceInstanceID int, operationID string) (*models.Instance, error) {
+	source, err := s.GetByID(sourceInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load factory-reset source: %w", err)
+	}
+	if source == nil {
+		return nil, fmt.Errorf("factory-reset source instance not found")
+	}
+	req, err := resetReplacementCreateRequest(source, operationID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Replacement is a one-for-one internal operation. The staging name avoids
+	// a duplicate-name conflict; user quota is not charged twice while both
+	// records coexist. Global mode capacity and runtime validation still apply.
+	replacement, err := s.create(source.UserID, req, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to provision clean replacement: %w", err)
+	}
+	return replacement, nil
+}
+
+func resetReplacementCreateRequest(source *models.Instance, operationID string) (CreateInstanceRequest, error) {
+	if source == nil {
+		return CreateInstanceRequest{}, fmt.Errorf("factory-reset source instance not found")
+	}
+	mode, ok := NormalizeInstanceMode(source.InstanceMode)
+	if !ok || (mode != InstanceModeLite && mode != InstanceModePro) {
+		return CreateInstanceRequest{}, fmt.Errorf("factory reset is supported only for managed Lite and Pro instances")
+	}
+	if mode == InstanceModeLite {
+		if _, ok := v2RuntimeTypeForInstance(source); !ok {
+			return CreateInstanceRequest{}, fmt.Errorf("factory-reset source is not a managed Lite runtime")
+		}
+	} else if !instanceUsesDesktopRuntime(source) {
+		return CreateInstanceRequest{}, fmt.Errorf("factory-reset source is not a managed Pro desktop runtime")
+	}
+
+	stagingOwner := factoryResetStagingOwner
+	return CreateInstanceRequest{
+		Name:                    factoryResetStagingName(source.ID, operationID),
+		Owner:                   &stagingOwner,
+		Description:             source.Description,
+		Type:                    source.Type,
+		RuntimeVariant:          source.RuntimeVariant,
+		Mode:                    mode,
+		InstanceMode:            mode,
+		RuntimeType:             source.RuntimeType,
+		DesktopStreamProfile:    source.DesktopStreamProfile,
+		CPUCores:                source.CPUCores,
+		MemoryGB:                source.MemoryGB,
+		DiskGB:                  source.DiskGB,
+		GPUEnabled:              source.GPUEnabled,
+		GPUCount:                source.GPUCount,
+		OSType:                  source.OSType,
+		OSVersion:               source.OSVersion,
+		StorageClass:            source.StorageClass,
+		ProvisioningOperationID: "reset_" + strings.TrimSpace(operationID),
+	}, nil
+}
+
+// FinalizeResetReplacement atomically hides the source and exposes the healthy
+// replacement before attempting destructive cleanup. Cleanup failure therefore
+// cannot take the newly delivered instance away from the user.
+func (s *instanceService) FinalizeResetReplacement(sourceInstanceID, replacementInstanceID int) (bool, string, error) {
+	ctx := context.Background()
+	replacement, err := s.instanceRepo.GetByID(replacementInstanceID)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to reload factory-reset replacement: %w", err)
+	}
+	if replacement == nil || strings.ToLower(strings.TrimSpace(replacement.Status)) != "running" {
+		return false, "", fmt.Errorf("factory-reset replacement is not running")
+	}
+	source, err := s.instanceRepo.GetByID(sourceInstanceID)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to reload factory-reset source: %w", err)
+	}
+	if source == nil {
+		// The old row is deleted only after a successful atomic cutover. If the
+		// worker stopped before it could persist operation success, a retry must
+		// treat the already-promoted replacement as success instead of failing or
+		// trying to discard the user's new instance.
+		return false, "", nil
+	}
+	stagingNamePrefix := fmt.Sprintf("reset-%d-", sourceInstanceID)
+	quarantineName := factoryResetQuarantineName(source.ID)
+	alreadyPromoted := source.Owner != nil &&
+		strings.EqualFold(strings.TrimSpace(*source.Owner), factoryResetQuarantineOwner) &&
+		source.Name == quarantineName
+
+	if alreadyPromoted {
+		if replacement.Owner == nil || strings.TrimSpace(*replacement.Owner) == "" || strings.HasPrefix(replacement.Name, stagingNamePrefix) {
+			return false, "", fmt.Errorf("factory-reset replacement cutover state is inconsistent")
+		}
+		// The network-policy name for Pro instances includes the original
+		// instance name. After cutover that name lives on the replacement.
+		source.Name = replacement.Name
+	} else {
+		if source.Owner == nil || strings.TrimSpace(*source.Owner) == "" {
+			return false, "", fmt.Errorf("factory-reset source identity is unavailable")
+		}
+		originalOwner := strings.TrimSpace(*source.Owner)
+		originalName := source.Name
+
+		promoter, ok := s.instanceRepo.(repository.InstanceResetReplacementRepository)
+		if !ok {
+			return false, "", fmt.Errorf("instance repository does not support replacement reset")
+		}
+		reason := fmt.Sprintf("factory-reset source replaced by instance %d; cleanup pending", replacement.ID)
+		if err := promoter.PromoteResetReplacement(
+			ctx,
+			source.ID,
+			replacement.ID,
+			originalOwner,
+			originalName,
+			factoryResetQuarantineOwner,
+			quarantineName,
+			reason,
+		); err != nil {
+			return false, "", err
+		}
+
+		replacement.Owner = factoryResetString(originalOwner)
+		replacement.Name = originalName
+	}
+
+	// Keep source.Name unchanged for resource cleanup: Pro network-policy names
+	// include it. Broadcast a copy carrying the quarantined database identity.
+	quarantinedSource := *source
+	quarantinedSource.Owner = factoryResetString(factoryResetQuarantineOwner)
+	quarantinedSource.Name = quarantineName
+	quarantinedSource.Status = "stopped"
+	GetHub().BroadcastInstanceStatus(source.UserID, &quarantinedSource)
+	GetHub().BroadcastInstanceStatus(replacement.UserID, replacement)
+
+	if err := s.cleanupResetSource(ctx, source); err != nil {
+		warning := fmt.Sprintf("New instance is ready; old instance %d cleanup requires administrator attention: %v", source.ID, err)
+		return true, warning, nil
+	}
+	return false, "", nil
+}
+
+// DiscardResetReplacement is used only before owner cutover. The source is not
+// touched even when cleanup of a failed staging instance needs admin follow-up.
+func (s *instanceService) DiscardResetReplacement(replacementInstanceID int) error {
+	ctx := context.Background()
+	replacement, err := s.instanceRepo.GetByID(replacementInstanceID)
+	if err != nil || replacement == nil {
+		return err
+	}
+	replacement.Owner = factoryResetString(factoryResetQuarantineOwner)
+	replacement.Status = "stopped"
+	replacement.UpdatedAt = time.Now().UTC()
+	if err := s.instanceRepo.Update(replacement); err != nil {
+		return err
+	}
+	return s.cleanupResetSource(ctx, replacement)
+}
+
+func (s *instanceService) cleanupResetSource(ctx context.Context, instance *models.Instance) error {
+	if instance == nil {
+		return fmt.Errorf("factory-reset cleanup instance is missing")
+	}
+	if runtimeType, ok := v2RuntimeTypeForInstance(instance); ok {
+		if err := s.cleanupV2GatewayBinding(ctx, instance); err != nil {
+			return err
+		}
+		if err := s.eraseV2Workspace(instance, runtimeType); err != nil {
+			return err
+		}
+	} else {
+		if s.deploymentService == nil || s.pvcService == nil {
+			return fmt.Errorf("Pro cleanup services are not configured")
+		}
+		pvcName := instancePVCName(instance, s.pvcService.GetClient())
+		oldPVName := ""
+		if pvc, err := s.pvcService.GetPVCByName(ctx, instance.UserID, pvcName); err == nil && pvc != nil {
+			oldPVName = strings.TrimSpace(pvc.Spec.VolumeName)
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to inspect old Pro workspace: %w", err)
+		}
+		if err := s.deploymentService.DeleteDeployment(ctx, instance.UserID, instance.ID); err != nil {
+			return fmt.Errorf("failed to delete old Pro deployment: %w", err)
+		}
+		if err := s.deploymentService.WaitForDeploymentPodsDeleted(ctx, instance.UserID, instance.ID); err != nil {
+			return fmt.Errorf("failed waiting for old Pro pods: %w", err)
+		}
+		if s.serviceService != nil {
+			if err := s.serviceService.DeleteService(ctx, instance.UserID, instance.ID); err != nil {
+				return fmt.Errorf("failed to delete old Pro service: %w", err)
+			}
+		}
+		if s.networkPolicyService != nil {
+			if err := s.networkPolicyService.DeletePolicy(ctx, instance.UserID, instance.ID, instance.Name); err != nil {
+				return fmt.Errorf("failed to delete old Pro network policy: %w", err)
+			}
+		}
+		if err := s.pvcService.DeletePVCByName(ctx, instance.UserID, instance.ID, pvcName); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete old Pro workspace: %w", err)
+		}
+		if err := s.pvcService.WaitForPVCDeleted(ctx, instance.UserID, pvcName, 0); err != nil {
+			return err
+		}
+		if oldPVName != "" {
+			if err := s.pvcService.WaitForPVDeleted(ctx, oldPVName, 0); err != nil {
+				return err
+			}
+		}
+		// Remove non-persistent labelled leftovers after the data-bearing
+		// resources have been synchronously verified as deleted.
+		if cleanup := k8s.NewCleanupService(); cleanup != nil {
+			_ = cleanup.DeleteAllInstanceResources(ctx, instance.UserID, instance.ID)
+		}
+	}
+	if err := s.resetInstanceRuntimeData(ctx, instance); err != nil {
+		return err
+	}
+	if err := s.instanceRepo.Delete(instance.ID); err != nil {
+		return fmt.Errorf("failed to delete old factory-reset record: %w", err)
+	}
+	return nil
 }
 
 // InstanceLifecycleFailureService lets an asynchronous lifecycle worker turn a
@@ -2138,10 +2399,9 @@ type InstanceLifecycleFailureService interface {
 	MarkLifecycleFailure(instanceID int) error
 }
 
-// Reset rebuilds only the ephemeral runtime while preserving the instance
-// record and its managed persistent storage. It must never call Delete or the
-// broad Kubernetes cleanup service because those paths intentionally remove
-// PVCs and instance metadata.
+// Reset preserves the instance identity but permanently replaces its runtime
+// workspace and clears instance-local runtime state. Callers must obtain an
+// explicit data-loss confirmation before invoking this service.
 func (s *instanceService) Reset(instanceID int) error {
 	ctx := context.Background()
 	instance, err := s.instanceRepo.GetByID(instanceID)
@@ -2152,16 +2412,29 @@ func (s *instanceService) Reset(instanceID int) error {
 		return fmt.Errorf("instance not found")
 	}
 
-	// A Lite instance is already an ephemeral gateway process inside a shared
-	// Runtime Pod. Restart deletes that gateway/binding, advances generation and
-	// lets the scheduler recreate it against the same workspace path.
-	if _, ok := v2RuntimeTypeForInstance(instance); ok {
+	if runtimeType, ok := v2RuntimeTypeForInstance(instance); ok {
 		if err := s.claimReset(instanceID); err != nil {
 			return err
 		}
-		if err := s.Restart(instanceID); err != nil {
+		if err := s.cleanupV2GatewayBinding(ctx, instance); err != nil {
+			s.markResetError(instanceID)
+			return fmt.Errorf("failed to stop existing Lite runtime: %w", err)
+		}
+		if err := s.resetV2Workspace(instance, runtimeType); err != nil {
 			s.markResetError(instanceID)
 			return err
+		}
+		if err := s.resetInstanceRuntimeData(ctx, instance); err != nil {
+			s.markResetError(instanceID)
+			return err
+		}
+		if err := s.prepareFreshRuntimeCredentials(instance); err != nil {
+			s.markResetError(instanceID)
+			return err
+		}
+		if err := s.Start(instanceID); err != nil {
+			s.markResetError(instanceID)
+			return fmt.Errorf("failed to create fresh Lite runtime: %w", err)
 		}
 		return nil
 	}
@@ -2173,14 +2446,25 @@ func (s *instanceService) Reset(instanceID int) error {
 	}
 
 	pvcName := instancePVCName(instance, s.pvcService.GetClient())
+	var oldPVCUID types.UID
+	oldPVName := ""
+	storageClass := strings.TrimSpace(instance.StorageClass)
 	pvc, err := s.pvcService.GetPVCByName(ctx, instance.UserID, pvcName)
-	if err != nil {
+	if err == nil {
+		if pvc.Status.Phase != corev1.ClaimBound || strings.TrimSpace(pvc.Spec.VolumeName) == "" {
+			return fmt.Errorf("persistent workspace is not bound; runtime was not changed")
+		}
+		if err := s.pvcService.ValidatePVCDataDeletionPolicy(ctx, pvc); err != nil {
+			return fmt.Errorf("persistent workspace cannot be safely erased: %w", err)
+		}
+		oldPVCUID = pvc.UID
+		oldPVName = strings.TrimSpace(pvc.Spec.VolumeName)
+		if pvc.Spec.StorageClassName != nil && strings.TrimSpace(*pvc.Spec.StorageClassName) != "" {
+			storageClass = strings.TrimSpace(*pvc.Spec.StorageClassName)
+		}
+	} else if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("persistent workspace is unavailable; runtime was not changed: %w", err)
 	}
-	if pvc.Status.Phase != corev1.ClaimBound || strings.TrimSpace(pvc.Spec.VolumeName) == "" {
-		return fmt.Errorf("persistent workspace is not bound; runtime was not changed")
-	}
-	pvcUID := pvc.UID
 	if err := s.claimReset(instanceID); err != nil {
 		return err
 	}
@@ -2194,45 +2478,124 @@ func (s *instanceService) Reset(instanceID int) error {
 		return fmt.Errorf("failed waiting for runtime pods to stop: %w", err)
 	}
 
-	// Re-check the exact claim before creating a replacement workload. A missing
-	// or replaced claim is a hard safety failure: do not start against a new or
-	// empty volume under the old instance identity.
-	currentPVC, err := s.pvcService.GetPVCByName(ctx, instance.UserID, pvcName)
-	if err != nil || currentPVC.UID != pvcUID || currentPVC.Status.Phase != corev1.ClaimBound {
-		message := "persistent workspace changed during reset; replacement runtime was not started"
-		instance.Status = "error"
-		instance.UpdatedAt = time.Now()
-		_ = s.instanceRepo.Update(instance)
-		return errors.New(message)
+	if pvc != nil {
+		if err := s.pvcService.DeletePVCByName(ctx, instance.UserID, instance.ID, pvcName); err != nil {
+			s.markResetError(instanceID)
+			return fmt.Errorf("failed to erase persistent workspace: %w", err)
+		}
+		if err := s.pvcService.WaitForPVCDeleted(ctx, instance.UserID, pvcName, 0); err != nil {
+			s.markResetError(instanceID)
+			return err
+		}
+		if err := s.pvcService.WaitForPVDeleted(ctx, oldPVName, 0); err != nil {
+			s.markResetError(instanceID)
+			return err
+		}
 	}
+	replacementPVC, err := s.pvcService.CreatePVC(ctx, instance.UserID, instance.ID, instance.DiskGB, storageClass)
+	if err != nil {
+		s.markResetError(instanceID)
+		return fmt.Errorf("failed to create fresh persistent workspace: %w", err)
+	}
+	if replacementPVC == nil || strings.TrimSpace(replacementPVC.Name) != pvcName {
+		s.markResetError(instanceID)
+		return fmt.Errorf("fresh persistent workspace name does not match instance record")
+	}
+	boundPVC, err := s.pvcService.WaitForPVCBoundByName(ctx, instance.UserID, pvcName, 0)
+	if err != nil {
+		s.markResetError(instanceID)
+		return fmt.Errorf("fresh persistent workspace did not become ready: %w", err)
+	}
+	if oldPVCUID != "" && boundPVC.UID == oldPVCUID {
+		s.markResetError(instanceID)
+		return fmt.Errorf("persistent workspace was not replaced")
+	}
+	if err := s.resetInstanceRuntimeData(ctx, instance); err != nil {
+		s.markResetError(instanceID)
+		return err
+	}
+	if err := s.prepareFreshRuntimeCredentials(instance); err != nil {
+		s.markResetError(instanceID)
+		return err
+	}
+	if err := s.Start(instanceID); err != nil {
+		s.markResetError(instanceID)
+		return fmt.Errorf("failed to create fresh Pro runtime: %w", err)
+	}
+	return nil
+}
 
-	now := time.Now()
+func (s *instanceService) resetV2Workspace(instance *models.Instance, runtimeType string) error {
+	if err := s.eraseV2Workspace(instance, runtimeType); err != nil {
+		return err
+	}
+	root := filepath.Clean(s.runtimeWorkspaceRoot())
+	expected := filepath.Clean(RuntimeWorkspacePathWithRoot(root, runtimeType, instance.UserID, instance.ID))
+	created, err := ensureRuntimeWorkspaceDirectories(root, runtimeType, instance.UserID, instance.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create fresh Lite workspace: %w", err)
+	}
+	if filepath.Clean(created) != expected {
+		return fmt.Errorf("fresh Lite workspace path does not match instance record")
+	}
+	return nil
+}
+
+func (s *instanceService) eraseV2Workspace(instance *models.Instance, runtimeType string) error {
+	if instance == nil || instance.WorkspacePath == nil {
+		return fmt.Errorf("Lite workspace path is missing")
+	}
+	root := filepath.Clean(s.runtimeWorkspaceRoot())
+	expected := filepath.Clean(RuntimeWorkspacePathWithRoot(root, runtimeType, instance.UserID, instance.ID))
+	actual := filepath.Clean(strings.TrimSpace(*instance.WorkspacePath))
+	if actual == "." || actual == root || actual != expected || !isPathWithin(root, actual) {
+		return fmt.Errorf("Lite workspace path failed factory-reset safety validation")
+	}
+	if info, err := os.Lstat(actual); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("Lite workspace path must not be a symbolic link")
+		}
+		resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+		resolvedParent, parentErr := filepath.EvalSymlinks(filepath.Dir(actual))
+		if rootErr != nil || parentErr != nil || !isPathWithin(resolvedRoot, resolvedParent) {
+			return fmt.Errorf("Lite workspace parent failed factory-reset safety validation")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect Lite workspace: %w", err)
+	}
+	if err := os.RemoveAll(actual); err != nil {
+		return fmt.Errorf("failed to erase Lite workspace: %w", err)
+	}
+	return nil
+}
+
+func (s *instanceService) resetInstanceRuntimeData(ctx context.Context, instance *models.Instance) error {
+	resetter, ok := s.instanceRepo.(repository.InstanceFactoryResetRepository)
+	if !ok {
+		return fmt.Errorf("instance repository does not support factory reset")
+	}
+	if err := resetter.ResetInstanceRuntimeData(ctx, instance.ID); err != nil {
+		return fmt.Errorf("failed to clear instance runtime data: %w", err)
+	}
 	instance.Status = "stopped"
-	instance.StoppedAt = &now
+	instance.AccessURL = nil
+	instance.AccessToken = nil
+	instance.AgentBootstrapToken = nil
 	instance.PodName = nil
 	instance.PodNamespace = nil
 	instance.PodIP = nil
-	instance.UpdatedAt = now
-	if err := s.instanceRepo.Update(instance); err != nil {
-		s.markResetError(instanceID)
-		return fmt.Errorf("failed to record stopped runtime during reset: %w", err)
-	}
-	GetHub().BroadcastInstanceStatus(instance.UserID, instance)
+	instance.RuntimeErrorMessage = nil
+	instance.WorkspaceUsageBytes = 0
+	instance.StoppedAt = nil
+	return nil
+}
 
-	if err := s.Start(instanceID); err != nil {
-		if refreshed, getErr := s.instanceRepo.GetByID(instanceID); getErr == nil && refreshed != nil {
-			refreshed.Status = "error"
-			refreshed.UpdatedAt = time.Now()
-			_ = s.instanceRepo.Update(refreshed)
-			GetHub().BroadcastInstanceStatus(refreshed.UserID, refreshed)
-		}
-		return fmt.Errorf("failed to recreate runtime; persistent workspace was retained: %w", err)
+func (s *instanceService) prepareFreshRuntimeCredentials(instance *models.Instance) error {
+	if _, err := s.ensureGatewayToken(instance); err != nil {
+		return fmt.Errorf("failed to create fresh gateway token: %w", err)
 	}
-
-	verifiedPVC, err := s.pvcService.GetPVCByName(ctx, instance.UserID, pvcName)
-	if err != nil || verifiedPVC.UID != pvcUID || verifiedPVC.Status.Phase != corev1.ClaimBound {
-		s.markResetError(instanceID)
-		return fmt.Errorf("persistent workspace verification failed after runtime recreation")
+	if _, err := s.ensureAgentBootstrapToken(instance); err != nil {
+		return fmt.Errorf("failed to create fresh agent bootstrap token: %w", err)
 	}
 	return nil
 }
@@ -2242,10 +2605,10 @@ func (s *instanceService) claimReset(instanceID int) error {
 	if !ok {
 		return fmt.Errorf("instance repository does not support safe lifecycle claims")
 	}
-	// Use the existing `creating` status as the short-lived lifecycle lock. The
-	// production schema defines status as an ENUM and intentionally does not
-	// require a schema migration merely to support reset.
-	claimed, err := claimer.ClaimLifecycleStatus(context.Background(), instanceID, []string{"running", "stopped", "error"}, "creating")
+	// Move the instance out of the scheduler's desired-running set before any
+	// persistent data is erased. The durable northbound operation remains the
+	// cross-replica lifecycle lock.
+	claimed, err := claimer.ClaimLifecycleStatus(context.Background(), instanceID, []string{"running", "stopped", "error"}, "stopped")
 	if err != nil {
 		return err
 	}

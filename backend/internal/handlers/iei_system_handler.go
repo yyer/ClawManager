@@ -39,6 +39,10 @@ type ieiLifecycleService interface {
 	GetLatestLifecycleOperation(userID, instanceID int) (*models.NorthboundOperation, error)
 }
 
+type ieiSessionLifecycleService interface {
+	GetOperationForSession(operationID, sessionID string) (*models.NorthboundOperation, error)
+}
+
 type ieiSessionExchangeRequest struct {
 	Token string `json:"token" binding:"required,max=4096"`
 }
@@ -230,10 +234,8 @@ func (h *IEISystemHandler) RestartInstance(c *gin.Context) {
 	h.submitLifecycle(c, session, instance, "restart")
 }
 
-// ResetInstance rebuilds an IEI-owned runtime while retaining its instance
-// record and persistent workspace. The reset capability is intentionally
-// exposed through a narrower interface so cleanup/delete paths cannot be used
-// accidentally by this public portal endpoint.
+// ResetInstance replaces an IEI-owned runtime with a clean instance. The old
+// identity and data are removed only after the replacement is healthy.
 func (h *IEISystemHandler) ResetInstance(c *gin.Context) {
 	h.noStore(c)
 	session, ok := h.requireSession(c)
@@ -248,6 +250,11 @@ func (h *IEISystemHandler) ResetInstance(c *gin.Context) {
 	status := strings.ToLower(strings.TrimSpace(instance.Status))
 	if status != "running" && status != "stopped" && status != "error" {
 		utils.Error(c, http.StatusConflict, "Instance cannot be reset while a lifecycle operation is in progress")
+		return
+	}
+	var request northbound.ConfirmInstanceResetRequest
+	if err := c.ShouldBindJSON(&request); err != nil || !request.ConfirmDataLoss {
+		utils.Error(c, http.StatusBadRequest, "Reset permanently deletes all instance data; set confirm_data_loss to true")
 		return
 	}
 	h.submitLifecycle(c, session, instance, "reset")
@@ -295,6 +302,42 @@ func (h *IEISystemHandler) GetLifecycleOperation(c *gin.Context) {
 	}
 	item, err := h.lifecycle.GetOperation(instance.UserID, strings.TrimSpace(c.Param("operationID")))
 	if err != nil || item == nil || item.InstanceID == nil || *item.InstanceID != instance.ID {
+		if err != nil {
+			var apiErr *northbound.APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+				h.lifecycleError(c, err, "Unable to load instance lifecycle status")
+				return
+			}
+		}
+		utils.Error(c, http.StatusNotFound, "Instance lifecycle operation not found")
+		return
+	}
+	utils.Success(c, http.StatusOK, "Instance lifecycle operation retrieved", gin.H{"operation": newIEILifecycleOperationView(item)})
+}
+
+// GetSessionLifecycleOperation keeps a replacement reset observable after the
+// source instance has been hidden or deleted and the operation points at the
+// newly created instance ID.
+func (h *IEISystemHandler) GetSessionLifecycleOperation(c *gin.Context) {
+	h.noStore(c)
+	session, ok := h.requireSession(c)
+	if !ok {
+		return
+	}
+	if h.lifecycle == nil {
+		utils.Error(c, http.StatusServiceUnavailable, "Instance lifecycle service is unavailable")
+		return
+	}
+	sessionLifecycle, supported := h.lifecycle.(ieiSessionLifecycleService)
+	if !supported {
+		utils.Error(c, http.StatusServiceUnavailable, "Session lifecycle lookup is unavailable")
+		return
+	}
+	item, err := sessionLifecycle.GetOperationForSession(
+		strings.TrimSpace(c.Param("operationID")),
+		ieiOperationSessionID(session.SessionID),
+	)
+	if err != nil || item == nil {
 		if err != nil {
 			var apiErr *northbound.APIError
 			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
