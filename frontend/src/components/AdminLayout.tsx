@@ -52,21 +52,23 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
     { path: '/admin/instances', label: t('nav.instances'), icon: Monitor },
     { path: '/admin/runtime-pods', label: t('nav.runtime'), icon: Server },
     {
-      path: '/admin/secplane',
+      // 2026-09-05: secplane is now a standalone SPA served at
+      // /secplane/* (reverse-proxied to secplane-server pod). The
+      // absolute path triggers a full page navigation in react-router
+      // and lands the user in the secplane SPA's React Router.
+      path: '/secplane/admin/secplane',
       label: t('nav.secplane'),
       icon: Shield,
       matchPaths: [
-        '/admin/secplane/runtime',
-        '/admin/secplane/events',
-        '/admin/secplane/cat-trust',
-        '/admin/secplane/cat-identity',
-        '/admin/secplane/cat-isolate',
-        '/admin/secplane/cat-govern',
-        '/admin/secplane/cat-policy',
-        '/admin/secplane/cat-comm',
-        '/admin/security',
-        '/admin/assets',
-        '/admin/skills',
+        '/secplane/admin/secplane',
+        '/secplane/admin/secplane/runtime',
+        '/secplane/admin/secplane/events',
+        '/secplane/admin/secplane/cat-trust',
+        '/secplane/admin/secplane/cat-identity',
+        '/secplane/admin/secplane/cat-isolate',
+        '/secplane/admin/secplane/cat-govern',
+        '/secplane/admin/secplane/cat-policy',
+        '/secplane/admin/secplane/cat-comm',
       ],
       hasPopup: true,
     },
