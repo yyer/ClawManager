@@ -102,12 +102,25 @@ sed -i "s/client_max_body_size [0-9][0-9]*m;/client_max_body_size ${CLAWMANAGER_
 # runs without these vars, fall back to 127.0.0.1:9101 so nginx still starts.
 export KSEC_BRIDGE_HOST="${KSEC_BRIDGE_HOST:-127.0.0.1}"
 export KSEC_BRIDGE_PORT="${KSEC_BRIDGE_PORT:-9101}"
+# secplane-server upstream. Default to the in-cluster Service FQDN so that
+# a fresh deployment without overrides still routes correctly. Override
+# SECPLANE_SERVER_HOST to point at a sidecar / port-forward during local dev.
+export SECPLANE_SERVER_HOST="${SECPLANE_SERVER_HOST:-secplane-server.clawmanager-system.svc.cluster.local}"
+export SECPLANE_SERVER_PORT="${SECPLANE_SERVER_PORT:-9100}"
 if command -v envsubst >/dev/null 2>&1; then
   NGX_TPL=/etc/nginx/nginx.conf
   NGX_TMP="$(mktemp)"
   # Whitelist substitution — DO NOT replace $http_upgrade / $host / $remote_addr etc.
-  envsubst '${KSEC_BRIDGE_HOST} ${KSEC_BRIDGE_PORT}' < "${NGX_TPL}" > "${NGX_TMP}"
+  ENVSUBST_VARS='${KSEC_BRIDGE_HOST} ${KSEC_BRIDGE_PORT} ${SECPLANE_SERVER_HOST} ${SECPLANE_SERVER_PORT}'
+  envsubst "${ENVSUBST_VARS}" < "${NGX_TPL}" > "${NGX_TMP}"
   mv "${NGX_TMP}" "${NGX_TPL}"
+  # envsubst does NOT recurse into `include` directives. Render every
+  # include file separately so its ${SECPLANE_SERVER_*} placeholders
+  # (and any future placeholders) are resolved before nginx parses.
+  for inc in /etc/nginx/includes/*.conf; do
+    [ -f "$inc" ] || continue
+    envsubst "${ENVSUBST_VARS}" < "$inc" > "$inc.tmp" && mv "$inc.tmp" "$inc"
+  done
 else
   echo "WARN: envsubst not found; nginx.conf placeholders left unrendered." >&2
 fi
