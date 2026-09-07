@@ -32,6 +32,7 @@ import (
 
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
+	"clawreef/internal/secplane/aegis_assets"
 	"clawreef/internal/secplane/compiler/aegis"
 	"clawreef/internal/secplane/compiler/secureclaw"
 	"clawreef/internal/secplane/outbound"
@@ -164,6 +165,11 @@ type service struct {
 	runtimeCfgRepo    RuntimeConfigRepository
 	bindingRepo       repository.InstanceRuntimeBindingRepository
 	runtimePodRepo    repository.RuntimePodRepository
+	// handlersJSSha256 is the hex sha256 of clawaegisex/src/handlers.js
+	// bytes inside the embed aegis_assets.BaseZip(). Computed once in
+	// NewService. Used by extensionsMissing to decide whether the pod
+	// still has the image-baked (stale) version of the plugin source.
+	handlersJSSha256 string
 }
 
 // KillSwitchProvider — 我们只需要读状态，不引入对 killswitch 包的循环依赖。
@@ -190,17 +196,26 @@ func NewService(
 	bindingRepo repository.InstanceRuntimeBindingRepository,
 	runtimePodRepo repository.RuntimePodRepository,
 ) Service {
+	// handlers.js hash is computed once at startup from the embed base
+	// zip. Failure means the base zip is corrupted or missing the
+	// handlers.js entry — both should crash the process (k8s will
+	// restart) rather than silently degrade every dispatch.
+	hash, err := computeHandlersJSSha256()
+	if err != nil {
+		panic(fmt.Sprintf("dispatch: compute handlers.js sha256: %v", err))
+	}
 	return &service{
-		outboundService: outboundSvc,
-		policyService:   policyService,
-		cmdService:      cmdService,
-		instances:       instances,
-		skills:          skills,
-		podService:      podService,
+		outboundService:  outboundSvc,
+		policyService:    policyService,
+		cmdService:       cmdService,
+		instances:        instances,
+		skills:           skills,
+		podService:       podService,
 		cmdRepo:          cmdRepo,
-		runtimeCfgRepo: runtimeCfgRepo,
-		bindingRepo:    bindingRepo,
-		runtimePodRepo: runtimePodRepo,
+		runtimeCfgRepo:   runtimeCfgRepo,
+		bindingRepo:      bindingRepo,
+		runtimePodRepo:   runtimePodRepo,
+		handlersJSSha256: hash,
 	}
 }
 
@@ -786,14 +801,64 @@ echo "OK: clawaegisex installed via exec, agent restarting"
 // decide between the config-only writeUserConfigDirect path and the full
 // installClawaegisexViaExec fallback.
 func (s *service) extensionsMissing(ctx context.Context, inst *models.Instance) (bool, error) {
-	const script = `test -d "${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}/.openclaw/extensions/clawaegisex"`
+	// Returns true (need full unzip via installClawaegisexViaExec) if either:
+	//   - extensions/clawaegisex/ does not exist
+	//   - extensions/clawaegisex/src/handlers.js does not exist
+	//   - its sha256 differs from the version embed in aegis_assets.BaseZip()
+	//
+	// Returns false (config-only hot reload via writeUserConfigDirect is
+	// enough) if and only if the pod already has the matching handlers.js.
+	// This catches the image-baked-stale case: image already ships the
+	// plugin directory but with an older src/handlers.js than the one
+	// bundled in our backend.
+	//
+	// Uses python3 (sha256sum is not guaranteed on linuxserver webtop /
+	// openclaw-lite images; python3 is — installClawaegisexViaExec also
+	// relies on it for zipfile).
+	script := fmt.Sprintf(`DST="${CLAWMANAGER_AGENT_PERSISTENT_DIR:-/config}/.openclaw/extensions/clawaegisex"
+WANT_SHA=%q
+if [ ! -d "$DST" ] || [ ! -f "$DST/src/handlers.js" ]; then
+    exit 0
+fi
+ACTUAL=$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$DST/src/handlers.js")
+[ "$ACTUAL" = "$WANT_SHA" ] && exit 1 || exit 0`, s.handlersJSSha256)
+
 	_, _, err := s.execInDesktop(ctx, inst.UserID, inst.ID,
 		[]string{"sh", "-lc", script}, nil)
 	if err != nil {
-		// non-zero exit = directory missing
+		// non-zero exit = need full install
 		return true, nil
 	}
 	return false, nil
+}
+
+// computeHandlersJSSha256 reads aegis_assets.BaseZip() and returns the hex
+// sha256 of the clawaegisex/src/handlers.js entry. handlers.js bytes in the
+// PackageSkill output zip are copied as-is from BaseZip (per compiler/aegis/
+// packager.go:39-57), so this hash represents the version the dispatcher
+// will install on the pod.
+func computeHandlersJSSha256() (string, error) {
+	zipBytes := aegis_assets.BaseZip()
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return "", fmt.Errorf("open base zip: %w", err)
+	}
+	for _, f := range zr.File {
+		if f.Name != "clawaegisex/src/handlers.js" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return "", fmt.Errorf("open handlers.js entry: %w", err)
+		}
+		defer rc.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, rc); err != nil {
+			return "", fmt.Errorf("hash handlers.js: %w", err)
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	}
+	return "", fmt.Errorf("clawaegisex/src/handlers.js not found in base zip")
 }
 
 // markCommandTerminal flips an instance_commands row to a terminal status
