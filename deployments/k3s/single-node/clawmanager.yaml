@@ -1509,6 +1509,15 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: CLAWREEF_SECPLANE_INGEST_URL
+              value: "http://secplane-server.clawmanager-system.svc.cluster.local:9100"
+            # In case HTTP_PROXY is ever set on this pod, bypass the egress
+            # proxy for all cluster-internal services (e.g. secplane-server
+            # POST from ClawAegis postEventToSecplane).
+            - name: NO_PROXY
+              value: ".svc.cluster.local,localhost,127.0.0.1"
+            - name: no_proxy
+              value: ".svc.cluster.local,localhost,127.0.0.1"
           ports:
             - name: agent
               containerPort: 19090

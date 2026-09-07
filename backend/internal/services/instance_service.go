@@ -1301,6 +1301,7 @@ func (s *instanceService) buildAgentEnv(instance *models.Instance) (map[string]s
 	return map[string]string{
 		"CLAWMANAGER_AGENT_ENABLED":          "true",
 		"CLAWMANAGER_AGENT_BASE_URL":         baseURL,
+		"CLAWREEF_SECPLANE_INGEST_URL":       "http://secplane-server.clawmanager-system.svc.cluster.local:9100",
 		"CLAWMANAGER_AGENT_BOOTSTRAP_TOKEN":  strings.TrimSpace(*instance.AgentBootstrapToken),
 		"CLAWMANAGER_AGENT_DISK_LIMIT_BYTES": strconv.FormatInt(diskLimitBytes, 10),
 		"CLAWMANAGER_AGENT_INSTANCE_ID":      fmt.Sprintf("%d", instance.ID),
