@@ -18,7 +18,7 @@ import (
 	"clawreef/internal/middleware"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
-	"clawreef/internal/secplane"
+	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services"
 	"clawreef/internal/services/k8s"
 	"clawreef/internal/services/leader"
@@ -157,19 +157,23 @@ func main() {
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
 	customTeamTemplateService := teamtemplate.NewService(customTeamTemplateRepo, aiGatewayService)
 
-	// Initialize secplane (security protection platform) module. Keeps all of
-	// its routes, services and tables behind a single facade so the rest of
-	// the codebase stays unaware of its internals. Must be constructed before
-	// teamService so DispatchTask can check collab policy on every XAdd.
-	secplaneModule := secplane.NewModule(database, instanceCommandService, instanceAgentService, instanceRepo, skillService)
-	secplaneModule.StartBackgroundWorkers(context.Background())
+	// secplane (security protection platform) — only the policy subpackage
+	// stays in clawmanager backend (used by teamService for collab
+	// governance). All other subpackages (aegis_assets, compiler, dispatch,
+	// ingest, killswitch, outbound) have been moved to the standalone
+	// secplane-server pod; that pod talks back to clawmanager through
+	// /api/v1/internal/secplane/* (see internal_secplane_handler.go).
+	secplanePolicyService := policy.NewService(
+		policy.NewRuleRepository(database),
+		policy.NewAlertRepository(database),
+	)
 
 	teamService := services.NewTeamService(
 		teamRepo,
 		instanceService,
 		services.WithTeamRuntimeWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
 		services.WithTeamOpenClawConfigService(openClawConfigService),
-		services.WithTeamCollabService(secplaneModule.PolicyService),
+		services.WithTeamCollabService(secplanePolicyService),
 	)
 
 	// Initialize handlers
