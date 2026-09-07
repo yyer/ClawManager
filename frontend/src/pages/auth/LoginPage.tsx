@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../contexts/I18nContext';
 import LanguageSwitcher from '../../components/LanguageSwitcher';
+import { localizeAuthError } from '../../utils/authErrors';
 
 // 2026-09-05: cross-SPA auth redirect. The standalone secplane SPA
 // redirects unauthenticated users to /login?next=/secplane/admin/secplane.
@@ -43,6 +44,7 @@ const LoginPage: React.FC = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
   const formRef = useRef<HTMLFormElement | null>(null);
+  const displayError = error ? localizeAuthError(error, t) : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,10 +100,9 @@ const LoginPage: React.FC = () => {
             {t('auth.subtitle')}
           </p>
         </div>
-
-        {error && (
+        {displayError && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-            {error}
+            {displayError}
           </div>
         )}
 
