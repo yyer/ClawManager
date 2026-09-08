@@ -110,9 +110,9 @@ export function SecurityCenterShell({
     <AdminLayout title={t('securityCenter.title')}>
       <div className="space-y-6">
         <div className="crumb">
-          <Link to="/admin/secplane">{t('nav.secplane')}</Link>
+          <a href="/secplane/admin/secplane">{t('nav.secplane')}</a>
           <span>/</span>
-          <Link to="/admin/secplane/cat-trust">{t('secplane.protection.category.trust')}</Link>
+          <a href="/secplane/admin/secplane/cat-trust">{t('secplane.protection.category.trust')}</a>
           <span>/</span>
           <span className="crumb-current">{t('secplane.protection.category.scenarioSK')}</span>
         </div>

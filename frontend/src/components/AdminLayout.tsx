@@ -33,6 +33,12 @@ interface NavItem {
   matchPaths?: string[];
   exact?: boolean;
   hasPopup?: boolean;
+  // external: the target lives in the standalone secplane SPA (served at
+  // /secplane/* by secplane-server, NOT routed by this SPA's router). It
+  // must be a full-page <a href> navigation — react-router <Link> performs
+  // a client-side transition for ANY path (absolute included), which would
+  // hit our router with a location we have no route for (blank page).
+  external?: boolean;
 }
 
 const shellContainerClass = 'w-full px-3 sm:px-4 lg:px-5 2xl:px-6';
@@ -56,10 +62,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
     { path: '/admin/northbound', label: '北向接口', icon: Network },
     {
       // 2026-09-05: secplane is now a standalone SPA served at
-      // /secplane/* (reverse-proxied to secplane-server pod). The
-      // absolute path triggers a full page navigation in react-router
-      // and lands the user in the secplane SPA's React Router.
+      // /secplane/* (reverse-proxied to secplane-server pod). Requires a
+      // full page navigation — see NavItem.external — because react-router
+      // <Link> never triggers one, not even for absolute paths.
       path: '/secplane/admin/secplane',
+      external: true,
       label: t('nav.secplane'),
       icon: Shield,
       matchPaths: [
@@ -99,6 +106,14 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
 
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
+    if (item.external) {
+      return (
+        <a key={item.path} href={item.path} className={`app-nav-link ${isActive(item) ? 'app-nav-link-active' : ''}`}>
+          <Icon className="h-4 w-4 shrink-0" />
+          <span className="truncate">{item.label}</span>
+        </a>
+      );
+    }
     return (
       <Link
         key={item.path}
@@ -133,23 +148,34 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
         onMouseEnter={() => setPopoverItemPath(item.path)}
         onMouseLeave={() => setPopoverItemPath(null)}
       >
-        <Link
-          to={item.path}
-          className={`app-nav-link ${isActive(item) ? 'app-nav-link-active' : ''}`}
-        >
-          <Icon className="h-4 w-4 shrink-0" />
-          <span className="truncate">{item.label}</span>
-          <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60" />
-        </Link>
+        {item.external ? (
+          <a
+            href={item.path}
+            className={`app-nav-link ${isActive(item) ? 'app-nav-link-active' : ''}`}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{item.label}</span>
+            <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60" />
+          </a>
+        ) : (
+          <Link
+            to={item.path}
+            className={`app-nav-link ${isActive(item) ? 'app-nav-link-active' : ''}`}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{item.label}</span>
+            <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60" />
+          </Link>
+        )}
         {popoverItemPath === item.path && (
           <div className="absolute left-full top-0 z-40 ml-3 w-64 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
             <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
               {t('adminLayout.protectionCats')}
             </div>
             {PROTECTION_POPUP_CATS.map((cat) => (
-              <Link
+              <a
                 key={cat.id}
-                to={cat.path}
+                href={`/secplane${cat.path}`}
                 className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition ${
                   cat.disabled
                     ? 'cursor-not-allowed opacity-50'
@@ -172,7 +198,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
                 {cat.disabled && (
                   <span className="badge badge-slate text-[10px]">{t('adminLayout.planned')}</span>
                 )}
-              </Link>
+              </a>
             ))}
           </div>
         )}
