@@ -46,6 +46,10 @@ COPY --from=backend-builder /out/clawreef-server /usr/local/bin/clawreef-server
 COPY --from=backend-builder /out/clawreef-northbound-gateway /usr/local/bin/clawreef-northbound-gateway
 COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
 COPY deployments/nginx/nginx.conf /etc/nginx/nginx.conf
+# nginx.conf `include`s /etc/nginx/includes/*.conf (secplane upstream/locations,
+# rendered by start.sh via envsubst). Without this COPY nginx aborts at
+# startup with [emerg] open() .../secplane-upstream.conf failed.
+COPY deployments/nginx/includes/ /etc/nginx/includes/
 COPY deployments/nginx/njs/desktop_auth.js /etc/nginx/njs/desktop_auth.js
 COPY deployments/container/start.sh /app/start.sh
 
