@@ -19,7 +19,6 @@ import (
 	"clawreef/internal/middleware"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
-	"clawreef/internal/secplane/policy"
 	"clawreef/internal/services"
 	"clawreef/internal/services/k8s"
 	"clawreef/internal/services/leader"
@@ -146,6 +145,12 @@ func main() {
 	instanceRuntimeStatusService := services.NewInstanceRuntimeStatusService(instanceRuntimeStatusRepo, instanceAgentRepo, instanceDesiredStateRepo)
 	instanceCommandService := services.NewInstanceCommandService(instanceCommandRepo, instanceRuntimeStatusRepo, instanceDesiredStateRepo, skillRepo)
 	instanceConfigRevisionService := services.NewInstanceConfigRevisionService(instanceConfigRevisionRepo)
+	teamService := services.NewTeamService(
+		teamRepo,
+		instanceService,
+		services.WithTeamRuntimeWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
+		services.WithTeamOpenClawConfigService(openClawConfigService),
+	)
 	var platformRedis services.PlatformRedisClient
 	if redisURL := strings.TrimSpace(cfg.Runtime.RedisURL); redisURL != "" {
 		var redisErr error
@@ -186,25 +191,6 @@ func main() {
 		aigateway.WithExpandedLLMModelCatalog(llmModelService),
 	)
 	customTeamTemplateService := teamtemplate.NewService(customTeamTemplateRepo, aiGatewayService)
-
-	// secplane (security protection platform) — only the policy subpackage
-	// stays in clawmanager backend (used by teamService for collab
-	// governance). All other subpackages (aegis_assets, compiler, dispatch,
-	// ingest, killswitch, outbound) have been moved to the standalone
-	// secplane-server pod; that pod talks back to clawmanager through
-	// /api/v1/internal/secplane/* (see internal_secplane_handler.go).
-	secplanePolicyService := policy.NewService(
-		policy.NewRuleRepository(database),
-		policy.NewAlertRepository(database),
-	)
-
-	teamService := services.NewTeamService(
-		teamRepo,
-		instanceService,
-		services.WithTeamRuntimeWorkspaceRoot(cfg.Runtime.WorkspaceRoot),
-		services.WithTeamOpenClawConfigService(openClawConfigService),
-		services.WithTeamCollabService(secplanePolicyService),
-	)
 
 	// Initialize handlers
 	versionHandler := handlers.NewVersionHandler()

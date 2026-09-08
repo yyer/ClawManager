@@ -631,23 +631,6 @@ func (s *instanceService) create(userID int, req CreateInstanceRequest, validate
 		}
 	}
 
-	// Team instances share a setgid directory across agents with distinct
-	// UIDs. The LSIO base image umask 022 would create group-non-writable
-	// files and break peer updates. applyUmaskWrapper (in k8s package) wraps
-	// the entrypoint with `umask 0002 && exec /init` so all s6 children
-	// inherit it.
-	//
-	// NOTE: This PodConfig is only used for pro/desktop instances (see
-	// instanceUsesDesktopRuntime branch below). Lite/gateway Team instances
-	// return early via createV2Instance and never reach here - their umask
-	// is fixed at the image layer (Dockerfile.openclaw-umask) because they
-	// live in the shared openclaw-runtime pod. Non-team instances leave
-	// umask empty -> no wrapper.
-	teamUmask := ""
-	if req.Team != nil {
-		teamUmask = req.Team.SharedUmask
-	}
-
 	podConfig := k8s.PodConfig{
 		InstanceID:           instance.ID,
 		InstanceName:         instance.Name,
@@ -672,7 +655,6 @@ func (s *instanceService) create(userID int, req CreateInstanceRequest, validate
 		VolumeOwnershipFixes: volumeOwnershipFixes,
 		SHMSizeGB:            shmSizeGB,
 		SecurityMode:         s.securityModeForInstance(instance.Type),
-		Umask:                teamUmask,
 	}
 
 	var workloadNamespace string
