@@ -106,7 +106,17 @@ export KSEC_BRIDGE_PORT="${KSEC_BRIDGE_PORT:-9101}"
 # a fresh deployment without overrides still routes correctly. Override
 # SECPLANE_SERVER_HOST to point at a sidecar / port-forward during local dev.
 export SECPLANE_SERVER_HOST="${SECPLANE_SERVER_HOST:-secplane-server.clawmanager-system.svc.cluster.local}"
+# Guard: with enableServiceLinks (k8s default), a Service named "secplane-server"
+# injects SECPLANE_SERVER_PORT="tcp://<ClusterIP>:9100" into the pod, which would
+# survive the :-default above and make envsubst render an illegal upstream
+# ("host:tcp://10.x.x.x:9100" -> nginx 500). Only accept a bare numeric port.
 export SECPLANE_SERVER_PORT="${SECPLANE_SERVER_PORT:-9100}"
+case "${SECPLANE_SERVER_PORT}" in
+  ''|*[!0-9]*)
+    echo "Invalid SECPLANE_SERVER_PORT=${SECPLANE_SERVER_PORT} (service-link env?); falling back to 9100." >&2
+    export SECPLANE_SERVER_PORT="9100"
+    ;;
+esac
 if command -v envsubst >/dev/null 2>&1; then
   NGX_TPL=/etc/nginx/nginx.conf
   NGX_TMP="$(mktemp)"
