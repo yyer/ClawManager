@@ -379,6 +379,12 @@ func defaultNoProxyList() string {
 		"clawmanager-frontend",
 		"clawmanager-gateway",
 		"clawmanager-egress-proxy",
+		"secplane-server",
+		// .svc.cluster.local is a suffix match for all cluster-internal services
+		// (per Go's net/http no_proxy parsing). Needed so openclaw's
+		// postEventToSecplane and other client calls to in-cluster services
+		// bypass the egress proxy.
+		".svc.cluster.local",
 	}
 
 	if systemNamespace != "" {
@@ -392,6 +398,9 @@ func defaultNoProxyList() string {
 			fmt.Sprintf("clawmanager-egress-proxy.%s", systemNamespace),
 			fmt.Sprintf("clawmanager-egress-proxy.%s.svc", systemNamespace),
 			fmt.Sprintf("clawmanager-egress-proxy.%s.svc.cluster.local", systemNamespace),
+			fmt.Sprintf("secplane-server.%s", systemNamespace),
+			fmt.Sprintf("secplane-server.%s.svc", systemNamespace),
+			fmt.Sprintf("secplane-server.%s.svc.cluster.local", systemNamespace),
 		)
 	}
 

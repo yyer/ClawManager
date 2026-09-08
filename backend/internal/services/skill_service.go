@@ -181,6 +181,12 @@ type AgentSkillPackageUploadRequest struct {
 
 type SkillService interface {
 	ImportArchive(ctx context.Context, userID int, fileHeader *multipart.FileHeader) ([]SkillPayload, error)
+	// ImportArchiveBytes is the in-process equivalent of ImportArchive used by
+	// secplane's packager so it can upload a freshly-built ClawAegis skill zip
+	// (with policy-derived user_config.json injected) without going through an
+	// HTTP multipart layer. The caller supplies the original file name (for
+	// extension detection) and the raw zip content.
+	ImportArchiveBytes(ctx context.Context, userID int, fileName string, raw []byte) ([]SkillPayload, error)
 	ListSkills(userID int) ([]SkillPayload, error)
 	ListAllSkills() ([]SkillPayload, error)
 	ListAvailableSkillsForInstance(instanceID int, userID int, userRole string) ([]SkillPayload, error)
@@ -263,6 +269,32 @@ func (s *skillService) ImportArchive(ctx context.Context, userID int, fileHeader
 	results := make([]SkillPayload, 0, len(directories))
 	for _, dir := range directories {
 		payload, err := s.importDirectory(ctx, userID, dir, filename)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *payload)
+	}
+	return results, nil
+}
+
+// ImportArchiveBytes mirrors ImportArchive but takes raw bytes - used by
+// in-process callers (secplane packager) so they don't have to fake a
+// multipart.FileHeader.
+func (s *skillService) ImportArchiveBytes(ctx context.Context, userID int, fileName string, raw []byte) ([]SkillPayload, error) {
+	if !strings.HasSuffix(strings.ToLower(strings.TrimSpace(fileName)), ".zip") {
+		return nil, fmt.Errorf("only .zip skill archives are supported")
+	}
+	directories, err := extractSkillDirectories(fileName, raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(directories) == 0 {
+		return nil, fmt.Errorf("no skill directories found in archive")
+	}
+
+	results := make([]SkillPayload, 0, len(directories))
+	for _, dir := range directories {
+		payload, err := s.importDirectory(ctx, userID, dir, fileName)
 		if err != nil {
 			return nil, err
 		}

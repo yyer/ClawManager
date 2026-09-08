@@ -822,6 +822,41 @@ func main() {
 			gatewayLLM.POST("/v1/messages", aiGatewayHandler.AnthropicMessages)
 		}
 
+		// Security Protection Platform (secplane) routes.
+		// Moved to standalone secplane-server pod (2026-09-05). The frontend
+		// reaches secplane via nginx proxy on /api/v1/secplane/* →
+		// secplane-server service. secplane-server calls back to clawmanager
+		// via /api/v1/internal/secplane/* for instances/agents/users/skills.
+		// secplaneModule is still kept alive below for the in-process
+		// team_service.PolicyService consumer.
+		// secplaneModule.Register(api, userRepo)
+
+		// Internal API for the standalone secplane-server pod. This is
+		// a service-to-service surface; requests must carry
+		// `X-Internal-Service: secplane-server` and a bearer token
+		// matching $CLAWREEF_INTERNAL_TOKEN. Each endpoint delegates to
+		// the same in-process service that the public REST API uses.
+		internalSecplane := handlers.NewInternalSecplaneHandler(
+			instanceRepo,
+			instanceCommandRepo,
+			instanceCommandService,
+			instanceAgentService,
+			skillService,
+			userRepo,
+			os.Getenv("CLAWREEF_INTERNAL_TOKEN"),
+		)
+		internalSecplane.RegisterInternalRoutes(api.Group("/internal/secplane"))
+
+		// Agent-side ingest: the openclaw pod now ships defense events
+		// DIRECTLY to secplane-server:9100 via the CLAWREEF_SECPLANE_INGEST_URL
+		// env (see internal/services/instance_service.go buildAgentEnv and
+		// ClawAegis postEventToSecplane). No proxy in clawmanager is needed —
+		// keeping the proxy here would mean every defense event from every
+		// openclaw pod bounces through clawmanager's main API, which
+		// (a) adds an extra hop, (b) increases load on clawmanager and
+		// exposes it to slow-query stalls, and (c) is the wrong coupling
+		// direction (secplane owns ingest, not clawmanager).
+
 		agent := api.Group("/agent")
 		{
 			agent.POST("/register", agentHandler.Register)

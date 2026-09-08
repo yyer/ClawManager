@@ -1,8 +1,27 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../contexts/I18nContext';
 import LanguageSwitcher from '../../components/LanguageSwitcher';
+
+// 2026-09-05: cross-SPA auth redirect. The standalone secplane SPA
+// redirects unauthenticated users to /register?next=/secplane/....
+// Honor `?next=` after a successful registration so the user lands
+// back in the SPA they started from. Same strict allow-list as
+// LoginPage: only same-origin paths starting with a single `/`.
+function resolvePostAuthPath(search: string, fallback: string): string {
+  const raw = new URLSearchParams(search).get('next');
+  if (!raw) {
+    return fallback;
+  }
+  if (raw.length > 2048 || /[\r\n]/.test(raw)) {
+    return fallback;
+  }
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) {
+    return fallback;
+  }
+  return raw;
+}
 
 const RegisterPage: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -15,6 +34,10 @@ const RegisterPage: React.FC = () => {
   const { register, isLoading, error, clearError } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const nextParam = new URLSearchParams(location.search).get('next');
+  const signInHref = nextParam ? `/login?next=${encodeURIComponent(nextParam)}` : '/login';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -27,12 +50,12 @@ const RegisterPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (formData.password !== formData.confirmPassword) {
       setValidationError(t('auth.passwordsMismatch'));
       return;
     }
-    
+
     if (formData.password.length < 8) {
       setValidationError(t('auth.passwordTooShort'));
       return;
@@ -40,7 +63,7 @@ const RegisterPage: React.FC = () => {
 
     try {
       await register(formData.username, formData.email, formData.password);
-      navigate('/dashboard');
+      navigate(resolvePostAuthPath(location.search, '/dashboard'), { replace: true });
     } catch (err) {
       // Error is handled by auth context
     }
@@ -148,7 +171,7 @@ const RegisterPage: React.FC = () => {
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">
             {t('auth.alreadyHaveAccount')}{' '}
-            <Link to="/login" className="font-medium text-[#dc2626] hover:text-[#b91c1c]">
+            <Link to={signInHref} className="font-medium text-[#dc2626] hover:text-[#b91c1c]">
               {t('auth.signIn')}
             </Link>
           </p>

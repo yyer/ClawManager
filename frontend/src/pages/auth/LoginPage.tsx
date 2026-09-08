@@ -4,6 +4,38 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../contexts/I18nContext';
 import LanguageSwitcher from '../../components/LanguageSwitcher';
 
+// 2026-09-05: cross-SPA auth redirect. The standalone secplane SPA
+// redirects unauthenticated users to /login?next=/secplane/admin/secplane.
+// Honor `?next=` after a successful sign-in so the user lands back in
+// the SPA they started from, not the default /dashboard.
+//
+// Strict allow-list: only same-origin paths starting with a single
+// leading slash. Reject `//evil.com/x`, full URLs, and CR/LF to
+// prevent open-redirect / header-injection attacks. The fall-through
+// is the default admin (or user) dashboard.
+function resolvePostLoginPath(): string {
+  if (typeof window === 'undefined') {
+    return '/dashboard';
+  }
+  const raw = new URLSearchParams(window.location.search).get('next');
+  if (!raw) {
+    return '/dashboard';
+  }
+  if (raw.length > 2048) {
+    return '/dashboard';
+  }
+  if (/[\r\n]/.test(raw)) {
+    return '/dashboard';
+  }
+  if (!raw.startsWith('/') || raw.startsWith('//')) {
+    return '/dashboard';
+  }
+  if (raw.includes('://')) {
+    return '/dashboard';
+  }
+  return raw;
+}
+
 const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -15,10 +47,10 @@ const LoginPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
-    
+
     try {
       await login(username, password);
-      navigate('/dashboard');
+      navigate(resolvePostLoginPath(), { replace: true });
     } catch (err) {
       // Error is handled by auth context
     }
@@ -66,13 +98,12 @@ const LoginPage: React.FC = () => {
             {t('auth.subtitle')}
           </p>
         </div>
-        
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
             {error}
           </div>
         )}
-        
+
         <form
           ref={formRef}
           className="mt-8 space-y-6"
@@ -96,7 +127,7 @@ const LoginPage: React.FC = () => {
                 placeholder={t('auth.usernamePlaceholder')}
               />
             </div>
-            
+
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                 {t('auth.password')}
