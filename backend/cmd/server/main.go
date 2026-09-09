@@ -224,7 +224,7 @@ func main() {
 		skillService,
 		externalAccessService,
 		aiObservabilityService,
-		services.NewInstanceShellService(runtimePodRepo, bindingRepo),
+		services.NewInstanceShellService(),
 		services.WithInstanceProxyRuntimeRepositories(instanceRepo, runtimePodRepo, bindingRepo),
 	)
 	ieiSSOService, err := services.NewIEISSOService(cfg.IEISystem)
