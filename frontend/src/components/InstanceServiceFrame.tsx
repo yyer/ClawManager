@@ -3,14 +3,15 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useI18n } from "../contexts/I18nContext";
 import { useInstanceDesktopAccess } from "../hooks/useInstanceDesktopAccess";
 import { useRuntimeCertificateTrust } from "../hooks/useRuntimeCertificateTrust";
-import { clearHermesDashboardStorage, prepareHermesDashboardStorage } from "../lib/hermesDashboardStorage";
 import { prepareOpenClawControlUIStorage } from "../lib/openclawControlStorage";
 import type { InstanceAvailability } from "../types/instance";
+import { HermesLiteServiceFrame } from "./HermesLiteServiceFrame";
 
-interface InstanceServiceFrameProps {
+export interface InstanceServiceFrameProps {
   instanceId: number;
   instanceName: string;
   instanceType?: string;
+  instanceMode?: string;
   availability: InstanceAvailability;
   reloadToken?: number;
   openCodeInitialDirectory?: string;
@@ -78,6 +79,17 @@ function openCodeNewSessionUrl(
 }
 
 export function InstanceServiceFrame({
+  instanceMode,
+  ...props
+}: InstanceServiceFrameProps) {
+  if (props.instanceType?.toLowerCase() === "hermes" && instanceMode?.toLowerCase() === "lite") {
+    return <HermesLiteServiceFrame {...props} instanceMode={instanceMode} />;
+  }
+
+  return <EmbeddedInstanceServiceFrame {...props} instanceMode={instanceMode} />;
+}
+
+function EmbeddedInstanceServiceFrame({
   instanceId,
   instanceName,
   instanceType,
@@ -93,7 +105,6 @@ export function InstanceServiceFrame({
   const [preparedFrame, setPreparedFrame] = useState<PreparedFrame | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const normalizedType = instanceType?.toLowerCase() ?? "";
-  const isHermes = normalizedType === "hermes";
   const {
     embedUrl: accessEmbedUrl,
     loading,
@@ -139,32 +150,35 @@ export function InstanceServiceFrame({
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     if (!embedUrl) {
-      setPreparedFrame(null);
-      return;
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setPreparedFrame(null);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
     let src = embedUrl;
     if (normalizedType === "openclaw") {
       src = prepareOpenClawControlUIStorage(instanceId, embedUrl);
-    } else if (isHermes) {
-      src = prepareHermesDashboardStorage(instanceId, embedUrl);
     } else if (normalizedType === "opencode") {
       // The root route is OpenCode's global landing page. Its directory-scoped
       // /session route selects the managed project and opens a blank chat.
       src = openCodeNewSessionUrl(embedUrl, openCodeInitialDirectory);
     }
-    setPreparedFrame({ instanceId, embedUrl, src });
-  }, [embedUrl, instanceId, isHermes, normalizedType, openCodeInitialDirectory]);
-
-  useEffect(() => {
-    if (!isHermes) {
-      return;
-    }
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setPreparedFrame({ instanceId, embedUrl, src });
+      }
+    });
     return () => {
-      clearHermesDashboardStorage();
+      cancelled = true;
     };
-  }, [isHermes, instanceId]);
+  }, [embedUrl, instanceId, normalizedType, openCodeInitialDirectory]);
 
   useEffect(() => {
     const handleChange = () => {
@@ -279,11 +293,7 @@ export function InstanceServiceFrame({
 
   return renderFrameShell(
       <iframe
-        key={
-          isHermes
-            ? `hermes-${instanceId}-${reloadToken}`
-            : `frame-${instanceId}-${reloadToken}`
-        }
+        key={`frame-${instanceId}-${reloadToken}`}
         title={`${instanceName} service`}
         src={frameSrc}
         className="min-h-0 w-full flex-1 border-0 bg-white"

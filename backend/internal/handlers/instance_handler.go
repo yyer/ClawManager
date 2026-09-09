@@ -1715,7 +1715,9 @@ func (h *InstanceHandler) ProxyInstance(c *gin.Context) {
 }
 
 func (h *InstanceHandler) proxyAccessToken(c *gin.Context, id int) (string, bool) {
-	queryToken := strings.TrimSpace(c.Query("token"))
+	cookieName := fmt.Sprintf("instance_access_%d", id)
+	original := originalInstanceProxyRequest(c)
+	queryToken := strings.TrimSpace(original.URL.Query().Get("token"))
 	if queryToken == "" && isDedicatedAccessRefreshPath(c, id) {
 		queryToken = strings.TrimSpace(c.GetHeader(dedicatedAccessRefreshHeader))
 	}
@@ -1730,8 +1732,7 @@ func (h *InstanceHandler) proxyAccessToken(c *gin.Context, id int) (string, bool
 		}
 	}
 
-	cookieName := fmt.Sprintf("instance_access_%d", id)
-	for _, cookie := range c.Request.Cookies() {
+	for _, cookie := range original.Cookies() {
 		if cookie.Name != cookieName {
 			continue
 		}
@@ -1793,7 +1794,7 @@ func (h *InstanceHandler) promoteProxyAccessToken(c *gin.Context, id int, queryT
 	}
 	if dedicatedOrigin && originRuntimeType == services.RuntimeTypeOpenCode &&
 		(c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) {
-		c.Redirect(http.StatusTemporaryRedirect, dedicatedRuntimeCleanLocation(c.Request.URL, id, queryToken))
+		c.Redirect(http.StatusTemporaryRedirect, dedicatedRuntimeCleanLocation(originalInstanceProxyRequest(c).URL, id, queryToken))
 		return "", false
 	}
 	return queryToken, true
@@ -1910,9 +1911,10 @@ func isDedicatedAccessRefreshPath(c *gin.Context, instanceID int) bool {
 }
 
 func (h *InstanceHandler) proxyInstanceWithToken(c *gin.Context, id int, token string) {
+	original := originalInstanceProxyRequest(c)
 	// Check if it's a WebSocket upgrade request
 	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
-		if err := h.proxyService.ProxyWebSocket(c.Request.Context(), id, token, c.Writer, c.Request); err != nil {
+		if err := h.proxyService.ProxyWebSocket(c.Request.Context(), id, token, c.Writer, original); err != nil {
 			if errors.Is(err, services.ErrInstanceGatewayUnavailable) {
 				http.Error(c.Writer, "Instance gateway is not available", http.StatusServiceUnavailable)
 			} else if errors.Is(err, services.ErrOpenCodeDedicatedOriginRequired) {
@@ -1925,7 +1927,7 @@ func (h *InstanceHandler) proxyInstanceWithToken(c *gin.Context, id int, token s
 	}
 
 	// Proxy regular HTTP request
-	if err := h.proxyService.ProxyRequest(c.Request.Context(), id, token, c.Writer, c.Request); err != nil {
+	if err := h.proxyService.ProxyRequest(c.Request.Context(), id, token, c.Writer, original); err != nil {
 		// Log the error
 		fmt.Printf("Proxy error for instance %d: %v\n", id, err)
 
