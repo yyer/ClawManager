@@ -241,8 +241,9 @@ func main() {
 		ControlUIOrigin: strings.TrimSpace(os.Getenv("CLAWMANAGER_CONTROL_UI_ORIGIN")),
 		Enabled:         strings.EqualFold(strings.TrimSpace(os.Getenv("CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED")), "true"),
 		Secret:          cfg.JWT.Secret, Instances: instanceRepo, Users: userRepo, Bindings: bindingRepo, Pods: runtimePodRepo,
-		Teams: repository.NewHermesDesktopTeamGuard(database), Agent: runtimeAgentClient, Redis: platformRedis,
+		Teams: repository.NewHermesDesktopTeamGuard(database), ExternalAccess: externalAccessService, Agent: runtimeAgentClient, Redis: platformRedis,
 	})
+	instanceHandler.SetHermesDesktopService(hermesDesktopService)
 	hermesDesktopHandler := handlers.NewHermesDesktopHandler(hermesDesktopService)
 	authHandler.SetDesktopLogoutHook(hermesDesktopService.RevokeUserSessions)
 	systemSettingsHandler := handlers.NewSystemSettingsHandler(systemImageSettingService)
