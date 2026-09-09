@@ -6,8 +6,9 @@
 upstream_repository: https://github.com/Yuan-lab-LLM/ClawManager.git
 upstream_branch: main
 target_branch: modelupdate
-last_processed_upstream_commit: 3216a4f34f0a49f700d328ee1a4013df1b0b98c6
+last_processed_upstream_commit: 378b58b1d5d28ca0125390a36a84d0a14ab7bdb8
 last_reviewed_upstream_commit: 378b58b1d5d28ca0125390a36a84d0a14ab7bdb8
+last_sync_date: 2026-09-09
 ```
 
 - `last_processed_upstream_commit` 是同步检查点：从 GitHub `main` 的起点到该提交为止，每个同步单元都已经应用、适配或明确跳过。
@@ -128,20 +129,18 @@ cd frontend && npm run lint && npm run build
 
 | GitHub 单元 | GitHub commit | 对应本地 commit | 决策 | 说明 |
 |---|---|---|---|---|
-| PR #195 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6` | `938b9489b118bbf5d0eaee0ec935d38b55b215a9` | adapted | DSH remote UI 已按本地下游架构导入；当前同步检查点 |
+| PR #195 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6` | `938b9489b118bbf5d0eaee0ec935d38b55b215a9` | adapted | DSH remote UI 已按本地下游架构导入 |
+| PR #196 | `a38322f2278bb9e0b4425f0966bf675c239b1294` | `f84d532e93f74086a14a98f3c9d9eb49bfb05f3f` | adapted | 引入 OpenCode 独立 Origin 与 nip.io 部署支持，保留本地 IEI、证书刷新、DeepSeek Origin 和长连接代理行为 |
+| PR #197 | `8fd5de44d19a37d105da63d3cf23015b9b402ab5` | `1b7f627b3a005cbd348d5dd4259bfc266ebb912f` | adapted | OpenCode Lite 改用 Web UI 并禁用 Lite TUI；保留 Pro 和其他运行时 shell 行为 |
+| PR #198 | `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | `f2cb86b9b87d4c0a20396c8d78aead99ce8b3fe1` | adapted | 引入托管 Hermes Desktop、BFF/WS 鉴权、renderer 与 E2E；适配本地 IEI/Northbound、Origin 安全和无固定代理超时；当前同步检查点 |
 
 ## 8. 当前待同步单元
 
-| 顺序 | GitHub 单元 | GitHub commit | 功能摘要 | 状态 |
-|---|---|---|---|---|
-| 1 | PR #196 | `a38322f2278bb9e0b4425f0966bf675c239b1294` | OpenCode 实例独立 Origin、Nginx 路由及 nip.io TLS | reviewed / pending |
-| 2 | PR #197 | `8fd5de44d19a37d105da63d3cf23015b9b402ab5` | Lite 使用 Web UI，并禁用 Lite TUI shell | reviewed / pending |
-| 3 | PR #198 | `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | 托管 Hermes Desktop、代理鉴权、前端和 E2E | reviewed / pending |
-
-完成本轮同步后，应把检查点推进到 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`，补充对应本地提交和测试结果，并清空或更新本节。
+当前没有已知的待同步单元。下次同步从 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` 之后开始。
 
 ## 9. 同步历史
 
 | 日期 | 上游范围 | 处理结果 | 本地提交 | 验证结果 | 备注 |
 |---|---|---|---|---|---|
 | 2026-09-09 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6..378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | 完成功能分析，未执行代码同步 | N/A | N/A | PR #196、#197、#198 待处理；PR #198 依赖 AgentsRuntime PR #31、#32 |
+| 2026-09-09 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6..378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | PR #196、#197、#198 均按本地架构适配完成 | `f84d532e93f74086a14a98f3c9d9eb49bfb05f3f`, `1b7f627b3a005cbd348d5dd4259bfc266ebb912f`, `f2cb86b9b87d4c0a20396c8d78aead99ce8b3fe1` | 后端 `go test ./...`；前端构建、变更文件 ESLint、11 项定向测试；Hermes Desktop Web 34 项测试、typecheck、15064 模块构建；E2E proxy 7 项与 fixture Go 测试均通过 | AgentsRuntime 检查点为 `9f4e3965b157ed45a347bfa2dc1469beb45e9b0a`；前端全库 lint 仍有 210 个既有问题，变更文件无 lint 错误；未执行 Docker 镜像构建、真实集群和 live-browser smoke |
