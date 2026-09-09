@@ -6410,8 +6410,6 @@ spec:
               value: "20000"
             - name: CLAWMANAGER_GATEWAY_PORT_END
               value: "20299"
-            - name: HERMES_TUI_DIR
-              value: /usr/local/lib/hermes-agent/ui-tui
             - name: CLAWMANAGER_AGENT_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:

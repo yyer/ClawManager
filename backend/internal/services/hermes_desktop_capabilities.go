@@ -29,7 +29,7 @@ type HermesDesktopRuntimeCapability struct {
 // deployed UI can be exercised before an integration release is signed.
 // Both versions still require normal control authentication and gateway login.
 func (c *HermesDesktopRuntimeCapability) compatible() bool {
-	if c == nil || !c.Enabled || c.HermesRef != HermesDesktopRef || c.HermesCommit != HermesDesktopCommit || c.RPCProtocol != "hermes-jsonrpc-v1" || c.BackendMode != "dashboard" || c.AuthMode != "password-cookie" {
+	if c == nil || !c.Enabled || c.HermesRef != HermesDesktopRef || c.HermesCommit != HermesDesktopCommit || c.RPCProtocol != "hermes-jsonrpc-v1" || !compatibleHermesBackendMode(c.BackendMode) || c.AuthMode != "password-cookie" {
 		return false
 	}
 	switch c.ContractVersion {
@@ -41,6 +41,13 @@ func (c *HermesDesktopRuntimeCapability) compatible() bool {
 	default:
 		return false
 	}
+}
+
+func compatibleHermesBackendMode(mode string) bool {
+	// New Lite images use upstream's headless `hermes serve` entrypoint. Keep
+	// accepting the former mode during a rolling update so existing instances
+	// do not lose Desktop access before their Runtime pod is replaced.
+	return mode == "serve" || mode == "dashboard"
 }
 
 type RuntimeAgentHealthCapabilities struct {

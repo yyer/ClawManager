@@ -104,7 +104,7 @@ Requests carry `X-ClawManager-Control-Token`; agents must protect this endpoint.
       "hermes_ref": "v2026.8.31",
       "hermes_commit": "29112bef099274229cadff79cdff7bf7b99c4b77",
       "rpc_protocol": "hermes-jsonrpc-v1",
-      "backend_mode": "dashboard",
+      "backend_mode": "serve",
       "auth_mode": "password-cookie",
       "artifacts_verified": true,
       "release_accepted": false,
