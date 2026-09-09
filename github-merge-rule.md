@@ -144,3 +144,16 @@ cd frontend && npm run lint && npm run build
 |---|---|---|---|---|---|
 | 2026-09-09 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6..378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | 完成功能分析，未执行代码同步 | N/A | N/A | PR #196、#197、#198 待处理；PR #198 依赖 AgentsRuntime PR #31、#32 |
 | 2026-09-09 | `3216a4f34f0a49f700d328ee1a4013df1b0b98c6..378b58b1d5d28ca0125390a36a84d0a14ab7bdb8` | PR #196、#197、#198 均按本地架构适配完成 | `f84d532e93f74086a14a98f3c9d9eb49bfb05f3f`, `1b7f627b3a005cbd348d5dd4259bfc266ebb912f`, `f2cb86b9b87d4c0a20396c8d78aead99ce8b3fe1` | 后端 `go test ./...`；前端构建、变更文件 ESLint、11 项定向测试；Hermes Desktop Web 34 项测试、typecheck、15064 模块构建；E2E proxy 7 项与 fixture Go 测试均通过 | AgentsRuntime 检查点为 `9f4e3965b157ed45a347bfa2dc1469beb45e9b0a`；前端全库 lint 仍有 210 个既有问题，变更文件无 lint 错误；未执行 Docker 镜像构建、真实集群和 live-browser smoke |
+
+## 10. 测试集群验证记录
+
+### 2026-09-09：`10.130.14.23` / `clawmanager-system`
+
+- 验证本地提交：`73730df0ec458162a87e7eaa2e84dbb3736debba`；对应 GitHub 检查点仍为 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。
+- ClawManager 部署镜像固定为 `10.130.14.23:5000/clawmanager@sha256:dea4369fa1c0be8520e2181ecc93a2dcadb4d3f8b4ee6a27b8fc95458e0472f9`。Deployment revision 32，3/3 Ready、3/3 Available、Pod 重启数均为 0；其中一个 Pod 在 `node1` 成功拉取并运行该 digest。
+- `/`、`/healthz`、`/api/v1/version`、`/hermes-desktop-web/` 和 `/hermes-desktop-web/build-info.json` 均返回 HTTP 200；版本接口返回提交 `73730df0ec458162a87e7eaa2e84dbb3736debba`。
+- `e2e/hermes-desktop-smoke.mjs` 完成 26 项路由/认证检查；新建后运行的 Hermes Lite 实例 36 在 generation 4 上完成 live-browser 验证：12/12 BFF API 为 200、配置 schema 785 个字段、Artifacts 和 Skill Hub 正常、18/18 设置页签通过，浏览器错误与网络失败均为 0。
+- `system_image_settings` 中 Hermes Lite 默认镜像已由浮动 `latest` 更新为 AgentsRuntime 的不可变 digest，保证后续新实例使用本次验证镜像。
+- 候选运行时健康声明为 `artifacts_verified=true`、`release_accepted=false`；这表示构建产物已验证，但本次测试不替代正式发布接受流程。
+- 基础设施遗留：`redis-data` 已请求由 1Gi 扩至 4Gi，但 Longhorn 卷处于 `degraded` 且文件系统仍为 1Gi，PVC 保持 `Resizing`。为继续测试，Redis 仅在当前进程内临时设置 `stop-writes-on-bgsave-error=no`、`save=""`；AOF 保持启用且写入状态正常。Redis Pod 重启会恢复原配置，在扩容完成前可能再次阻断 Hermes Desktop ticket 写入。
+- 集群单节点 etcd 在测试期间出现过间歇性超时；最终 `/readyz` 通过，但 controller-manager 和 scheduler 存在约 2600 次历史重启。该问题属于测试集群基础设施风险，不能据此认定生产环境已通过验收。
