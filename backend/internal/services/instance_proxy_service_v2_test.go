@@ -138,6 +138,7 @@ func TestInstanceProxyServiceSuppressesOpenCodeBasicChallenge(t *testing.T) {
 	service, token := newOpenCodeV2ProxyTestService(t, upstream.URL, 130, instanceToken)
 	service.httpClient = upstream.Client()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/130/proxy/?token="+url.QueryEscape(token.Token), nil)
+	req.Header.Set(DedicatedRuntimeOriginHeader, RuntimeTypeOpenCode)
 	rec := httptest.NewRecorder()
 	if err := service.ProxyRequest(req.Context(), 130, token.Token, rec, req); err != nil {
 		t.Fatalf("ProxyRequest returned error: %v", err)
@@ -211,6 +212,72 @@ func TestInstanceProxyServicePreservesDeepSeekHarnessPluginBatchRawQuery(t *test
 	}
 	if rec.Code != http.StatusOK || rec.Body.String() != "export default true" {
 		t.Fatalf("proxy response = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInstanceProxyServiceKeepsOpenCodeDedicatedOriginAtRoot(t *testing.T) {
+	instanceToken := "igt_opencode_instance"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != "opencode" || password != instanceToken {
+			t.Fatalf("BasicAuth = %q/%q/%v", username, password, ok)
+		}
+		if got := r.Header.Get("X-Forwarded-Prefix"); got != "" {
+			t.Fatalf("X-Forwarded-Prefix = %q, want empty for dedicated origin", got)
+		}
+		if r.URL.Path == "/redirect" {
+			w.Header().Set("Location", "/session/next")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><script src="/assets/app.js"></script></head><body></body></html>`))
+	}))
+	defer upstream.Close()
+
+	service, token := newOpenCodeV2ProxyTestService(t, upstream.URL, 134, instanceToken)
+	client := upstream.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	service.httpClient = client
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/134/proxy/?token="+url.QueryEscape(token.Token), nil)
+	req.Header.Set(DedicatedRuntimeOriginHeader, RuntimeTypeOpenCode)
+	rec := httptest.NewRecorder()
+	if err := service.ProxyRequest(req.Context(), 134, token.Token, rec, req); err != nil {
+		t.Fatalf("ProxyRequest returned error: %v", err)
+	}
+	if strings.Contains(rec.Body.String(), "<base ") || strings.Contains(rec.Body.String(), "/api/v1/instances/134/proxy") {
+		t.Fatalf("dedicated-origin HTML was rewritten as a subpath: %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/instances/134/proxy/redirect?token="+url.QueryEscape(token.Token), nil)
+	req.Header.Set(DedicatedRuntimeOriginHeader, RuntimeTypeOpenCode)
+	rec = httptest.NewRecorder()
+	if err := service.ProxyRequest(req.Context(), 134, token.Token, rec, req); err != nil {
+		t.Fatalf("redirect ProxyRequest returned error: %v", err)
+	}
+	if got := rec.Header().Get("Location"); got != "/session/next" {
+		t.Fatalf("Location = %q, want root-origin redirect", got)
+	}
+}
+
+func TestInstanceProxyServiceRejectsLegacyOpenCodeSubpathProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("legacy OpenCode request must not reach the runtime")
+	}))
+	defer upstream.Close()
+
+	service, token := newOpenCodeV2ProxyTestService(t, upstream.URL, 137, "igt_opencode_instance")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/137/proxy/", nil)
+	if err := service.ProxyRequest(req.Context(), 137, token.Token, httptest.NewRecorder(), req); !errors.Is(err, ErrOpenCodeDedicatedOriginRequired) {
+		t.Fatalf("ProxyRequest error = %v, want ErrOpenCodeDedicatedOriginRequired", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/instances/137/proxy/ws", nil)
+	if err := service.ProxyWebSocket(req.Context(), 137, token.Token, httptest.NewRecorder(), req); !errors.Is(err, ErrOpenCodeDedicatedOriginRequired) {
+		t.Fatalf("ProxyWebSocket error = %v, want ErrOpenCodeDedicatedOriginRequired", err)
 	}
 }
 
@@ -1066,6 +1133,34 @@ func TestInstanceProxyServiceUsesConfiguredDedicatedOriginForOpenCodeLite(t *tes
 				t.Fatalf("GetProxyURLForInstance() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInstanceProxyServiceRequiresConfiguredDedicatedOriginForOpenCodeLite(t *testing.T) {
+	workspacePath := "/workspaces/opencode/user-45/instance-123"
+	instance := &models.Instance{
+		ID: 123, Type: RuntimeTypeOpenCode, RuntimeType: RuntimeBackendGateway,
+		InstanceMode: InstanceModeLite, WorkspacePath: &workspacePath,
+	}
+	accessService := NewInstanceAccessService()
+	t.Cleanup(accessService.Stop)
+	service := NewInstanceProxyService(accessService)
+
+	t.Setenv(openCodePublicURLTemplateEnvVar, "https://opencode-{instance_id}.172-16-1-12.nip.io:39443/")
+	got := service.GetProxyURLForInstance(instance, "token+with/slash")
+	want := "https://opencode-123.172-16-1-12.nip.io:39443/?token=token%2Bwith%2Fslash"
+	if got != want {
+		t.Fatalf("GetProxyURLForInstance() = %q, want %q", got, want)
+	}
+
+	t.Setenv(openCodePublicURLTemplateEnvVar, "")
+	if got := service.GetProxyURLForInstance(instance, "token"); got != "" {
+		t.Fatalf("missing dedicated-origin template returned legacy proxy URL %q", got)
+	}
+
+	t.Setenv(openCodePublicURLTemplateEnvVar, "https://runtime.example.test/")
+	if got := service.GetProxyURLForInstance(instance, "token"); got != "" {
+		t.Fatalf("invalid dedicated-origin template returned legacy proxy URL %q", got)
 	}
 }
 

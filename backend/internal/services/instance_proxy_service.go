@@ -69,7 +69,10 @@ const (
 // DedicatedRuntimeOriginHeader marks requests routed through a runtime-specific browser origin.
 const DedicatedRuntimeOriginHeader = "X-ClawManager-Runtime-Origin"
 
-var ErrInstanceGatewayUnavailable = errors.New("instance gateway is not available")
+var (
+	ErrInstanceGatewayUnavailable      = errors.New("instance gateway is not available")
+	ErrOpenCodeDedicatedOriginRequired = errors.New("OpenCode Lite requires its dedicated instance origin")
+)
 
 type InstanceProxyServiceOption func(*InstanceProxyService)
 
@@ -143,6 +146,10 @@ func (s *InstanceProxyService) ProxyRequest(ctx context.Context, instanceID int,
 
 	effectiveRequestPath := canonicalProxyEntryRequestPath(r.URL.Path, accessToken, instanceID)
 	dedicatedRuntimeOrigin := isDedicatedRuntimeOriginRequest(r, accessToken.InstanceType)
+	opencodeLite := s.isOpenCodeLiteProxyInstance(instanceID, accessToken.InstanceType)
+	if opencodeLite && !dedicatedRuntimeOrigin {
+		return ErrOpenCodeDedicatedOriginRequired
+	}
 
 	// Extract the actual path from the request (remove the proxy prefix)
 	targetPath := s.extractTargetPath(effectiveRequestPath, instanceID, accessToken.InstanceType, accessToken.TargetPort)
@@ -158,7 +165,6 @@ func (s *InstanceProxyService) ProxyRequest(ctx context.Context, instanceID int,
 	managedGatewayToken := s.managedRuntimeGatewayBearerToken(ctx, instanceID, accessToken.InstanceType)
 	proxyPrefix := hermesProxyPrefix(instanceID)
 	hermesLite := s.isHermesLiteProxyInstance(instanceID, accessToken.InstanceType)
-	opencodeLite := s.isOpenCodeLiteProxyInstance(instanceID, accessToken.InstanceType)
 	bootstrapPath := stripInstanceProxyPrefix(targetPath, instanceID)
 
 	// Copy query parameters, excluding ClawManager-owned proxy/gateway tokens.
@@ -234,7 +240,11 @@ func (s *InstanceProxyService) ProxyRequest(ctx context.Context, instanceID int,
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-Proto", requestScheme(r))
-	proxyReq.Header.Set("X-Forwarded-Prefix", proxyPrefix)
+	if dedicatedRuntimeOrigin {
+		proxyReq.Header.Del("X-Forwarded-Prefix")
+	} else {
+		proxyReq.Header.Set("X-Forwarded-Prefix", proxyPrefix)
+	}
 	if opencodeLite {
 		setOpenCodeServerBasicAuthHeaders(proxyReq.Header, managedGatewayToken)
 	} else if !isHermesDashboardPublicAuthPath(bootstrapPath) {
@@ -391,6 +401,10 @@ func (s *InstanceProxyService) ProxyWebSocket(ctx context.Context, instanceID in
 		return fmt.Errorf("token does not match instance")
 	}
 	dedicatedRuntimeOrigin := isDedicatedRuntimeOriginRequest(r, accessToken.InstanceType)
+	opencodeLite := s.isOpenCodeLiteProxyInstance(instanceID, accessToken.InstanceType)
+	if opencodeLite && !dedicatedRuntimeOrigin {
+		return ErrOpenCodeDedicatedOriginRequired
+	}
 
 	// Extract the actual path from the request
 	targetPath := s.extractTargetPath(r.URL.Path, instanceID, accessToken.InstanceType, accessToken.TargetPort)
@@ -404,7 +418,6 @@ func (s *InstanceProxyService) ProxyWebSocket(ctx context.Context, instanceID in
 	managedGatewayToken := s.managedRuntimeGatewayBearerToken(ctx, instanceID, accessToken.InstanceType)
 	upstreamPath := stripInstanceProxyPrefix(targetPath, instanceID)
 	hermesLite := s.isHermesLiteProxyInstance(instanceID, accessToken.InstanceType)
-	opencodeLite := s.isOpenCodeLiteProxyInstance(instanceID, accessToken.InstanceType)
 	skipManagedWSAuth := hermesLite && isHermesDashboardTicketWebSocket(upstreamPath, r.URL.Query())
 
 	// Copy query parameters, excluding ClawManager-owned proxy/gateway tokens.
@@ -434,7 +447,11 @@ func (s *InstanceProxyService) ProxyWebSocket(ctx context.Context, instanceID in
 	upstreamHeader.Set("X-Forwarded-For", r.RemoteAddr)
 	upstreamHeader.Set("X-Forwarded-Host", r.Host)
 	upstreamHeader.Set("X-Forwarded-Proto", requestScheme(r))
-	upstreamHeader.Set("X-Forwarded-Prefix", fmt.Sprintf("/api/v1/instances/%d/proxy", instanceID))
+	if dedicatedRuntimeOrigin {
+		upstreamHeader.Del("X-Forwarded-Prefix")
+	} else {
+		upstreamHeader.Set("X-Forwarded-Prefix", fmt.Sprintf("/api/v1/instances/%d/proxy", instanceID))
+	}
 	// Hermes dashboard chat uses cookie + ticket query auth. Do not inject
 	// managed Bearer/API-Key headers or rewrite Origin for those sockets.
 	if skipManagedWSAuth {
@@ -1327,8 +1344,13 @@ func (s *InstanceProxyService) GetProxyURLForInstance(instance *models.Instance,
 	if instance == nil {
 		return ""
 	}
-	if runtimeType, ok := v2RuntimeTypeForInstance(instance); ok &&
-		(runtimeType == RuntimeTypeOpenCode || runtimeType == RuntimeTypeDeepSeekHarness) {
+	if runtimeType, ok := v2RuntimeTypeForInstance(instance); ok && runtimeType == RuntimeTypeOpenCode {
+		// OpenCode's web UI owns the root of its origin. Do not fall back to the
+		// legacy /instances/{id}/proxy subpath when the deployment forgot its
+		// dedicated-origin template; fail access generation instead.
+		return managedRuntimePublicURL(runtimeType, instance.ID, token)
+	}
+	if runtimeType, ok := v2RuntimeTypeForInstance(instance); ok && runtimeType == RuntimeTypeDeepSeekHarness {
 		if publicURL := managedRuntimePublicURL(runtimeType, instance.ID, token); publicURL != "" {
 			return publicURL
 		}

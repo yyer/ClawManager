@@ -1915,6 +1915,8 @@ func (h *InstanceHandler) proxyInstanceWithToken(c *gin.Context, id int, token s
 		if err := h.proxyService.ProxyWebSocket(c.Request.Context(), id, token, c.Writer, c.Request); err != nil {
 			if errors.Is(err, services.ErrInstanceGatewayUnavailable) {
 				http.Error(c.Writer, "Instance gateway is not available", http.StatusServiceUnavailable)
+			} else if errors.Is(err, services.ErrOpenCodeDedicatedOriginRequired) {
+				http.Error(c.Writer, err.Error(), http.StatusNotFound)
 			} else {
 				http.Error(c.Writer, err.Error(), http.StatusBadGateway)
 			}
@@ -1935,6 +1937,8 @@ func (h *InstanceHandler) proxyInstanceWithToken(c *gin.Context, id int, token s
 			http.Error(c.Writer, "Token does not match instance", http.StatusForbidden)
 		} else if errors.Is(err, services.ErrInstanceGatewayUnavailable) {
 			http.Error(c.Writer, "Instance gateway is not available", http.StatusServiceUnavailable)
+		} else if errors.Is(err, services.ErrOpenCodeDedicatedOriginRequired) {
+			http.Error(c.Writer, err.Error(), http.StatusNotFound)
 		} else {
 			http.Error(c.Writer, fmt.Sprintf("Failed to proxy request: %v", err), http.StatusBadGateway)
 		}
