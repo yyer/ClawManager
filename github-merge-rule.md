@@ -174,3 +174,11 @@ cd frontend && npm run lint && npm run build
 - 新镜像固定为 `10.130.14.23:5000/clawmanager@sha256:a582eb9daa24b87a8fd14a8fbffddf589645b4be746442af594b5f5ab242fe79`。Deployment revision 35，3/3 Ready、3/3 Available、3/3 Updated，Pod 重启数均为 0，覆盖 `k8s-master` 和 `node1`；版本接口返回提交 `51d76b11a460338fd9208f12376ae3fcb9d0871c`、构建时间 `2026-09-09T14:10:01Z`。
 - 后端 `go test ./...`、共享页面和实例详情 contract test、完整前端生产构建、Hermes Desktop Web 34 项测试均通过。对真实 Share Link（实例 ID 42，Hermes Lite/gateway）进行全新未登录浏览器验收：入口 303 到共享页面，iframe 加载 `/hermes-desktop-web/?instance_id=42`，共享 session、workspace、renderer、Desktop session 和 Runtime API 均为 HTTP 200，浏览器异常与控制台错误均为 0。
 - 此项是 GitHub PR #198 同步后的下游纠正，不代表新增 GitHub 同步单元，`last_processed_upstream_commit` 继续保持 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。
+
+### 2026-09-09：Hermes 传统 Dashboard/TUI 清理
+
+- 本地功能提交：`0f199a1f8ac9899ebee47583401b8eb67c2f7612`；配套 AgentsRuntime 提交：`c0a8eb837ab9637ad5f725d569d731b5d0ad1145`。
+- 删除已废弃的 `deployments/hermes-runtime/Dockerfile.tui-dist`、controller 中的 `HERMES_TUI_DIR` 注入，以及 K8s/K3s 静态清单中的同名环境变量；历史数据库 migration 保持不变。
+- 新 Hermes Lite Runtime 上报 `backend_mode=serve`。ClawManager 在滚动升级期间同时接受 `serve` 与旧 `dashboard` 能力值，避免尚未替换的运行时实例丢失 Desktop、Share Link、BFF 或 WebSocket 能力；新运行时自身只启动 headless `hermes serve`。
+- 验证通过：后端 `go test ./...`、runtime deployment 定向测试，以及配套 AgentsRuntime 的完整镜像 smoke。九节点生产清单中用户已有的存储扩容修改与 README 修改未包含在功能提交中。
+- 此项是本地下游清理，不是新的 GitHub 同步单元；`last_processed_upstream_commit` 继续保持 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。本记录不表示新镜像已部署到测试集群。
