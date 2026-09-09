@@ -157,3 +157,11 @@ cd frontend && npm run lint && npm run build
 - 候选运行时健康声明为 `artifacts_verified=true`、`release_accepted=false`；这表示构建产物已验证，但本次测试不替代正式发布接受流程。
 - 基础设施遗留：`redis-data` 已请求由 1Gi 扩至 4Gi，但 Longhorn 卷处于 `degraded` 且文件系统仍为 1Gi，PVC 保持 `Resizing`。为继续测试，Redis 仅在当前进程内临时设置 `stop-writes-on-bgsave-error=no`、`save=""`；AOF 保持启用且写入状态正常。Redis Pod 重启会恢复原配置，在扩容完成前可能再次阻断 Hermes Desktop ticket 写入。
 - 集群单节点 etcd 在测试期间出现过间歇性超时；最终 `/readyz` 通过，但 controller-manager 和 scheduler 存在约 2600 次历史重启。该问题属于测试集群基础设施风险，不能据此认定生产环境已通过验收。
+
+### 2026-09-09：Hermes Lite 实例详情页纠正
+
+- 纠正提交：`ef243b47a22ddb74848e1b54d02343b00733deb1`。同步适配曾遗漏向 `InstanceServiceFrame` 传递 `instance_mode`，导致 Hermes Lite 详情页错误进入传统 desktop access URL 流程；现已在 Lite 和 Pro 两个调用点恢复上游属性，并补充回归断言。
+- 新镜像固定为 `10.130.14.23:5000/clawmanager@sha256:6ab3dc770f44030b3f20bf83a6fbe5fae5b6266731b661cd3f89e63a12cb36a4`。Deployment revision 34，3/3 Ready、3/3 Available、Pod 重启数均为 0，覆盖 `k8s-master` 和 `node1`。
+- 不可变 digest 配合 `imagePullPolicy=IfNotPresent`，避免测试集群 kubelet 对本地已完整缓存镜像的重复拉取卡住；镜像内容和 registry manifest digest 已分别校验。
+- 定向 contract test、Hermes Desktop 7 项单测和完整前端构建通过；定向 ESLint 仅命中 `InstanceDetailPage.tsx` 中 6 个既有 React Hooks 问题，本次变更在排除这两条既有规则后无新增 lint 错误。
+- 对实例 `112233`（ID 36、generation 4）从真实 `/instances/36` 详情页复测通过：错误文案消失，Hermes iframe 正确加载 `/hermes-desktop-web/?instance_id=36`，capability probe/bootstrap 均为 HTTP 200，旧 `/api/v1/instances/36/access` 请求为 0，浏览器错误为 0。
