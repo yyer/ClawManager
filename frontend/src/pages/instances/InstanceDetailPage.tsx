@@ -1614,7 +1614,9 @@ const InstanceDetailPage: React.FC = () => {
               instanceId={instance.id}
               instanceName={instance.name}
               instanceType={instance.type}
+              instanceMode={instance.instance_mode}
               availability={availability}
+              reloadToken={serviceFrameReloadToken}
               openCodeInitialDirectory={openCodeInitialDirectory}
               workspaceVisible={supportsWorkspace(instance) ? workspaceVisible : undefined}
               onWorkspaceVisibilityChange={supportsWorkspace(instance) ? setWorkspaceVisible : undefined}
@@ -1726,6 +1728,7 @@ const InstanceDetailPage: React.FC = () => {
             instanceId={instance.id}
             instanceName={instance.name}
             instanceType={instance.type}
+            instanceMode={instance.instance_mode}
             availability={availability}
             reloadToken={serviceFrameReloadToken}
             workspaceVisible={supportsWorkspace(instance) ? workspaceVisible : undefined}
