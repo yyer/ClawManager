@@ -165,3 +165,12 @@ cd frontend && npm run lint && npm run build
 - 不可变 digest 配合 `imagePullPolicy=IfNotPresent`，避免测试集群 kubelet 对本地已完整缓存镜像的重复拉取卡住；镜像内容和 registry manifest digest 已分别校验。
 - 定向 contract test、Hermes Desktop 7 项单测和完整前端构建通过；定向 ESLint 仅命中 `InstanceDetailPage.tsx` 中 6 个既有 React Hooks 问题，本次变更在排除这两条既有规则后无新增 lint 错误。
 - 对实例 `112233`（ID 36、generation 4）从真实 `/instances/36` 详情页复测通过：错误文案消失，Hermes iframe 正确加载 `/hermes-desktop-web/?instance_id=36`，capability probe/bootstrap 均为 HTTP 200，旧 `/api/v1/instances/36/access` 请求为 0，浏览器错误为 0。
+
+### 2026-09-09：Hermes Lite Share Link 纠正
+
+- 纠正提交：`51d76b11a460338fd9208f12376ae3fcb9d0871c`。PR #198 的本地适配仍让 Share Link 依赖传统 `GetProxyURLForInstance`；Hermes Lite/gateway 按设计不开放该代理入口，因此 `/s/<code>/` 在进入共享页面前返回 `Unable to generate access URL`。
+- 共享入口现在为 Hermes Lite 生成同源 `/hermes-desktop-web/?instance_id=<id>` renderer 路径，并在共享 session 中签发 10 分钟、仅限 `/api/v1/instances/<id>/hermes-desktop/` 的 HttpOnly BFF Cookie。任何 Runtime 密码、访问令牌和 BFF 票据都不会进入浏览器 URL。
+- Hermes BFF 会话绑定当前 Share Link 凭据版本；禁用分享、重置分享 URL、重置分享密码或分享过期后，旧会话的后续请求会被拒绝。普通实例拥有者的 Hermes Desktop 会话不受影响。
+- 新镜像固定为 `10.130.14.23:5000/clawmanager@sha256:a582eb9daa24b87a8fd14a8fbffddf589645b4be746442af594b5f5ab242fe79`。Deployment revision 35，3/3 Ready、3/3 Available、3/3 Updated，Pod 重启数均为 0，覆盖 `k8s-master` 和 `node1`；版本接口返回提交 `51d76b11a460338fd9208f12376ae3fcb9d0871c`、构建时间 `2026-09-09T14:10:01Z`。
+- 后端 `go test ./...`、共享页面和实例详情 contract test、完整前端生产构建、Hermes Desktop Web 34 项测试均通过。对真实 Share Link（实例 ID 42，Hermes Lite/gateway）进行全新未登录浏览器验收：入口 303 到共享页面，iframe 加载 `/hermes-desktop-web/?instance_id=42`，共享 session、workspace、renderer、Desktop session 和 Runtime API 均为 HTTP 200，浏览器异常与控制台错误均为 0。
+- 此项是 GitHub PR #198 同步后的下游纠正，不代表新增 GitHub 同步单元，`last_processed_upstream_commit` 继续保持 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。
