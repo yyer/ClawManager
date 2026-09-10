@@ -315,7 +315,7 @@ func TestHermesDesktopExpiredUpstreamCookieRetriesOnce(t *testing.T) {
 }
 
 func TestHermesDesktopHTTPPolicyAndSanitization(t *testing.T) {
-	for _, raw := range []string{"/auth/ws-ticket", "/sessions/../../config", "/sessions?profile=other", "/sessions?limit=99999", "/sessions?limit=1&limit=2", "/fs/read?path=/etc/passwd"} {
+	for _, raw := range []string{"/auth/ws-ticket", "/sessions/../../config", "/sessions?limit=1&limit=2", "/fs/read?path=/etc/passwd", "/runtime/health?token=secret"} {
 		u, _ := url.Parse(raw)
 		if hermesDesktopHTTPAllowed("GET", u.Path, u.Query()) {
 			t.Errorf("allowed %s", raw)
@@ -327,8 +327,8 @@ func TestHermesDesktopHTTPPolicyAndSanitization(t *testing.T) {
 			t.Errorf("rejected %s", raw)
 		}
 	}
-	if hermesDesktopHTTPAllowed("POST", "/sessions", nil) {
-		t.Fatal("mutation allowed")
+	if !hermesDesktopHTTPAllowed("POST", "/sessions", nil) {
+		t.Fatal("valid mutation rejected")
 	}
 	body, err := hermesDesktopSanitize([]byte(`{"session_token":"sensitive","nested":{"api_key":"key","apiKey":"camel-secret","accessToken":"camel-access","sessionToken":"camel-session","message":"private-password cookie-value"},"input_tokens":40}`), "private-password", []*http.Cookie{{Value: "cookie-value"}})
 	if err != nil {

@@ -8,44 +8,14 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
 var hermesDesktopSessionID = regexp.MustCompile(`^[A-Za-z0-9_:-]{1,160}$`)
 var hermesDesktopAPIPath = regexp.MustCompile(`^/[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$`)
 var hermesDesktopQueryKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
-
-var hermesDesktopManagedPrefixes = []string{
-	"/actions", "/analytics", "/audio", "/cron", "/curator", "/env", "/gateway",
-	"/git", "/hermes", "/learning", "/mcp", "/memory", "/messaging", "/model",
-	"/ops", "/pairing", "/plugins", "/providers", "/skills", "/tools", "/webhooks",
-}
-
-func hermesDesktopManagedAPI(method, path string, q url.Values) bool {
-	if method != http.MethodGet && method != http.MethodPost && method != http.MethodPut && method != http.MethodPatch && method != http.MethodDelete {
-		return false
-	}
-	if !hermesDesktopAPIPath.MatchString(path) {
-		return false
-	}
-	managed := false
-	for _, prefix := range hermesDesktopManagedPrefixes {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			managed = true
-			break
-		}
-	}
-	if !managed || len(q) > 32 {
-		return false
-	}
-	for key, values := range q {
-		if !hermesDesktopQueryKey.MatchString(key) || len(values) != 1 || len(values[0]) > 4096 {
-			return false
-		}
-	}
-	return true
-}
+var hermesDesktopProfileName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var hermesDesktopForbiddenQueryKeys = map[string]bool{"token": true, "password": true, "secret": true, "api_key": true, "apikey": true, "authorization": true, "cookie": true}
 
 func hermesDesktopReasoningAllowed(value string) bool {
 	switch value {
@@ -56,99 +26,41 @@ func hermesDesktopReasoningAllowed(value string) bool {
 	}
 }
 
-// Every allowed route is verified against the pinned upstream web_server.py
-// and web_routers/sessions.py. Config reads are projected UI fields; profiles
-// are single-instance CM labels, never upstream filesystem selectors.
 func hermesDesktopHTTPAllowed(method, path string, q url.Values) bool {
-	if method == http.MethodPut && path == "/config" && len(q) == 0 {
-		return true
-	}
-	if method == http.MethodPatch || method == http.MethodDelete {
-		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-		if len(parts) != 2 || parts[0] != "sessions" || !hermesDesktopSessionID.MatchString(parts[1]) {
-			return false
-		}
-		for key, values := range q {
-			if key != "profile" || len(values) != 1 || (values[0] != "default" && values[0] != "current") {
-				return false
-			}
-		}
-		return true
-	}
-	if hermesDesktopManagedAPI(method, path, q) && path != "/model/options" {
-		return true
-	}
-	if method != http.MethodGet {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
 		return false
 	}
-	allowed := map[string]bool{}
-	switch path {
-	case "/status", "/model/info", "/config", "/config/defaults", "/config/schema", "/profiles":
-	case "/model/options":
-		allowed["explicit_only"] = true
-		allowed["refresh"] = true
-		allowed["include_unconfigured"] = true
-	case "/sessions", "/profiles/sessions":
-		for _, key := range []string{"limit", "offset", "min_messages", "archived", "order", "source", "exclude_sources"} {
-			allowed[key] = true
-		}
-	case "/profiles/sessions/sidebar":
-		for _, key := range []string{"recents_profile", "recents_limit", "cron_limit", "messaging_limit", "recents_exclude", "messaging_exclude"} {
-			allowed[key] = true
-		}
-	default:
-		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-		if (len(parts) != 2 && len(parts) != 3) || parts[0] != "sessions" || !hermesDesktopSessionID.MatchString(parts[1]) || (len(parts) == 3 && parts[2] != "messages") {
+	if !hermesDesktopAPIPath.MatchString(path) || len(q) > 32 {
+		return false
+	}
+	if path == "/auth" || strings.HasPrefix(path, "/auth/") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if segment == "." || segment == ".." {
 			return false
-		}
-		if strings.Contains(" search stats empty owner-backfill bulk-delete import prune ", " "+parts[1]+" ") {
-			return false
-		}
-		if len(parts) == 3 {
-			for _, key := range []string{"limit", "offset", "order", "include_compacted"} {
-				allowed[key] = true
-			}
 		}
 	}
-	allowed["profile"] = true
 	for key, values := range q {
-		if !allowed[key] || len(values) != 1 {
+		if !hermesDesktopQueryKey.MatchString(key) || len(values) != 1 || len(values[0]) > 4096 {
 			return false
 		}
-		v := values[0]
-		switch key {
-		case "limit", "offset", "min_messages", "recents_limit", "cron_limit", "messaging_limit":
-			n, err := strconv.Atoi(v)
-			max := 10000
-			if key == "limit" || strings.HasSuffix(key, "_limit") {
-				max = 200
-				if strings.HasSuffix(path, "/messages") {
-					max = 500
-				} else if path == "/sessions" || strings.HasPrefix(path, "/profiles/sessions") {
-					max = 100
-				}
-			}
-			if err != nil || n < 0 || n > max {
+		if hermesDesktopForbiddenQueryKeys[strings.ToLower(key)] {
+			return false
+		}
+		if key == "connectionId" {
+			return false
+		}
+		if key == "profile" || key == "recents_profile" {
+			if !hermesDesktopProfileName.MatchString(values[0]) {
 				return false
 			}
-		case "explicit_only", "refresh", "include_unconfigured", "include_compacted":
-			if v != "1" && v != "true" {
-				return false
-			}
-		case "archived":
-			if v != "exclude" && v != "include" && v != "only" {
-				return false
-			}
-		case "order":
-			if v != "recent" && v != "created" && v != "latest" && v != "oldest" {
-				return false
-			}
-		case "profile", "recents_profile":
-			if v != "default" && v != "current" && !(v == "all" && (key == "recents_profile" || path == "/profiles/sessions")) {
-				return false
-			}
-		case "source", "exclude_sources", "recents_exclude", "messaging_exclude":
-			if len(v) > 256 || !hermesDesktopSources.MatchString(v) || (key == "source" && strings.Contains(v, ",")) {
+		}
+		if strings.HasPrefix(path, "/fs") && key == "path" {
+			value := values[0]
+			if strings.HasPrefix(value, "/") || strings.Contains(value, `\`) || strings.Contains(value, "..") || regexp.MustCompile(`^[A-Za-z]:`).MatchString(value) {
 				return false
 			}
 		}

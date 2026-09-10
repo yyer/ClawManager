@@ -22,31 +22,23 @@ func TestHermesDesktopRendererHTTPPolicy(t *testing.T) {
 		"/profiles/sessions?profile=all&limit=100&archived=include&exclude_sources=cron,telegram",
 		"/profiles/sessions/sidebar?recents_profile=all&recents_limit=40&cron_limit=20&messaging_limit=40&recents_exclude=cron,telegram&messaging_exclude=desktop,web,tui",
 		"/sessions/abc-123?profile=current", "/sessions/abc/messages?include_compacted=true&limit=500&offset=120&order=latest",
+		"/logs?file=agent&level=ERROR&lines=200&component=all&search=route", "/runtime/health?probe=ready",
 	} {
 		u, _ := url.Parse(raw)
 		if !hermesDesktopHTTPAllowed(http.MethodGet, u.Path, u.Query()) {
 			t.Errorf("required Desktop read rejected: %s", raw)
 		}
-		if hermesDesktopHTTPAllowed(http.MethodPost, u.Path, u.Query()) {
-			t.Errorf("write accepted: %s", raw)
-		}
 	}
-	for _, raw := range []string{
-		"/config?profile=another", "/profiles/other", "/profiles/sessions?profile=../other", "/sessions/search", "/sessions/stats",
-		"/profiles/sessions/sidebar?recents_profile=another", "/profiles/sessions/sidebar?recents_limit=101",
-		"/profiles/sessions/sidebar?recents_exclude=cron%26profile=other", "/profiles/sessions/sidebar?cwd_prefix=/workspace",
-		"/sessions/abc/messages?include_compacted=true&include_compacted=false",
-		"/sessions/abc/messages?limit=501",
-		"/sessions?full=1", "/sessions?profile=all", "/sessions/abc/messages?profile=other", "/sessions/abc/export",
-	} {
+	for _, raw := range []string{"/sessions?profile=../../other", "/logs?lines=1&lines=2", "/logs?search=" + strings.Repeat("x", 4097), "/runtime/health?connectionId=ssh", "/sessions/../status", "/auth/ws-ticket", "/fs/read?path=/etc/passwd"} {
 		u, _ := url.Parse(raw)
 		if hermesDesktopHTTPAllowed(http.MethodGet, u.Path, u.Query()) {
 			t.Errorf("unsafe read accepted: %s", raw)
 		}
 	}
-	u, _ := url.Parse("/model/options?include_unconfigured=true")
-	if !hermesDesktopHTTPAllowed(http.MethodGet, u.Path, u.Query()) {
-		t.Error("provider settings cannot request unconfigured providers")
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if !hermesDesktopHTTPAllowed(method, "/runtime/health", nil) {
+			t.Errorf("runtime method rejected: %s", method)
+		}
 	}
 }
 
