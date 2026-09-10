@@ -451,6 +451,103 @@ func TestIEISystemDedicatedRuntimeAccessReturnsTokenBootstrapURL(t *testing.T) {
 	}
 }
 
+func TestIEISystemOpenClawLiteAccessReturnsTokenBootstrapURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := testIEIHandlerConfig()
+	sso, err := services.NewIEISSOService(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "owner@example.com"
+	instanceService := &fakeIEIInstanceService{
+		fakeWorkspaceHandlerInstanceService: &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+			44: {ID: 44, UserID: 10, Owner: &owner, Name: "Owner OpenClaw", Type: services.RuntimeTypeOpenClaw, RuntimeType: services.RuntimeBackendGateway, InstanceMode: services.InstanceModeLite, Status: "running"},
+		}},
+	}
+	accessService := services.NewInstanceAccessService()
+	defer accessService.Stop()
+	instanceHandler := &InstanceHandler{
+		accessService: accessService,
+		proxyService:  services.NewInstanceProxyService(accessService),
+	}
+	handler := NewIEISystemHandler(cfg, sso, instanceService, instanceHandler)
+	router := gin.New()
+	router.POST("/api/v1/ieisystem/session", handler.ExchangeSession)
+	router.POST("/api/v1/ieisystem/instances/:id/access", handler.GenerateInstanceAccess)
+
+	sessionCookie := exchangeIEITestSession(t, router, cfg, owner)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ieisystem/instances/44/access", nil)
+	request.AddCookie(sessionCookie)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("access status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			AccessURL string `json:"access_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(response.Data.AccessURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/api/v1/instances/44/proxy/" || parsed.Query().Get("token") == "" {
+		t.Fatalf("OpenClaw Lite access URL did not contain its token bootstrap: %q", response.Data.AccessURL)
+	}
+	if !accessService.IsInstanceAccessToken(parsed.Query().Get("token")) {
+		t.Fatal("OpenClaw Lite URL token is not an instance-access capability")
+	}
+}
+
+func TestIsOpenClawLiteInstance(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		instance *models.Instance
+		want     bool
+	}{
+		{
+			name: "openclaw lite gateway",
+			instance: &models.Instance{
+				Type: services.RuntimeTypeOpenClaw, RuntimeType: services.RuntimeBackendGateway, InstanceMode: services.InstanceModeLite,
+			},
+			want: true,
+		},
+		{
+			name: "openclaw pro",
+			instance: &models.Instance{
+				Type: services.RuntimeTypeOpenClaw, RuntimeType: services.RuntimeBackendGateway, InstanceMode: services.InstanceModePro,
+			},
+			want: false,
+		},
+		{
+			name: "hermes lite gateway",
+			instance: &models.Instance{
+				Type: services.RuntimeTypeHermes, RuntimeType: services.RuntimeBackendGateway, InstanceMode: services.InstanceModeLite,
+			},
+			want: false,
+		},
+		{
+			name: "openclaw lite desktop",
+			instance: &models.Instance{
+				Type: services.RuntimeTypeOpenClaw, RuntimeType: "desktop", InstanceMode: services.InstanceModeLite,
+			},
+			want: false,
+		},
+		{name: "nil", instance: nil, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isOpenClawLiteInstance(tc.instance); got != tc.want {
+				t.Fatalf("isOpenClawLiteInstance() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIEISystemHermesLiteAccessReturnsDesktopWebSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := testIEIHandlerConfig()
@@ -609,6 +706,14 @@ func TestProxyAccessTokenRequiresMatchingIEISession(t *testing.T) {
 	}
 	if token, ok := handler.proxyAccessToken(requestContext(first.Token), 76); !ok || token != access.Token {
 		t.Fatalf("IEI-bound access rejected its matching session: %q/%v", token, ok)
+	}
+
+	// The production router redacts proxy cookies before invoking the handler.
+	// IEI-bound validation must still use the preserved original request.
+	redacted := requestContext(first.Token)
+	redactInstanceProxyCredentials(redacted)
+	if token, ok := handler.proxyAccessToken(redacted, 76); !ok || token != access.Token {
+		t.Fatalf("IEI-bound access rejected its matching session after redaction: %q/%v", token, ok)
 	}
 
 	dedicatedAccess, err := accessService.GenerateBoundToken(
