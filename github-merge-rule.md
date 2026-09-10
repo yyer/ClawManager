@@ -182,3 +182,13 @@ cd frontend && npm run lint && npm run build
 - 新 Hermes Lite Runtime 上报 `backend_mode=serve`。ClawManager 在滚动升级期间同时接受 `serve` 与旧 `dashboard` 能力值，避免尚未替换的运行时实例丢失 Desktop、Share Link、BFF 或 WebSocket 能力；新运行时自身只启动 headless `hermes serve`。
 - 验证通过：后端 `go test ./...`、runtime deployment 定向测试，以及配套 AgentsRuntime 的完整镜像 smoke。九节点生产清单中用户已有的存储扩容修改与 README 修改未包含在功能提交中。
 - 此项是本地下游清理，不是新的 GitHub 同步单元；`last_processed_upstream_commit` 继续保持 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。本记录不表示新镜像已部署到测试集群。
+
+### 2026-09-10：modelupdate Hermes Desktop 功能验收与测试集群修复
+
+- 本次验证代码提交：ClawManager `5577a45581b6933ab3ddc405faf55c0df4b6afee`；配套 AgentsRuntime `fd666f20a0ed750211a63506b116abebc054af97`。两者均已推送到各自 GitLab `modelupdate` 分支；本次没有新增 GitHub 上游同步单元，`last_processed_upstream_commit` 仍为 `378b58b1d5d28ca0125390a36a84d0a14ab7bdb8`。
+- 测试集群 `10.130.14.23`、namespace `clawmanager-system` 已部署不可变镜像：ClawManager `10.130.14.23:5000/clawmanager@sha256:08376679168023043914278ce149680a212c055e26f40aea7833ca5b7a50edee`，Hermes Lite `10.130.14.23:5000/hermes-lite@sha256:b93b109f0d8eac4e55cff64250c9f8f029d88c1a4a82f382c0f5694421a12779`。`/api/v1/version` 返回 `modelupdate`、提交 `5577a45581b6933ab3ddc405faf55c0df4b6afee`。
+- Hermes Lite 实例 45、46 的 Bootstrap GET/POST、实例 Session 均为 HTTP 200 且 `available=true`。未认证部署 smoke 完成 26 项检查（200×19、401×4、403×2、404×1）；renderer commit 为 `29112bef099274229cadff79cdff7bf7b99c4b77`，build input 为 `7a1ae777877befa8790913609ca76e7c0de4b8b976192e4d0aeabff3a610b565`。
+- 真实 BFF WebSocket 闭环通过：Bootstrap cookie、ws-ticket、BFF WS、`ping`、`profiles.list` 均成功；按 Desktop 参数执行 `profiles.create`（默认 profile 克隆）、`session.create/activate`、`config.set`（`gpt-5.5/openai-api`）、`projects.create/list/delete` 全部成功。验证确认 Bot 创建、模型切换、项目创建不是 BFF 白名单问题；模型切换必须等待 session 从 `starting` 完成 Runtime agent hydration。
+- Recent Logs 通过 `/api/v1/instances/45/hermes-desktop/api/logs` 返回 HTTP 200；`/api/profiles`、`/api/model/options?refresh=true` 返回 HTTP 200。IEI 使用实例实际 owner `chenqingshan@ieisystem.com` 的有效 SSO 会话后，实例列表、实例详情和 `/access` 均返回 HTTP 200，Hermes renderer 地址为同源 `/hermes-desktop-web/?instance_id=<id>`。
+- Share Link 新建测试链接后，`/s/<code>/` 重定向到共享页面，shared session、Hermes Desktop session、Recent Logs、Profiles、Model Options 均为 HTTP 200。旧截图中的实例 42 已不存在（接口返回 404），不能用旧链接判断当前实现。
+- 测试集群 Redis 曾因 `redis-data` 文件系统实际仍为 1Gi 且 `clawmanager:runtime-events` 累积约 236 万条导致 AOF 写满、Desktop ticket store 不可用。已在测试集群清理该 stream、压缩 AOF，设置 `save ""`、`stop-writes-on-bgsave-error no`，并将 Redis Deployment 改为 `Recreate`、固定 `node1` 以处理 RWO Longhorn 多挂载。当前 Redis `PING=PONG`、AOF write status 为 `ok`、`/data` 约 31% 使用率。该项是测试集群运维修复，未改变 GitHub 同步检查点；生产环境仍应完成 PVC 扩容并制定 stream 保留策略。
