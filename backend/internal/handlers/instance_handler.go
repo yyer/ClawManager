@@ -1863,11 +1863,16 @@ func (h *InstanceHandler) validCurrentExternalSession(c *gin.Context, accessToke
 		if h.ieiSSOService == nil {
 			return false
 		}
-		rawSession, err := c.Cookie(ieiSystemSessionCookie)
+		// Instance proxy credentials are redacted from c.Request before the
+		// handler runs so they do not leak into access/recovery logs. Read the
+		// preserved original request here; otherwise every same-origin
+		// IEI-bound token is rejected because the session cookie was removed
+		// from the sanitized request.
+		rawSession, err := originalInstanceProxyRequest(c).Cookie(ieiSystemSessionCookie)
 		if err != nil {
 			return false
 		}
-		session, err := h.ieiSSOService.ValidateSession(rawSession)
+		session, err := h.ieiSSOService.ValidateSession(rawSession.Value)
 		return err == nil && accessToken.SessionBinding == ieiSystemSessionBinding(session.SessionID)
 	}
 	if h.externalAccessService == nil {

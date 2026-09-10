@@ -708,6 +708,14 @@ func TestProxyAccessTokenRequiresMatchingIEISession(t *testing.T) {
 		t.Fatalf("IEI-bound access rejected its matching session: %q/%v", token, ok)
 	}
 
+	// The production router redacts proxy cookies before invoking the handler.
+	// IEI-bound validation must still use the preserved original request.
+	redacted := requestContext(first.Token)
+	redactInstanceProxyCredentials(redacted)
+	if token, ok := handler.proxyAccessToken(redacted, 76); !ok || token != access.Token {
+		t.Fatalf("IEI-bound access rejected its matching session after redaction: %q/%v", token, ok)
+	}
+
 	dedicatedAccess, err := accessService.GenerateBoundToken(
 		1, 76, services.RuntimeTypeDeepSeekHarness, "https://deepseek-harness-76.runtime.example.test/", "", 3001, time.Hour,
 		ieiSystemSessionBinding(first.SessionID),
