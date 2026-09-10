@@ -52,13 +52,13 @@ jobs:
           node-version: 24
 
       - name: Install renderer dependencies
-        run: npm ci --prefix hermes-desktop-web --ignore-scripts
+        run: npm ci --prefix frontend/hermes-desktop-web --ignore-scripts
 
       - name: Build pinned Desktop renderer
-        run: node hermes-desktop-web/scripts/build.mjs
+        run: node frontend/hermes-desktop-web/scripts/build.mjs
 
       - name: Test browser bridge
-        run: npm test --prefix hermes-desktop-web
+        run: npm test --prefix frontend/hermes-desktop-web
 
   backend:
     name: Backend Build

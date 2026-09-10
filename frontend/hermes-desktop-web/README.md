@@ -9,10 +9,10 @@
 `upstream.lock.json` 锁定完整 `apps/desktop/src`、public 静态资源、shared 源码与相关包/构建元数据的 Git blob。源文件以原始字节导入；不能修改缓存、改用 main/latest，或在依赖失败时替换为另一套 App。构建拒绝未锁定模块、内容漂移、Electron/Node 宿主依赖和遗漏真实主入口。
 
 ```sh
-npm ci --prefix hermes-desktop-web --ignore-scripts
-node hermes-desktop-web/scripts/build.mjs --source /path/to/hermes-agent
-npm run typecheck --prefix hermes-desktop-web
-npm test --prefix hermes-desktop-web
+npm ci --prefix frontend/hermes-desktop-web --ignore-scripts
+node frontend/hermes-desktop-web/scripts/build.mjs --source /path/to/hermes-agent
+npm run typecheck --prefix frontend/hermes-desktop-web
+npm test --prefix frontend/hermes-desktop-web
 ```
 
 要求 Node 22.22+（CI 使用 24）。省略 `--source` 时使用已验证缓存或从官方固定 commit 下载。CI/Docker 可将本地 Git 对象库作为构建上下文；不依赖工作区脏修改。

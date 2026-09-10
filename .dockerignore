@@ -14,11 +14,11 @@ backend/.tmp
 dev_docs
 docs
 scripts
-!hermes-desktop-web/scripts
-!hermes-desktop-web/scripts/**
-hermes-desktop-web/node_modules
-hermes-desktop-web/.cache
-hermes-desktop-web/.upstream
-hermes-desktop-web/dist
+!frontend/hermes-desktop-web/scripts
+!frontend/hermes-desktop-web/scripts/**
+frontend/hermes-desktop-web/node_modules
+frontend/hermes-desktop-web/.cache
+frontend/hermes-desktop-web/.upstream
+frontend/hermes-desktop-web/dist
 frontend/public/hermes-desktop-web
 *.log

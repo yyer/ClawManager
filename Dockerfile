@@ -2,12 +2,12 @@ FROM --platform=$BUILDPLATFORM node:24-alpine AS hermes-desktop-deps
 
 WORKDIR /app
 RUN apk add --no-cache git
-COPY hermes-desktop-web/package*.json ./hermes-desktop-web/
-RUN --mount=type=cache,id=clawmanager-hermes-npm,target=/root/.npm,sharing=locked npm ci --prefix hermes-desktop-web --ignore-scripts
+COPY frontend/hermes-desktop-web/package*.json ./frontend/hermes-desktop-web/
+RUN --mount=type=cache,id=clawmanager-hermes-npm,target=/root/.npm,sharing=locked npm ci --prefix frontend/hermes-desktop-web --ignore-scripts
 
 FROM hermes-desktop-deps AS hermes-desktop-builder
-COPY hermes-desktop-web/ ./hermes-desktop-web/
-RUN node hermes-desktop-web/scripts/build.mjs
+COPY frontend/hermes-desktop-web/ ./frontend/hermes-desktop-web/
+RUN node frontend/hermes-desktop-web/scripts/build.mjs
 
 FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
 

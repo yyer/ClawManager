@@ -96,7 +96,7 @@ Sync-Decision: applied|adapted|skipped
 - OpenCode 独立 Origin 必须与本地 ingress、Northbound 代理、共享实例和证书方案共同验证。
 - Lite 禁止 TUI shell 是产品行为变更，必须验证不会影响 Pro、IEI 和其他运行时的 shell 入口。
 - Hermes Desktop 的认证、WebSocket、代理策略需适配本地认证和 Northbound 架构，不能整体覆盖现有服务文件。
-- 新增 `hermes-desktop-web/` 时优先保留上游目录结构；`package-lock.json` 和 `upstream.lock.json` 应整体采用明确版本或由规定工具重新生成，不能手工拼接。
+- Hermes Desktop Web 源码必须位于前端目录 `frontend/hermes-desktop-web/`；对外访问路径仍固定为 `/hermes-desktop-web/`。`package-lock.json` 和 `upstream.lock.json` 应整体采用明确版本或由规定工具重新生成，不能手工拼接。
 
 ## 5. 跨仓库依赖门槛
 
@@ -117,7 +117,7 @@ cd backend && go test ./...
 cd frontend && npm run lint && npm run build
 ```
 
-引入 `hermes-desktop-web/` 后还需执行该目录定义的测试和构建脚本，并运行相关 E2E 或定向 smoke test。此外必须：
+引入或更新 `frontend/hermes-desktop-web/` 后还需执行该目录定义的测试和构建脚本，并运行相关 E2E 或定向 smoke test。此外必须：
 
 - 检查代码库中不存在冲突标记。
 - 检查数据库 migration 编号唯一且顺序正确。

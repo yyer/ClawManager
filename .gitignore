@@ -22,10 +22,6 @@
 /frontend/dist/
 /frontend/dist-ssr/
 /frontend/public/hermes-desktop-web/
-/hermes-desktop-web/node_modules/
-/hermes-desktop-web/.cache/
-/hermes-desktop-web/.upstream/
-/hermes-desktop-web/dist/
 /outputs/
 /venv/
 # Logs

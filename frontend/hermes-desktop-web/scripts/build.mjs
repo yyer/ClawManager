@@ -128,8 +128,8 @@ const inputDigest = await buildInputDigest()
 const { build } = await import('vite')
 await build({ configFile: path.join(root, 'vite.config.ts'), root })
 if (await buildInputDigest() !== inputDigest) throw new Error('Renderer build inputs changed during compilation; rebuild before publishing the artifact')
-const output = path.resolve(root, '../frontend/public/hermes-desktop-web')
-const expectedOutput = path.join(path.dirname(root), 'frontend', 'public', 'hermes-desktop-web')
+const output = path.resolve(root, '../public/hermes-desktop-web')
+const expectedOutput = path.join(path.dirname(root), 'public', 'hermes-desktop-web')
 if (output !== expectedOutput || path.basename(output) !== 'hermes-desktop-web') throw new Error('Unsafe output path')
 // Only this generated directory is replaced; stale hashed chunks must not ship.
 await rm(output, { recursive: true, force: true })
@@ -142,7 +142,7 @@ await writeFile(path.join(output, 'build-info.json'), JSON.stringify({
   renderer_entry: lock.rendererEntry, upstream_tree: lock.sourceTree,
   dependency_audit: dependencyAudit,
   build_input_sha256: inputDigest,
-  tailwind_sources: ['apps/desktop/src', 'clawmanager/hermes-desktop-web/src'],
+  tailwind_sources: ['apps/desktop/src', 'clawmanager/frontend/hermes-desktop-web/src'],
   source_files: lock.files
 }, null, 2) + '\n')
 console.log(`Locked Hermes Desktop renderer built (runtime/browser acceptance still required): ${output}`)

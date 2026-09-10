@@ -24,8 +24,8 @@
 ### Task 1: Replace feature-name API allowlists and enable Recent Logs
 
 **Files:**
-- Modify: `hermes-desktop-web/src/bridge.ts`
-- Test: `hermes-desktop-web/test/bridge.test.ts`
+- Modify: `frontend/hermes-desktop-web/src/bridge.ts`
+- Test: `frontend/hermes-desktop-web/test/bridge.test.ts`
 - Modify: `backend/internal/services/hermes_desktop_policy.go`
 - Test: `backend/internal/services/hermes_desktop_renderer_test.go` or a focused policy test file in the same package
 - Modify only if required for response handling: `backend/internal/services/hermes_desktop_renderer.go`
@@ -36,7 +36,7 @@
 - `/api/logs` is proxied through the existing `desktopRead` path and existing redaction pipeline.
 
 - [ ] **Step 1: Write failing Bridge tests.** Add cases proving `/api/logs?file=agent&level=ERROR&lines=200&component=all&search=route` and an arbitrary valid Runtime endpoint are accepted, while encoded paths, duplicate keys, oversized values, invalid methods, and `profile=../../outside` remain rejected.
-- [ ] **Step 2: Run the focused Bridge test and verify RED.** Run `npm test -- --runInBand test/bridge.test.ts` from `hermes-desktop-web` (or the repository’s configured equivalent). The new acceptance assertions must fail because `/api/logs` is currently not in `READ_QUERIES` and arbitrary routes are rejected.
+- [ ] **Step 2: Run the focused Bridge test and verify RED.** Run the renderer test from `frontend/hermes-desktop-web` (or the repository’s configured equivalent). The new acceptance assertions must fail because `/api/logs` is currently not in `READ_QUERIES` and arbitrary routes are rejected.
 - [ ] **Step 3: Write failing Go policy tests.** Add assertions that `GET /logs` with the five documented query keys and a valid arbitrary path pass, while malformed path/query inputs fail.
 - [ ] **Step 4: Run the focused Go test and verify RED.** Run `go test ./internal/services -run 'HermesDesktop.*(Policy|HTTP|Logs)' -count=1` from `backend`; confirm the new assertions fail for the current allowlist.
 - [ ] **Step 5: Implement structural validation.** Replace feature-prefix dispatch in the TypeScript bridge with normalized API-path validation. In Go, accept the five HTTP methods for any normalized path matching `hermesDesktopAPIPath`, bound query count/value length, reject duplicate query values, and preserve exact config-envelope validation in `ProxyAPIRequest`.
@@ -64,11 +64,11 @@
 ### Task 3: Restore model, Bots, and workspace-scoped Project UI flows
 
 **Files:**
-- Modify: `hermes-desktop-web/.upstream/source/apps/desktop/src/app/session/hooks/use-model-controls.ts` through the existing Web adaptation mechanism, or add the smallest Web-only adaptation in `hermes-desktop-web/scripts/web-adaptations.mjs`
-- Test: the relevant renderer/adaptation tests under `hermes-desktop-web/src` or `hermes-desktop-web/test`
+- Modify: `frontend/hermes-desktop-web/.upstream/source/apps/desktop/src/app/session/hooks/use-model-controls.ts` through the existing Web adaptation mechanism, or add the smallest Web-only adaptation in `frontend/hermes-desktop-web/scripts/web-adaptations.mjs`
+- Test: the relevant renderer/adaptation tests under `frontend/hermes-desktop-web/src` or `frontend/hermes-desktop-web/test`
 - Modify: `backend/internal/services/hermes_desktop_policy.go` for RPC fields/profile grammar/session title/list fields
 - Test: `backend/internal/services/hermes_desktop_renderer_test.go`
-- Modify: `hermes-desktop-web/scripts/web-adaptations.mjs` to remove the project unavailable replacement and retain workspace-only directory behavior
+- Modify: `frontend/hermes-desktop-web/scripts/web-adaptations.mjs` to remove the project unavailable replacement and retain workspace-only directory behavior
 - Test: adaptation/build tests covering Bot Mode and Project Dialog behavior
 
 **Interfaces:**
@@ -116,4 +116,3 @@
 - [ ] **Step 4: Update only the test namespace.** Apply the new image tags to `clawmanager-system` using the existing deployment tooling, wait for rollouts, and verify pod image IDs.
 - [ ] **Step 5: Execute functional smoke checks.** Test Recent Logs, IEI Lite URL, model switch, Bot create/open, Project create at workspace root, and a rejected workspace escape; confirm the external Provider no-route error remains accurately reported.
 - [ ] **Step 6: Record evidence and commit deployment metadata only if required.** Capture test commands, image digests, rollout status, and endpoint checks; do not stage unrelated user files.
-
