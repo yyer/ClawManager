@@ -164,8 +164,15 @@ function cleanUri(r) {
     }
     var key = secret();
     // Strip any correctly signed ClawManager capability, including an expired
-    // one. A non-ClawManager `token` remains available to the runtime app.
-    if (!key || !validateTokenCandidate(r, queryToken, key, true)) {
+    // one, only when nginx will proxy directly to the runtime upstream. Tokens
+    // without an upstream intentionally fall back to the Go control-plane
+    // proxy, which must receive the query capability so it can perform the
+    // stronger session-bound validation and strip runtime secrets itself.
+    var queryCapability = key ? validateTokenCandidate(r, queryToken, key, true) : null;
+    if (!queryCapability) {
+        return uri;
+    }
+    if (!queryCapability.payload.upstream) {
         return uri;
     }
 

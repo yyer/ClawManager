@@ -298,6 +298,7 @@ func TestDesktopAuthAllowsDedicatedOriginTokenRotation(t *testing.T) {
 		"var cookieTokens = readCookieTokens(r)",
 		"validateTokenCandidate(r, cookieTokens[i], key, false)",
 		"validateTokenCandidate(r, queryToken, key, true)",
+		"if (!queryCapability.payload.upstream)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("desktop auth must support managed query-token rotation; missing %q", want)
