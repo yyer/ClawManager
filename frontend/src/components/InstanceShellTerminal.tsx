@@ -214,8 +214,8 @@ export function InstanceShellTerminal({
     manuallyDisconnectedRef.current = false;
   }, [instanceId]);
 
-  // Shell runtimes and the optional OpenCode terminal fallback connect as soon
-  // as the xterm surface exists, while preserving an explicit disconnect.
+  // Auto-connect terminal consumers as soon as the xterm surface exists,
+  // while preserving a user's explicit disconnect.
   useEffect(() => {
     if (!autoConnect || !isRunning || !terminalElement || manuallyDisconnectedRef.current) {
       return;

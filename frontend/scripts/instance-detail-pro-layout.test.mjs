@@ -132,6 +132,17 @@ const liteRender = sliceBetween(
   "\n  const renderProWorkspace = () => (",
 );
 
+for (const [layout, source] of [["Lite", liteRender], ["Pro", proRender]]) {
+  assert(
+    source.includes("instanceMode={instance.instance_mode}"),
+    `${layout} instance detail must pass instance_mode to the service frame.`,
+  );
+  assert(
+    source.includes("reloadToken={serviceFrameReloadToken}"),
+    `${layout} instance detail must refresh the active service frame after a lifecycle action.`,
+  );
+}
+
 assert(
   liteRender.includes("workspaceVisible={supportsWorkspace(instance) ? workspaceVisible : undefined}") &&
     liteRender.includes("onWorkspaceVisibilityChange={supportsWorkspace(instance) ? setWorkspaceVisible : undefined}") &&

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isAxiosError } from "axios";
 import { instanceService } from "../services/instanceService";
 
 interface RefreshAccessOptions {
@@ -168,6 +169,7 @@ export function useInstanceDesktopAccess({
   }, [clearRefreshTimeout, clearRetryTimeout, instanceId]);
 
   useEffect(() => {
+    let cancelled = false;
     clearRetryTimeout();
     clearRefreshTimeout();
     requestIdRef.current += 1;
@@ -186,11 +188,17 @@ export function useInstanceDesktopAccess({
       cachedSession?.hasEstablishedSession ?? false;
     retryAttemptRef.current = 0;
 
-    setEmbedUrl(nextEmbedUrl);
-    setExpiresAt(nextExpiresAt);
-    setError(null);
-    setLoading(false);
-    setReconnecting(false);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setEmbedUrl(nextEmbedUrl);
+      setExpiresAt(nextExpiresAt);
+      setError(null);
+      setLoading(false);
+      setReconnecting(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [clearRefreshTimeout, clearRetryTimeout, instanceId]);
 
   const shouldPreserveSession = useCallback(() => {
@@ -280,12 +288,12 @@ export function useInstanceDesktopAccess({
           embedUrl: shouldReloadFrame ? nextEmbedUrl : previousEmbedUrl,
           expiresAt: nextExpiresAt.getTime(),
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (requestId !== requestIdRef.current) {
           return;
         }
 
-        setError(err.response?.data?.error || failedMessage);
+        setError((isAxiosError<{ error?: string }>(err) && err.response?.data?.error) || failedMessage);
         if (!embedUrlRef.current) {
           setEmbedUrl(null);
           setExpiresAt(null);
@@ -318,8 +326,8 @@ export function useInstanceDesktopAccess({
 
   useEffect(() => {
     if (!instanceId) {
-      clearAccessState();
-      return;
+      const clearTimer = window.setTimeout(clearAccessState, 0);
+      return () => window.clearTimeout(clearTimer);
     }
 
     if (!isRunning) {
@@ -329,13 +337,19 @@ export function useInstanceDesktopAccess({
         return;
       }
 
-      clearAccessState();
-      return;
+      const clearTimer = window.setTimeout(clearAccessState, 0);
+      return () => window.clearTimeout(clearTimer);
     }
 
-    void refreshAccess({ forceReload: true });
+    const refreshTimer = window.setTimeout(() => {
+      void refreshAccess({ forceReload: true });
+    }, 0);
 
     return () => {
+      window.clearTimeout(refreshTimer);
+      // A view switch can unmount this hook while access is still in flight.
+      // Ignore that response so it cannot recreate retry timers for the old view.
+      requestIdRef.current += 1;
       clearRetryTimeout();
       clearRefreshTimeout();
     };

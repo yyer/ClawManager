@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -517,6 +518,22 @@ func TestShortExternalAccessEntryRedirectTarget(t *testing.T) {
 			want:          "/share/sl_abc123",
 		},
 		{
+			name:          "Hermes Desktop renderer redirects to shared instance shell",
+			method:        http.MethodGet,
+			requestPath:   "/s/sl_abc123/",
+			code:          "sl_abc123",
+			canonicalPath: "/hermes-desktop-web/?instance_id=71",
+			want:          "/share/sl_abc123",
+		},
+		{
+			name:          "Hermes Desktop renderer rejects unexpected query",
+			method:        http.MethodGet,
+			requestPath:   "/s/sl_abc123/",
+			code:          "sl_abc123",
+			canonicalPath: "/hermes-desktop-web/?instance_id=71&token=secret",
+			want:          "",
+		},
+		{
 			name:          "unsupported absolute scheme does not redirect",
 			method:        http.MethodGet,
 			requestPath:   "/s/sl_abc123/",
@@ -693,6 +710,91 @@ func TestSharedDeepSeekHarnessSessionBootstrapsDedicatedRuntimeOrigin(t *testing
 	}
 	if got, want := accessToken.SessionBinding, sharedExternalAccessSessionBinding("sl_test"); got != want {
 		t.Fatalf("bootstrap token session binding = %q, want %q", got, want)
+	}
+}
+
+func TestSharedHermesSessionActivatesScopedDesktopCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	workspacePath := t.TempDir()
+	instanceService := &fakeWorkspaceHandlerInstanceService{instances: map[int]*models.Instance{
+		79: {
+			ID:            79,
+			UserID:        20,
+			Name:          "shared-hermes",
+			Type:          services.RuntimeTypeHermes,
+			Status:        "running",
+			RuntimeType:   services.RuntimeBackendGateway,
+			InstanceMode:  services.InstanceModeLite,
+			WorkspacePath: &workspacePath,
+		},
+	}}
+	slug := "sl_test"
+	access := &models.InstanceExternalAccess{
+		InstanceID:      79,
+		Enabled:         true,
+		AuthMode:        services.ExternalAccessModeShareLink,
+		WorkspaceAccess: services.ExternalWorkspaceAccessRead,
+		PublicSlug:      &slug,
+	}
+	accessTokens := services.NewInstanceAccessService()
+	defer accessTokens.Stop()
+	desktopExpiry := time.Now().UTC().Add(services.HermesDesktopSessionTTL).Truncate(time.Second)
+	var activatedInstanceID int
+	var activatedCode, activatedBinding string
+	handler := &InstanceHandler{
+		instanceService:       instanceService,
+		externalAccessService: &fakeSharedExternalAccessService{access: access},
+		accessService:         accessTokens,
+		proxyService:          services.NewInstanceProxyService(accessTokens),
+		hermesDesktopActivator: func(_ context.Context, instanceID int, code, binding string) (*services.HermesDesktopDescriptor, string, error) {
+			activatedInstanceID = instanceID
+			activatedCode = code
+			activatedBinding = binding
+			return &services.HermesDesktopDescriptor{
+				Available:    true,
+				InstanceID:   instanceID,
+				RendererURL:  sharedHermesDesktopEntryURL(instanceID),
+				ExpiresAt:    &desktopExpiry,
+				Capabilities: []string{"chat", "sessions"},
+			}, "scoped-desktop-cookie", nil
+		},
+	}
+	router := gin.New()
+	router.GET("/api/v1/shared-instances/:code/session", handler.GetSharedInstanceSession)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared-instances/sl_test/session", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	if activatedInstanceID != 79 || activatedCode != slug || activatedBinding != sharedExternalAccessSessionBinding(slug, access) {
+		t.Fatalf("unexpected Desktop activation: instance=%d code=%q binding=%q", activatedInstanceID, activatedCode, activatedBinding)
+	}
+	var response struct {
+		Data struct {
+			AccessURL        string    `json:"access_url"`
+			SessionExpiresAt time.Time `json:"session_expires_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode session response: %v", err)
+	}
+	if response.Data.AccessURL != "/hermes-desktop-web/?instance_id=79" || !response.Data.SessionExpiresAt.Equal(desktopExpiry) {
+		t.Fatalf("unexpected shared Hermes response: %+v", response.Data)
+	}
+	joinedCookies := strings.Join(rec.Header().Values("Set-Cookie"), "\n")
+	for _, want := range []string{
+		"cm_hermes_desktop_79=scoped-desktop-cookie",
+		"Path=/api/v1/instances/79/hermes-desktop/",
+		"HttpOnly",
+		"SameSite=Strict",
+		"Path=/api/v1/shared-instances/sl_test",
+	} {
+		if !strings.Contains(joinedCookies, want) {
+			t.Fatalf("shared Hermes cookies missing %q:\n%s", want, joinedCookies)
+		}
 	}
 }
 
