@@ -13,7 +13,7 @@ type BrowserEnvironment = {
 /** Capabilities of THIS client, not capabilities of the remote Runtime. */
 export const BROWSER_DESKTOP_CAPABILITIES = Object.freeze({
   managedConnection: true,
-  defaultProfileOnly: true,
+  defaultProfileOnly: false,
   nativeWindows: false,
   nativeFilesystem: false,
   nativeTerminal: false,
@@ -66,6 +66,7 @@ export function createBrowserDesktopBridge(
   const selectedFiles = new Map<string, File>()
   const selectedFilePaths = new WeakMap<File, string>()
   let selectedFileSequence = 0
+  let activeProfile = 'default'
 
   function rememberFile(file: File): string {
     const existing = selectedFilePaths.get(file)
@@ -114,8 +115,8 @@ export function createBrowserDesktopBridge(
   }
 
   function assertScope(profile?: string | null, requestedConnection?: string | null): void {
-    if (profile !== undefined && profile !== null && profile !== '' && profile !== 'default') {
-      throw new Error('The managed browser renderer only supports its default profile')
+    if (profile !== undefined && profile !== null && profile !== '' && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
+      throw new Error('The managed browser renderer only supports an instance-local profile name')
     }
     if (requestedConnection !== undefined && requestedConnection !== null && requestedConnection !== '' && requestedConnection !== connectionId) {
       throw new Error('The managed browser renderer cannot access another connection')
@@ -131,11 +132,12 @@ export function createBrowserDesktopBridge(
 
   async function getConnection(profile?: string | null): Promise<HermesConnection> {
     assertScope(profile)
+    const normalizedProfile = profile || activeProfile
     await transport.session()
     return {
       ...windowState(), baseUrl, mode: 'remote', authMode: 'oauth', remoteKind: 'url',
       remoteHost: pageOrigin.host, remoteIdentity: connectionId,
-      connectionId, profile: 'default', registryScoped: true,
+      connectionId, profile: normalizedProfile, registryScoped: true,
       // Never expose a Runtime token or cache a one-time WebSocket URL.
       token: '', wsUrl: '', logs: [],
     }
@@ -152,9 +154,10 @@ export function createBrowserDesktopBridge(
 
   async function getConnectionConfig(profile?: string | null) {
     assertScope(profile)
+    const normalizedProfile = profile || activeProfile
     await transport.session()
     return {
-      envOverride: false, mode: 'remote' as const, profile: 'default', remoteAuthMode: 'oauth' as const,
+      envOverride: false, mode: 'remote' as const, profile: normalizedProfile, remoteAuthMode: 'oauth' as const,
       remoteOauthConnected: true, remoteTokenPreview: null, remoteTokenSet: false,
       secureTokenStorage: false, remoteTokenPlainText: false, remoteUrl: baseUrl,
       cloudOrg: '', sshHost: '', sshUser: '', sshPort: null, sshKeyPath: '', sshRemoteHermesPath: '', sshRemoteProfile: '',
@@ -181,7 +184,8 @@ export function createBrowserDesktopBridge(
     },
     async getProfileRoutes(profiles: string[]) {
       profiles.forEach(profile => assertScope(profile))
-      return [{ connectionId, mode: 'remote' as const, profile: 'default', targetProfile: 'default' }]
+      const normalized = profiles.length ? [...new Set(profiles.map(profile => profile || 'default'))] : ['default']
+      return normalized.map(profile => ({ connectionId, mode: 'remote' as const, profile, targetProfile: profile }))
     },
     async revalidateConnection() {
       // CM owns routing/lifecycle. Revalidate its lease, never claim to have spawned a backend.
@@ -192,8 +196,12 @@ export function createBrowserDesktopBridge(
     api<T>(request: Parameters<DesktopBridge['api']>[0]): Promise<T> {
       assertScope(request.profile, request.connectionId)
       if (request.upload !== undefined) return Promise.reject(new BrowserDesktopUnsupportedError('api.upload'))
+      const profile = request.profile || ''
+      const path = profile && !/[?&]profile=/.test(request.path)
+        ? `${request.path}${request.path.includes('?') ? '&' : '?'}profile=${encodeURIComponent(profile)}`
+        : request.path
       // Scoping has been validated above; transport always targets this one BFF.
-      return transport.api<T>({ path: request.path, method: request.method, body: request.body })
+      return transport.api<T>({ path, method: request.method, body: request.body })
     },
     async getBootProgress(): Promise<DesktopBootProgress> {
       await transport.session()
@@ -235,9 +243,14 @@ export function createBrowserDesktopBridge(
       return readClipboardText()
     },
     profile: {
-      get: async () => ({ profile: 'default' }),
-      remember: async (name: string | null) => { assertScope(name); return { profile: 'default' } },
-      set: async (name: string | null) => { assertScope(name); return { profile: 'default' } },
+      get: async () => ({ profile: activeProfile }),
+      remember: async (name: string | null) => { assertScope(name); activeProfile = name || 'default'; return { profile: activeProfile } },
+      set: async (name: string | null) => { assertScope(name); activeProfile = name || 'default'; return { profile: activeProfile } },
+    },
+    setActiveConnectionRoute(route: { connectionId?: null | string; profile?: string; registryScoped?: boolean } | null) {
+      if (!route) return
+      assertScope(route.profile, route.connectionId)
+      if (route.profile) activeProfile = route.profile
     },
     connections: {
       list: async () => registry(),

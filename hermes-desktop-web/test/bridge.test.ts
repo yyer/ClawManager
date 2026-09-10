@@ -3,10 +3,10 @@ import test from 'node:test'
 import { createBridge, validateApiRequest } from '../src/bridge.ts'
 
 test('structurally valid runtime APIs, including recent logs, reach only the instance API', () => {
-  for (const path of ['/api/config?reveal=true', '/api/logs?file=agent&level=ERROR&lines=200&component=all&search=route', '/api/fs/list?path=projects/demo']) {
+  for (const path of ['/api/config?reveal=true', '/api/logs?file=agent&level=ERROR&lines=200&component=all&search=route', '/api/fs/list?path=projects/demo', '/api/fs/list?path=/workspaces/hermes/user-1/instance-2']) {
     assert.equal(validateApiRequest({ path }), path)
   }
-  for (const path of ['//evil.test/api/status', '/api/sessions/../status', '/api/sessions/a%2fb/messages', '/api/auth/session', '/api/file/read?path=/etc/passwd', '/api/status?profile=../../outside', '/api/logs?lines=1&lines=2', '/api/status?connectionId=ssh']) {
+  for (const path of ['//evil.test/api/status', '/api/sessions/../status', '/api/sessions/a%2fb/messages', '/api/auth/session', '/api/file/read?path=../outside', '/api/status?profile=../../outside', '/api/logs?lines=1&lines=2', '/api/status?connectionId=ssh']) {
     assert.throws(() => validateApiRequest({ path }))
   }
   assert.equal(validateApiRequest({ path: '/api/runtime/health', method: 'POST', body: {} }), '/api/runtime/health')
@@ -14,14 +14,12 @@ test('structurally valid runtime APIs, including recent logs, reach only the ins
   assert.equal(validateApiRequest({ path: '/api/sessions/a:b/messages?limit=500' }), '/api/sessions/a:b/messages?limit=500')
 })
 
-test('config writes accept only the exact managed config envelope', () => {
+test('runtime writes preserve complete JSON request shapes', () => {
   const body = { config: { display: { language: 'zh-CN' }, agent: { reasoning_effort: 'high' } } }
   assert.equal(validateApiRequest({ path: '/api/config', method: 'PUT', body }), '/api/config')
-  for (const request of [
-    { path: '/api/config?profile=other', method: 'PUT', body },
-    { path: '/api/status', method: 'PUT', body: [] },
-    { path: '/api/config', method: 'PUT' },
-  ]) assert.throws(() => validateApiRequest(request))
+  assert.equal(validateApiRequest({ path: '/api/config?profile=other', method: 'PUT', body }), '/api/config?profile=other')
+  assert.equal(validateApiRequest({ path: '/api/status', method: 'PUT', body: [] }), '/api/status')
+  assert.equal(validateApiRequest({ path: '/api/config', method: 'PUT' }), '/api/config')
   assert.equal(validateApiRequest({ path: '/api/status', method: 'PUT', body }), '/api/status')
 })
 
@@ -47,7 +45,8 @@ test('complete renderer read queries preserve the single managed instance scope'
     '/api/profiles/sessions?profile=all&limit=100&exclude_sources=cron%2Cscheduler']) {
     assert.equal(validateApiRequest({ path }), path)
   }
-  for (const path of ['/api/sessions?limit=1&limit=2', '/api/config?profile=../another', '/api/model/options?token=secret',
+  assert.equal(validateApiRequest({ path: '/api/model/options?token=secret' }), '/api/model/options?token=secret')
+  for (const path of ['/api/sessions?limit=1&limit=2', '/api/config?profile=../another',
     '/api/status?profile=default?token=secret']) {
     assert.throws(() => validateApiRequest({ path }), path)
   }

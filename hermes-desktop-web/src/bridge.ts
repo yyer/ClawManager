@@ -10,33 +10,23 @@ type Envelope<T> = { success: boolean; data: T }
 const API_PATH = /^\/api\/[A-Za-z0-9_.:-]+(?:\/[A-Za-z0-9_.:-]+)*$/
 const QUERY_KEY = /^[A-Za-z0-9_-]{1,80}$/
 const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
-const FORBIDDEN_QUERY_KEYS = new Set(['token', 'password', 'secret', 'api_key', 'apikey', 'authorization', 'cookie'])
+const PATH_QUERY_KEYS = new Set(['cwd', 'path', 'directory', 'dir', 'folder', 'folders', 'file', 'files', 'primary_path', 'workspace', 'workspace_path', 'root', 'root_path', 'repo_path', 'project_path', 'file_path', 'filename'])
 
 export function validateApiRequest(request: ApiRequest): string {
   if (request.connectionId) throw new Error('此页面不支持外部连接。')
   const method = request.method || 'GET'
   if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) throw new Error('不支持此 API 操作。')
   if (method === 'GET' && request.body !== undefined) throw new Error('读取请求不能携带正文。')
-  const preliminaryPath = request.path.split('?')[0]
-  const configWrite = method === 'PUT' && preliminaryPath === '/api/config'
-  if (configWrite) {
-    const body = request.body as Record<string, unknown> | undefined
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 ||
-      !body.config || typeof body.config !== 'object' || Array.isArray(body.config)) throw new Error('配置正文无效。')
-    if (request.path.includes('?')) throw new Error('配置写入不能携带查询参数。')
-  }
   if (!request.path.startsWith('/api/') || /[\\#]/.test(request.path) || request.path.split('?').length > 2 || request.path.length > 4096) throw new Error('非法 API 路径。')
   const [pathname, query = ''] = request.path.split('?')
   if (pathname.includes('%') || !API_PATH.test(pathname) || pathname.split('/').some(segment => segment === '.' || segment === '..')) throw new Error('非法 API 路径。')
   if (pathname === '/api/auth' || pathname.startsWith('/api/auth/')) throw new Error('禁止代理 Runtime 认证接口。')
-  if (method !== 'GET' && request.body !== undefined && (typeof request.body !== 'object' || request.body === null || Array.isArray(request.body))) throw new Error('API 正文无效。')
   const params = new URLSearchParams(query)
   for (const [key, value] of params) {
     if (!QUERY_KEY.test(key) || value.length > 4096 || params.getAll(key).length !== 1) throw new Error('非法 API 参数。')
-    if (FORBIDDEN_QUERY_KEYS.has(key.toLowerCase())) throw new Error('敏感凭据不能出现在 API 查询参数中。')
     if (key === 'connectionId') throw new Error('此页面不支持外部连接。')
     if ((key === 'profile' || key === 'recents_profile') && !PROFILE_NAME.test(value)) throw new Error('不支持其他 Profile。')
-    if (key === 'path' && (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.split('/').includes('..'))) {
+    if (PATH_QUERY_KEYS.has(key.toLowerCase()) && (value.includes('\\') || value.split('/').includes('..'))) {
       throw new Error('路径必须位于当前实例 workspace。')
     }
   }

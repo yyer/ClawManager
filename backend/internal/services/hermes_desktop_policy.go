@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -15,7 +16,11 @@ var hermesDesktopSessionID = regexp.MustCompile(`^[A-Za-z0-9_:-]{1,160}$`)
 var hermesDesktopAPIPath = regexp.MustCompile(`^/[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$`)
 var hermesDesktopQueryKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 var hermesDesktopProfileName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-var hermesDesktopForbiddenQueryKeys = map[string]bool{"token": true, "password": true, "secret": true, "api_key": true, "apikey": true, "authorization": true, "cookie": true}
+var hermesDesktopForbiddenQueryKeys = map[string]bool{"connectionid": true}
+var hermesDesktopWorkspacePath = regexp.MustCompile(`^(?:\.|[A-Za-z0-9][A-Za-z0-9._/-]{0,511})$`)
+var hermesDesktopRPCMethod = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`)
+var hermesDesktopRPCKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`)
+var hermesDesktopSensitiveRPCMethods = []string{"shell.", "cli.", "desktop.", "computer.", "browser.", "terminal.", "tools.call", "tool.call"}
 
 func hermesDesktopReasoningAllowed(value string) bool {
 	switch value {
@@ -26,7 +31,7 @@ func hermesDesktopReasoningAllowed(value string) bool {
 	}
 }
 
-func hermesDesktopHTTPAllowed(method, path string, q url.Values) bool {
+func hermesDesktopHTTPAllowed(method, path string, q url.Values, workspace ...string) bool {
 	switch method {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 	default:
@@ -50,7 +55,7 @@ func hermesDesktopHTTPAllowed(method, path string, q url.Values) bool {
 		if hermesDesktopForbiddenQueryKeys[strings.ToLower(key)] {
 			return false
 		}
-		if key == "connectionId" {
+		if strings.EqualFold(key, "connectionId") {
 			return false
 		}
 		if key == "profile" || key == "recents_profile" {
@@ -58,9 +63,13 @@ func hermesDesktopHTTPAllowed(method, path string, q url.Values) bool {
 				return false
 			}
 		}
-		if strings.HasPrefix(path, "/fs") && key == "path" {
+		if hermesDesktopRPCPathKey(key) {
 			value := values[0]
-			if strings.HasPrefix(value, "/") || strings.Contains(value, `\`) || strings.Contains(value, "..") || regexp.MustCompile(`^[A-Za-z]:`).MatchString(value) {
+			root := ""
+			if len(workspace) > 0 {
+				root = workspace[0]
+			}
+			if !hermesDesktopWorkspacePathAllowed(value, root) || regexp.MustCompile(`^[A-Za-z]:`).MatchString(value) {
 				return false
 			}
 		}
@@ -68,35 +77,113 @@ func hermesDesktopHTTPAllowed(method, path string, q url.Values) bool {
 	return true
 }
 
-// Parameter allowlists are as important as method allowlists: session.create
-// also accepts cwd, profile, seed messages and hosted-room fields upstream.
-// Those could reach another profile/workspace in a shared Runtime Pod.
-var hermesDesktopRPCFields = map[string]string{
-	"ping":                 "",
-	"setup.status":         "",
-	"setup.runtime_check":  "provider",
-	"session.create":       "source cols profile cwd model provider reasoning_effort fast",
-	"session.resume":       "session_id source cols profile defer_history omit_messages lazy",
-	"session.activate":     "session_id cols omit_messages",
-	"session.usage":        "session_id",
-	"session.close":        "session_id",
-	"model.options":        "session_id explicit_only refresh",
-	"config.set":           "session_id key value confirm_expensive_model",
-	"config.get":           "key profile",
-	"plugins.manage":       "action key enable profile identifier force",
-	"session.list":         "limit",
-	"session.status":       "session_id",
-	"session.history":      "session_id",
-	"session.interrupt":    "session_id",
-	"session.events.since": "session_id last_seen",
-	"prompt.submit":        "session_id text interrupted queued",
-	"approval.respond":     "session_id request_id choice",
-	"approval.pending":     "session_id",
-	"approval.received":    "session_id request_id",
-	"clarify.respond":      "session_id request_id question_id answer",
+/*
+Runtime JSON-RPC is intentionally not maintained as a method/field allowlist.
+Hermes Desktop evolves its Runtime surface frequently; the security boundary
+is the instance and its workspace, not a frozen list of UI methods.
+*/
+func hermesDesktopWorkspacePathAllowed(value, root string) bool {
+	if value == "" || value == "." {
+		return true
+	}
+	if strings.ContainsAny(value, "\\\x00") || len(value) > 4096 {
+		return false
+	}
+	segments := strings.Split(strings.ReplaceAll(value, "\\", "/"), "/")
+	for _, segment := range segments {
+		if segment == ".." {
+			return false
+		}
+	}
+	if strings.HasPrefix(value, "/") {
+		if root == "" {
+			return false
+		}
+		clean := path.Clean(value)
+		base := path.Clean(root)
+		return clean == base || strings.HasPrefix(clean, base+"/")
+	}
+	return hermesDesktopWorkspacePath.MatchString(value)
 }
 
-func hermesDesktopFilterRPC(frame []byte) ([]byte, error) {
+func hermesDesktopRPCMethodAllowed(method string) bool {
+	if method == "gateway.ping" {
+		return true
+	}
+	if !hermesDesktopRPCMethod.MatchString(method) {
+		return false
+	}
+	for _, prefix := range hermesDesktopSensitiveRPCMethods {
+		if method == prefix || strings.HasPrefix(method, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func hermesDesktopRPCPathKey(key string) bool {
+	switch strings.ToLower(strings.ReplaceAll(key, "-", "_")) {
+	case "cwd", "path", "directory", "dir", "folder", "folders", "file", "files", "primary_path", "workspace", "workspace_path", "root", "root_path", "repo_path", "project_path", "file_path", "filename":
+		return true
+	default:
+		return false
+	}
+}
+
+func hermesDesktopValidateRPCValue(key string, raw json.RawMessage, root string, depth int) bool {
+	if depth > 8 || len(raw) > 5<<20 {
+		return false
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch item := value.(type) {
+	case string:
+		if len(item) > 5<<20 {
+			return false
+		}
+		if key == "profile" && !hermesDesktopProfileName.MatchString(item) {
+			return false
+		}
+		if hermesDesktopRPCPathKey(key) && !hermesDesktopWorkspacePathAllowed(item, root) {
+			return false
+		}
+	case []any:
+		if len(item) > 1024 {
+			return false
+		}
+		for _, child := range item {
+			encoded, _ := json.Marshal(child)
+			if !hermesDesktopValidateRPCValue(key, encoded, root, depth+1) {
+				return false
+			}
+		}
+	case map[string]any:
+		if len(item) > 256 {
+			return false
+		}
+		for childKey, child := range item {
+			if !hermesDesktopRPCKey.MatchString(childKey) {
+				return false
+			}
+			encoded, _ := json.Marshal(child)
+			if !hermesDesktopValidateRPCValue(childKey, encoded, root, depth+1) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func hermesDesktopHTTPBodyAllowed(body []byte, root string) bool {
+	if len(body) == 0 {
+		return true
+	}
+	return hermesDesktopValidateRPCValue("", body, root, 0)
+}
+
+func hermesDesktopFilterRPCAtWorkspace(frame []byte, workspaceRoot string) ([]byte, error) {
 	var packet struct {
 		JSONRPC string                     `json:"jsonrpc"`
 		ID      json.RawMessage            `json:"id"`
@@ -116,124 +203,49 @@ func hermesDesktopFilterRPC(frame []byte) ([]byte, error) {
 	if packet.Method == "gateway.ping" {
 		packet.Method = "ping"
 	}
-	fields, ok := hermesDesktopRPCFields[packet.Method]
-	if !ok {
+	if !hermesDesktopRPCMethodAllowed(packet.Method) {
 		return nil, ErrHermesDesktopForbidden
 	}
-	allowedFields := strings.Fields(fields)
+	if packet.Params == nil {
+		packet.Params = map[string]json.RawMessage{}
+	}
+	if len(packet.Params) > 128 {
+		return nil, ErrHermesDesktopForbidden
+	}
 	for key, value := range packet.Params {
-		if !slices.Contains(allowedFields, key) {
+		if !hermesDesktopRPCKey.MatchString(key) || key == "connectionId" || key == "connection_id" || !hermesDesktopValidateRPCValue(key, value, workspaceRoot, 0) {
 			return nil, ErrHermesDesktopForbidden
 		}
-		switch key {
-		case "session_id", "request_id", "question_id", "source", "model", "provider", "text", "choice", "answer", "key", "value", "profile", "cwd", "reasoning_effort", "action", "identifier":
-			var v string
-			if json.Unmarshal(value, &v) != nil {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "session_id" && !hermesDesktopSessionID.MatchString(v) {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "source" && v != "web" && v != "desktop" {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "profile" && v != "default" && v != "current" {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "cwd" && v != "" {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if (key == "model" || key == "provider") && !hermesDesktopModelName.MatchString(v) {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "reasoning_effort" && !hermesDesktopReasoningAllowed(v) {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "choice" && v != "once" && v != "deny" {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key != "text" && key != "answer" && len(v) > 512 {
-				return nil, ErrHermesDesktopForbidden
-			}
-		case "last_seen", "limit", "cols":
-			var v int
-			if json.Unmarshal(value, &v) != nil || v < 0 || (key == "limit" && v > 100) {
-				return nil, ErrHermesDesktopForbidden
-			}
-			if key == "cols" && (v < 20 || v > 500) {
-				return nil, ErrHermesDesktopForbidden
-			}
-		case "defer_history", "omit_messages", "lazy", "fast", "explicit_only", "refresh", "confirm_expensive_model", "interrupted", "queued", "enable", "force":
-			var v bool
-			if json.Unmarshal(value, &v) != nil {
-				return nil, ErrHermesDesktopForbidden
+	}
+	if raw, ok := packet.Params["session_id"]; ok {
+		var value string
+		if json.Unmarshal(raw, &value) != nil || !hermesDesktopSessionID.MatchString(value) {
+			return nil, ErrHermesDesktopForbidden
+		}
+	}
+	if raw, ok := packet.Params["source"]; ok {
+		var source string
+		if json.Unmarshal(raw, &source) != nil || source != "web" && source != "desktop" {
+			return nil, ErrHermesDesktopForbidden
+		}
+	}
+	if strings.HasPrefix(packet.Method, "profiles.") {
+		for _, key := range []string{"name", "clone_from"} {
+			if raw, ok := packet.Params[key]; ok && string(raw) != "null" {
+				var name string
+				if json.Unmarshal(raw, &name) != nil || !hermesDesktopProfileName.MatchString(name) {
+					return nil, ErrHermesDesktopForbidden
+				}
 			}
 		}
 	}
-	if slices.Contains(allowedFields, "session_id") && packet.Method != "model.options" {
+	if slices.Contains([]string{"session.activate", "session.usage", "session.close", "session.status", "session.history", "session.interrupt", "session.events.since", "prompt.submit", "approval.respond", "approval.pending", "approval.received", "clarify.respond"}, packet.Method) {
 		if _, ok := packet.Params["session_id"]; !ok {
 			return nil, ErrHermesDesktopForbidden
 		}
 	}
-	if packet.Method == "config.set" {
-		var key, value string
-		_ = json.Unmarshal(packet.Params["key"], &key)
-		_ = json.Unmarshal(packet.Params["value"], &value)
-		valid := key == "model" && hermesDesktopModelSwitch.FindStringSubmatch(value) != nil
-		if key == "reasoning" {
-			valid = hermesDesktopReasoningAllowed(value)
-		}
-		if key == "fast" {
-			valid = value == "fast" || value == "normal"
-		}
-		if !valid {
-			return nil, ErrHermesDesktopForbidden
-		}
-		if _, exists := packet.Params["confirm_expensive_model"]; exists && key != "model" {
-			return nil, ErrHermesDesktopForbidden
-		}
-	}
-	if packet.Method == "config.get" {
-		var key string
-		if json.Unmarshal(packet.Params["key"], &key) != nil || key != "profile" {
-			return nil, ErrHermesDesktopForbidden
-		}
-	}
-	if packet.Method == "plugins.manage" {
-		var action string
-		if json.Unmarshal(packet.Params["action"], &action) != nil || !slices.Contains([]string{"list", "toggle", "install"}, action) {
-			return nil, ErrHermesDesktopForbidden
-		}
-		if action == "toggle" {
-			var key string
-			if json.Unmarshal(packet.Params["key"], &key) != nil || key == "" || len(key) > 512 {
-				return nil, ErrHermesDesktopForbidden
-			}
-		}
-		if action == "install" {
-			var identifier string
-			if json.Unmarshal(packet.Params["identifier"], &identifier) != nil || identifier == "" || len(identifier) > 2048 {
-				return nil, ErrHermesDesktopForbidden
-			}
-		}
-	}
-	if packet.Method == "approval.received" || packet.Method == "approval.respond" {
-		var requestID string
-		if json.Unmarshal(packet.Params["request_id"], &requestID) != nil || !hermesDesktopSessionID.MatchString(requestID) {
-			return nil, ErrHermesDesktopForbidden
-		}
-	}
-	if packet.Method == "approval.respond" {
-		if _, ok := packet.Params["choice"]; !ok {
-			return nil, ErrHermesDesktopForbidden
-		}
-	}
-	if packet.Method == "model.options" {
-		if packet.Params == nil {
-			packet.Params = map[string]json.RawMessage{}
-		}
-		packet.Params["explicit_only"] = json.RawMessage("true")
-	}
+	// Method-specific Runtime validation remains in Hermes. CM only applies
+	// generic JSON bounds, native-host method isolation, and workspace scope.
 	if packet.Method == "session.create" || packet.Method == "session.resume" {
 		if packet.Params == nil {
 			packet.Params = map[string]json.RawMessage{}
@@ -241,12 +253,20 @@ func hermesDesktopFilterRPC(frame []byte) ([]byte, error) {
 		// Upstream automatically adds native desktop_ui tools for source=desktop.
 		// A browser must use the web platform even when reusing Desktop widgets.
 		packet.Params["source"] = json.RawMessage(`"web"`)
-		// The owning CM instance already selects the isolated Runtime home.
-		// A renderer profile label must never select another filesystem tree.
-		delete(packet.Params, "profile")
-		delete(packet.Params, "cwd")
+		// The owning CM instance already selects the isolated Runtime home. Named
+		// profiles are labels inside that same home; cwd/path values are checked
+		// against the instance workspace before this frame reaches Runtime.
 	}
 	return json.Marshal(packet)
+}
+
+func hermesDesktopFilterRPC(frame []byte) ([]byte, error) {
+	return hermesDesktopFilterRPCAtWorkspace(frame, "")
+}
+
+func hermesDesktopSensitiveResponseKey(key string) bool {
+	compact := strings.ReplaceAll(strings.ToLower(strings.ReplaceAll(key, "-", "_")), "_", "")
+	return compact == "password" || compact == "secret" || compact == "credential" || compact == "cookie" || compact == "authorization" || compact == "apikey" || compact == "accesstoken" || compact == "refreshtoken" || compact == "sessiontoken" || compact == "wsticket" || compact == "token"
 }
 
 func hermesDesktopSanitize(body []byte, password string, cookies []*http.Cookie, extraSecrets ...string) ([]byte, error) {
@@ -263,10 +283,12 @@ func hermesDesktopSanitize(body []byte, password string, cookies []*http.Cookie,
 		switch item := v.(type) {
 		case map[string]any:
 			for key, child := range item {
-				lower := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
-				compact := strings.ReplaceAll(lower, "_", "")
-				if compact == "token" || compact == "key" || strings.Contains(compact, "ticket") || strings.Contains(compact, "password") || strings.Contains(compact, "secret") || strings.Contains(compact, "credential") || strings.Contains(compact, "cookie") || strings.Contains(compact, "authorization") || strings.Contains(compact, "apikey") || strings.HasSuffix(compact, "token") {
-					delete(item, key)
+				if hermesDesktopSensitiveResponseKey(key) {
+					if _, ok := child.(string); ok {
+						item[key] = "[redacted]"
+					} else {
+						item[key] = clean(child)
+					}
 					continue
 				}
 				item[key] = clean(child)

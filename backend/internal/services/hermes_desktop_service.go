@@ -90,13 +90,12 @@ type HermesDesktopService struct {
 	client      *http.Client
 	mu          sync.Mutex
 	health      map[string]time.Time
-	catalog     map[hermesGatewayCacheKey]hermesDesktopCatalogEntry
 }
 
 func NewHermesDesktopService(config HermesDesktopConfig) *HermesDesktopService {
 	key := sha256.Sum256([]byte("clawmanager/hermes-desktop/v1/" + config.Secret))
 	auth, _ := NewHermesGatewayAuth(config.ControlUIOrigin)
-	return &HermesDesktopService{config: config, gatewayAuth: auth, key: key[:], client: &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, MaxIdleConns: 128, MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second, ResponseHeaderTimeout: 10 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, health: make(map[string]time.Time), catalog: make(map[hermesGatewayCacheKey]hermesDesktopCatalogEntry)}
+	return &HermesDesktopService{config: config, gatewayAuth: auth, key: key[:], client: &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, MaxIdleConns: 128, MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second, ResponseHeaderTimeout: 10 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, health: make(map[string]time.Time)}
 }
 
 func HermesDesktopBase(instanceID int) string {
@@ -585,30 +584,22 @@ func (s *HermesDesktopService) ProxyAPI(ctx context.Context, c *HermesDesktopCla
 }
 
 func (s *HermesDesktopService) ProxyAPIRequest(ctx context.Context, c *HermesDesktopClaims, method, path string, query url.Values, requestBody []byte) ([]byte, error) {
-	if !hermesDesktopHTTPAllowed(method, path, query) {
-		return nil, ErrHermesDesktopForbidden
-	}
 	target, err := s.authorizeClaims(ctx, c)
 	if err != nil {
 		return nil, err
 	}
+	workspaceRoot := ""
+	if target.instance.WorkspacePath != nil {
+		workspaceRoot = strings.TrimSpace(*target.instance.WorkspacePath)
+	}
+	if !hermesDesktopHTTPAllowed(method, path, query, workspaceRoot) {
+		return nil, ErrHermesDesktopForbidden
+	}
+	if method != http.MethodGet && !hermesDesktopHTTPBodyAllowed(requestBody, workspaceRoot) {
+		return nil, ErrHermesDesktopForbidden
+	}
 	if path == "/profiles/sessions/sidebar" {
 		return s.desktopSidebar(ctx, target, query)
-	}
-	if method == http.MethodPut && path == "/config" {
-		var envelope struct {
-			Config map[string]json.RawMessage `json:"config"`
-		}
-		decoder := json.NewDecoder(bytes.NewReader(requestBody))
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&envelope) != nil || envelope.Config == nil || decoder.Decode(new(any)) != io.EOF {
-			return nil, ErrHermesDesktopForbidden
-		}
-		body, _, cookies, err := s.upstreamRequestBody(ctx, target, method, "/api/config", "", requestBody)
-		if err != nil {
-			return nil, err
-		}
-		return hermesDesktopSanitize(body, *target.instance.AccessToken, cookies)
 	}
 	if method == http.MethodGet && path == "/hermes/update/check" {
 		status, err := s.desktopRead(ctx, target, "/status", nil)
@@ -627,24 +618,10 @@ func (s *HermesDesktopService) ProxyAPIRequest(ctx context.Context, c *HermesDes
 			"update_command": nil, "message": "Runtime updates are managed by ClawManager.",
 		})
 	}
-	if path == "/profiles/sessions" {
-		body, err := s.desktopRead(ctx, target, "/sessions", query)
-		if err != nil {
-			return nil, err
-		}
-		var page map[string]json.RawMessage
-		if json.Unmarshal(body, &page) != nil {
-			return nil, ErrHermesDesktopUpstream
-		}
-		page["profile_totals"], _ = json.Marshal(map[string]json.RawMessage{"default": page["total"]})
-		return json.Marshal(page)
-	}
 	if method != http.MethodGet {
 		q := url.Values{}
 		for key, values := range query {
-			if key != "profile" {
-				q[key] = append([]string(nil), values...)
-			}
+			q[key] = append([]string(nil), values...)
 		}
 		body, _, cookies, err := s.upstreamRequestBody(ctx, target, method, "/api"+path, q.Encode(), requestBody)
 		if err != nil {

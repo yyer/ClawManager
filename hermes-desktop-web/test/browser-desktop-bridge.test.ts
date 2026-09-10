@@ -36,16 +36,20 @@ test('real renderer bridge exposes one authenticated managed connection without 
   assert.deepEqual(await bridge.profile.get(), { profile: 'default' })
 })
 
-test('default profile and own connection are normalized only after validation; other routing cannot fetch', async () => {
+test('instance-local named profiles and own connection are normalized only after validation', async () => {
   const { bridge, requests } = fixture()
   for (const profile of ['', null, undefined, 'default']) await bridge.getConnection(profile)
+  const botConnection = await bridge.getConnection('bot_alpha')
+  assert.equal(botConnection.profile, 'bot_alpha')
+  await bridge.api({ path: '/api/profiles', profile: 'bot_alpha' })
+  assert.match(requests.at(-1)?.path ?? '', /\/api\/profiles\?profile=bot_alpha$/)
   await bridge.getConnectionFor({ connectionId: 'clawmanager:42', profile: 'default' })
   await bridge.api({ path: '/api/status', connectionId: 'clawmanager:42', profile: 'default' })
   const count = requests.length
-  for (const profile of ['other', ' default', 'default ', '/etc/passwd']) {
-    await assert.rejects(bridge.getConnection(profile), /default profile/)
-    await assert.rejects(bridge.getGatewayWsUrl(profile), /default profile/)
-    assert.throws(() => bridge.api({ path: '/api/status', profile }), /default profile/)
+  for (const profile of [' default', 'default ', '/etc/passwd', '../other']) {
+    await assert.rejects(bridge.getConnection(profile), /profile name/)
+    await assert.rejects(bridge.getGatewayWsUrl(profile), /profile name/)
+    assert.throws(() => bridge.api({ path: '/api/status', profile }), /profile name/)
   }
   for (const connectionId of ['local', 'clawmanager:43', 'ssh', 'https://evil.test']) {
     await assert.rejects(bridge.getConnectionFor({ connectionId }), /another connection/)

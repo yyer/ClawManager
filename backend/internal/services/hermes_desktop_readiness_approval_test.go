@@ -19,47 +19,36 @@ func TestHermesDesktopRendererReadinessAndApprovalPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		method string
 		params map[string]any
-		allow  bool
 	}{
-		{"setup.status", nil, true},
-		{"setup.status", map[string]any{"profile": "default"}, false},
-		{"setup.runtime_check", nil, true},
-		{"setup.runtime_check", map[string]any{"provider": "managed"}, true},
-		{"setup.runtime_check", map[string]any{"provider": "external", "api_key": "private"}, false},
-		{"setup.runtime_check", map[string]any{"provider": "../other"}, false},
-		{"approval.pending", map[string]any{"session_id": "live"}, true},
-		{"approval.pending", nil, false},
-		{"approval.pending", map[string]any{"session_id": "live", "profile": "default"}, false},
-		{"approval.received", map[string]any{"session_id": "live", "request_id": "request-1"}, true},
-		{"approval.received", map[string]any{"session_id": "live"}, false},
-		{"approval.received", map[string]any{"session_id": "live", "request_id": ""}, false},
-		{"approval.received", map[string]any{"session_id": "live", "request_id": "r", "acknowledged": true}, false},
-		{"approval.respond", map[string]any{"session_id": "live", "choice": "once"}, false},
-		{"approval.respond", map[string]any{"session_id": "live", "request_id": "r", "choice": "always"}, false},
-		{"approval.respond", map[string]any{"session_id": "live", "request_id": "r", "choice": "session"}, false},
-		{"sudo.respond", map[string]any{"session_id": "live", "request_id": "r", "password": "private"}, false},
-		{"secret.respond", map[string]any{"session_id": "live", "request_id": "r", "value": "private"}, false},
-		{"session.active_list", nil, false},
+		{"setup.status", map[string]any{"profile": "default", "future_field": true}},
+		{"setup.runtime_check", map[string]any{"provider": "external", "api_key": "private"}},
+		{"approval.respond", map[string]any{"session_id": "live", "request_id": "r", "choice": "always"}},
+		{"sudo.respond", map[string]any{"session_id": "live", "request_id": "r", "password": "private"}},
+		{"session.active_list", nil},
 	} {
-		_, err := hermesDesktopFilterRPC(desktopRPCFrame(1, tc.method, tc.params))
-		if (err == nil) != tc.allow {
-			t.Errorf("unexpected %s policy: %v", tc.method, err)
+		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(1, tc.method, tc.params)); err != nil {
+			t.Errorf("runtime method %s was locally allowlisted: %v", tc.method, err)
+		}
+	}
+	for _, method := range []string{"shell.exec", "desktop.respond", "terminal.start", "tools.call"} {
+		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(1, method, nil)); err == nil {
+			t.Errorf("native host method %s was accepted", method)
 		}
 	}
 }
 
 func TestHermesDesktopRendererReadinessProjection(t *testing.T) {
 	for _, tc := range []struct{ method, body, expected string }{
-		{"setup.status", `{"provider_configured":true,"env":{"KEY":"PRIVATE"},"tools":["PRIVATE"]}`, `{"provider_configured":true}`},
-		{"setup.status", `{"provider_configured":false,"error":"PRIVATE"}`, `{"provider_configured":false}`},
-		{"setup.runtime_check", `{"ok":true,"provider":"managed","source":"PRIVATE","api_key":"PRIVATE"}`, `{"ok":true}`},
+		{"setup.status", `{"provider_configured":true,"env":{"KEY":"PRIVATE"},"tools":["PRIVATE"]}`, `"provider_configured":true`},
+		{"setup.status", `{"provider_configured":false,"error":"PRIVATE"}`, `"provider_configured":false`},
+		{"setup.runtime_check", `{"ok":true,"provider":"managed","source":"PRIVATE","api_key":"PRIVATE"}`, `"ok":true`},
 		{"setup.runtime_check", `{"ok":false,"error":"PRIVATE","command":"PRIVATE"}`, `"ok":false`},
-		{"approval.received", `{"acknowledged":false,"debug":"PRIVATE"}`, `{"acknowledged":false}`},
-		{"approval.received", `{"acknowledged":true,"debug":"PRIVATE"}`, `{"acknowledged":true}`},
+		{"approval.received", `{"acknowledged":false,"debug":"PRIVATE"}`, `"acknowledged":false`},
+		{"approval.received", `{"acknowledged":true,"debug":"PRIVATE"}`, `"acknowledged":true`},
 	} {
 		body, err := hermesDesktopProjectCheck(tc.method, []byte(tc.body))
-		if err != nil || !strings.Contains(string(body), tc.expected) || strings.Contains(string(body), "PRIVATE") {
-			t.Fatalf("unsafe/inaccurate %s projection: %s %v", tc.method, body, err)
+		if err != nil || !strings.Contains(string(body), tc.expected) || !strings.Contains(string(body), "PRIVATE") {
+			t.Fatalf("Runtime response shape was narrowed for %s: %s %v", tc.method, body, err)
 		}
 	}
 	for _, body := range []string{`{}`, `{"ok":null}`, `{"ok":"true"}`, `{"ok":1}`, `[]`} {
@@ -91,11 +80,11 @@ func TestHermesDesktopRendererApprovalScopeAndProjection(t *testing.T) {
 	}
 	_ = scope.admit(desktopRPCFrame(2, "approval.pending", map[string]any{"session_id": "live-1"}))
 	body, err := scope.observe([]byte(`{"jsonrpc":"2.0","id":2,"result":{"approvals":[{"request_id":"raw-1","command":"curl -H 'X-Api-Key: PRIVATE'","description":"PRIVATE","pattern_keys":["PRIVATE"],"choices":["once","always","deny"],"allow_permanent":true}],"debug":"PRIVATE"}}`))
-	if err != nil || strings.Contains(string(body), "PRIVATE") || strings.Contains(string(body), "always") || !strings.Contains(string(body), `"choices":["deny"]`) || !strings.Contains(string(body), `"allow_permanent":false`) {
-		t.Fatalf("unsafe pending replay: %s %v", body, err)
+	if err != nil || !strings.Contains(string(body), `"choices":["once","always","deny"]`) || !strings.Contains(string(body), `"allow_permanent":true`) {
+		t.Fatalf("approval response shape was narrowed: %s %v", body, err)
 	}
 	for _, tc := range []struct{ sid, id, choice string }{
-		{"live-1", "raw-1", "once"}, {"live-1", "", "once"}, {"live-1", "unknown", "once"}, {"another", "raw-1", "deny"},
+		{"live-1", "", "once"}, {"live-1", "unknown", "once"}, {"another", "raw-1", "deny"},
 	} {
 		if scope.admit(desktopRPCFrame(3, "approval.respond", map[string]any{"session_id": tc.sid, "request_id": tc.id, "choice": tc.choice})) == nil {
 			t.Fatal("replay approval bypassed exact request/session boundary")
@@ -105,21 +94,21 @@ func TestHermesDesktopRendererApprovalScopeAndProjection(t *testing.T) {
 		t.Fatal("known request acknowledgement rejected")
 	}
 	body, err = scope.observe([]byte(`{"jsonrpc":"2.0","id":3,"result":{"acknowledged":false,"details":"PRIVATE"}}`))
-	if err != nil || !strings.Contains(string(body), `"acknowledged":false`) || strings.Contains(string(body), "PRIVATE") {
+	if err != nil || !strings.Contains(string(body), `"acknowledged":false`) || !strings.Contains(string(body), "PRIVATE") {
 		t.Fatal("acknowledgement result was invented or not projected")
 	}
-	// A later event for an already raw-replayed ID cannot restore Allow once.
+	// A later event for the same Runtime request preserves the Runtime choices.
 	body, err = scope.observe([]byte(`{"jsonrpc":"2.0","method":"event","params":{"type":"approval.request","session_id":"live-1","payload":{"request_id":"raw-1","command":"echo safe","choices":["once","deny"]}}}`))
-	if err != nil || !strings.Contains(string(body), `"choices":["deny"]`) {
-		t.Fatal("same pending request upgraded after safe replay")
+	if err != nil || !strings.Contains(string(body), `"choices":["once","deny"]`) {
+		t.Fatal("same pending request lost Runtime choices")
 	}
-	if scope.admit(desktopRPCFrame(4, "approval.respond", map[string]any{"session_id": "live-1", "request_id": "raw-1", "choice": "once"})) == nil {
-		t.Fatal("same-ID event enabled blind approval")
+	if scope.admit(desktopRPCFrame(4, "approval.respond", map[string]any{"session_id": "live-1", "request_id": "raw-1", "choice": "once"})) != nil {
+		t.Fatal("same-ID Runtime approval was rejected")
 	}
-	// A genuinely new, Runtime-redacted live event retains only one-shot/deny.
+	_, _ = scope.observe([]byte(`{"jsonrpc":"2.0","id":4,"result":{"resolved":true}}`))
 	body, err = scope.observe([]byte(`{"jsonrpc":"2.0","method":"event","params":{"type":"approval.request","session_id":"live-1","payload":{"request_id":"fresh-1","command":"echo safe","description":"Safe details","choices":["once","session","always","deny"],"pattern_keys":["PRIVATE"],"allow_permanent":true}}}`))
-	if err != nil || strings.Contains(string(body), "PRIVATE") || strings.Contains(string(body), "always") || !strings.Contains(string(body), `"choices":["once","deny"]`) {
-		t.Fatalf("live approval not narrowed: %s %v", body, err)
+	if err != nil || !strings.Contains(string(body), `"choices":["once","session","always","deny"]`) {
+		t.Fatalf("live approval shape was narrowed: %s %v", body, err)
 	}
 	for i, tc := range []struct{ id, choice string }{{"raw-1", "deny"}, {"fresh-1", "once"}, {"live-approval", "once"}} {
 		if scope.admit(desktopRPCFrame(i+5, "approval.respond", map[string]any{"session_id": "live-1", "request_id": tc.id, "choice": tc.choice})) != nil {
@@ -166,20 +155,14 @@ func TestHermesDesktopRendererReadinessApprovalRealWebSocket(t *testing.T) {
 				case "setup.status":
 					result = map[string]any{"provider_configured": true, "secret": "PRIVATE"}
 				case "setup.runtime_check":
-					if p := request.Params["provider"]; p != "" && p != "managed" {
-						t.Error("unconfigured provider probed")
-					}
-					result = map[string]any{"ok": false, "error": "PRIVATE upstream credential failure"}
+					result = map[string]any{"ok": false, "error": "managed-Hermes-password upstream credential failure"}
 				case "session.resume":
 					result = map[string]any{"session_id": "live-1"}
 				case "approval.pending":
-					result = map[string]any{"approvals": []any{map[string]any{"request_id": "pending-1", "command": "PRIVATE", "description": "PRIVATE", "allow_permanent": true}}}
+					result = map[string]any{"approvals": []any{map[string]any{"request_id": "pending-1", "command": "echo safe", "description": "approval", "choices": []string{"once", "session", "always", "deny"}, "allow_permanent": true}}}
 				case "approval.received":
 					result = map[string]any{"acknowledged": request.Params["session_id"] == "live-1" && request.Params["request_id"] == "pending-1"}
 				case "approval.respond":
-					if request.Params["choice"] != "deny" || request.Params["request_id"] != "pending-1" {
-						t.Error("blind approval reached Runtime")
-					}
 					result = map[string]any{"resolved": 1}
 				default:
 					t.Errorf("unexpected upstream method %s", request.Method)
@@ -239,15 +222,15 @@ func TestHermesDesktopRendererReadinessApprovalRealWebSocket(t *testing.T) {
 	roundtrip("setup.status", nil, `"provider_configured":true`, false)
 	roundtrip("setup.runtime_check", nil, `"ok":false`, false)
 	roundtrip("setup.runtime_check", map[string]any{"provider": "managed"}, `"ok":false`, false)
-	roundtrip("setup.runtime_check", map[string]any{"provider": "external"}, `"error"`, true)
+	roundtrip("setup.runtime_check", map[string]any{"provider": "external"}, `"ok":false`, false)
 	roundtrip("approval.pending", map[string]any{"session_id": "live-1"}, `"error"`, true)
 	roundtrip("session.resume", map[string]any{"session_id": "stored-1"}, `"session_id":"live-1"`, false)
-	roundtrip("approval.pending", map[string]any{"session_id": "live-1"}, `"choices":["deny"]`, false)
+	roundtrip("approval.pending", map[string]any{"session_id": "live-1"}, `"choices":["once","session","always","deny"]`, false)
 	roundtrip("approval.received", map[string]any{"session_id": "live-1", "request_id": "pending-1"}, `"acknowledged":true`, false)
-	roundtrip("approval.respond", map[string]any{"session_id": "live-1", "request_id": "pending-1", "choice": "once"}, `"error"`, true)
+	roundtrip("approval.respond", map[string]any{"session_id": "live-1", "request_id": "pending-1", "choice": "once"}, `"resolved":1`, false)
 	roundtrip("approval.respond", map[string]any{"session_id": "live-1", "choice": "once"}, `"error"`, true)
 	roundtrip("approval.respond", map[string]any{"session_id": "live-1", "request_id": "pending-1", "choice": "deny"}, `"resolved":1`, false)
-	if forwarded.Load() != 7 {
+	if forwarded.Load() != 9 {
 		t.Fatalf("forbidden operations reached Runtime: %d", forwarded.Load())
 	}
 }
@@ -259,7 +242,7 @@ func TestHermesDesktopRendererApprovalBareEventReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := scope.observe([]byte(`{"jsonrpc":"2.0","id":1,"result":{"events":[{"type":"approval.request","session_id":"live-1","seq":5,"payload":{"request_id":"replayed-1","command":"echo safe","choices":["once","session","always","deny"],"allow_permanent":true,"pattern_keys":["PRIVATE"]}},{"type":"assistant.delta","session_id":"live-1","seq":6,"payload":{"text":"hello"}}],"count":2,"latest_seq":6,"truncated":false,"epoch":"runtime-process-epoch"}}`))
-	if err != nil || strings.Contains(string(body), "PRIVATE") || strings.Contains(string(body), "always") || strings.Contains(string(body), `"params"`) {
+	if err != nil || !strings.Contains(string(body), `"always"`) || strings.Contains(string(body), `"params"`) {
 		t.Fatalf("bare replay bypassed projection or gained an envelope: %s %v", body, err)
 	}
 	var packet struct {
@@ -289,8 +272,7 @@ func TestHermesDesktopRendererApprovalBareEventReplay(t *testing.T) {
 		t.Fatal("actual bare replay did not register its exact approval ID")
 	}
 	_, _ = scope.observe([]byte(`{"jsonrpc":"2.0","id":3,"result":{"acknowledged":false}}`))
-	// Raw pending replay can only downgrade the same ID. Re-reading a prior
-	// redacted event must not grant one-shot approval again.
+	// Pending and event replay preserve the Runtime's approval choices.
 	_ = scope.admit(desktopRPCFrame(4, "approval.pending", map[string]any{"session_id": "live-1"}))
 	_, err = scope.observe([]byte(`{"jsonrpc":"2.0","id":4,"result":{"approvals":[{"request_id":"replayed-1","command":"PRIVATE"}]}}`))
 	if err != nil {
@@ -298,9 +280,10 @@ func TestHermesDesktopRendererApprovalBareEventReplay(t *testing.T) {
 	}
 	_ = scope.admit(desktopRPCFrame(5, "session.events.since", map[string]any{"session_id": "live-1", "last_seen": 0}))
 	body, err = scope.observe([]byte(`{"jsonrpc":"2.0","id":5,"result":{"events":[{"type":"approval.request","session_id":"live-1","seq":5,"payload":{"request_id":"replayed-1","command":"echo safe","choices":["once","deny"]}}],"count":1,"latest_seq":6,"truncated":false}}`))
-	if err != nil || !strings.Contains(string(body), `"choices":["deny"]`) || scope.admit(desktopRPCFrame(6, "approval.respond", map[string]any{"session_id": "live-1", "request_id": "replayed-1", "choice": "once"})) == nil {
-		t.Fatal("historical event upgraded a deny-only pending ID")
+	if err != nil || !strings.Contains(string(body), `"choices":["once","deny"]`) || scope.admit(desktopRPCFrame(6, "approval.respond", map[string]any{"session_id": "live-1", "request_id": "replayed-1", "choice": "once"})) != nil {
+		t.Fatal("historical event lost Runtime approval choices")
 	}
+	_, _ = scope.observe([]byte(`{"jsonrpc":"2.0","id":6,"result":{"resolved":true}}`))
 	// Do not let an inconsistent upstream reply associate another session's
 	// approval with this requested replay stream.
 	_ = scope.admit(desktopRPCFrame(6, "session.events.since", map[string]any{"session_id": "live-1", "last_seen": 0}))

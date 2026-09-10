@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,13 +93,13 @@ func (s *HermesDesktopService) proxyHermesWebSocket(ctx context.Context, c *Herm
 				return
 			}
 			for _, line := range lines {
-				filtered, err := hermesDesktopFilterRPC(line)
+				workspaceRoot := ""
+				if target.instance.WorkspacePath != nil {
+					workspaceRoot = strings.TrimSpace(*target.instance.WorkspacePath)
+				}
+				filtered, err := hermesDesktopFilterRPCAtWorkspace(line, workspaceRoot)
 				if err == nil {
-					if !s.desktopRPCModelAllowed(ctx, target, filtered) {
-						err = ErrHermesDesktopForbidden
-					} else {
-						err = rpcScope.admit(filtered)
-					}
+					err = rpcScope.admit(filtered)
 				}
 				if err != nil {
 					var request map[string]json.RawMessage
@@ -119,9 +120,8 @@ func (s *HermesDesktopService) proxyHermesWebSocket(ctx context.Context, c *Herm
 					}
 					continue
 				}
-				// Catalogue validation may await an upstream HTTP read. A logout
-				// during that await must win before any model/create write leaves
-				// CM; the frame's earlier epoch check is no longer sufficient.
+				// Re-check ownership immediately before forwarding the frame so a
+				// logout during policy evaluation cannot leak a request.
 				epoch, err := s.sessionEpoch(ctx, c.UserID)
 				if err != nil || epoch != c.Epoch {
 					return

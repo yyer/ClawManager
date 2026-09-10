@@ -5,16 +5,15 @@ package services
 // expose Electron's machine-wide capabilities.
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 var hermesDesktopSources = regexp.MustCompile(`^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$`)
@@ -58,242 +57,59 @@ func hermesDesktopSessionRow(raw json.RawMessage) (json.RawMessage, error) {
 	if json.Unmarshal(row["id"], &id) != nil || !hermesDesktopSessionID.MatchString(id) {
 		return nil, ErrHermesDesktopUpstream
 	}
-	safe := hermesDesktopPickScalars(row, "id title preview source model started_at ended_at last_active message_count input_tokens output_tokens tool_call_count is_active archived pinned unread actual_cost_usd estimated_cost_usd parent_session_id _lineage_root_id handoff_platform handoff_state")
-	// This is a CM routing label, not a claim about the Runtime home basename.
-	safe["profile"] = json.RawMessage(`"default"`)
-	safe["is_default_profile"] = json.RawMessage("true")
-	return json.Marshal(safe)
+	return json.Marshal(row)
 }
 
 func hermesDesktopProjectHTTP(path string, body []byte) ([]byte, error) {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(body, &object) != nil || object == nil {
+	var value any
+	if json.Unmarshal(body, &value) != nil {
 		return nil, ErrHermesDesktopUpstream
 	}
-	var safe map[string]json.RawMessage
-	switch {
-	case path == "/status":
-		safe = hermesDesktopPickScalars(object, "version model provider active_sessions gateway_state")
-	case path == "/config" || path == "/config/defaults":
-		// This Runtime Pod is isolated to the owning CM instance. Preserve the
-		// complete shape so every schema-backed field can load and save. The
-		// response sanitizer below still removes credentials and secret values.
-		safe = object
-	case path == "/config/schema":
-		var fields map[string]map[string]json.RawMessage
-		if json.Unmarshal(object["fields"], &fields) != nil || fields == nil {
+	if strings.HasSuffix(path, "/messages") {
+		object, ok := value.(map[string]any)
+		if !ok {
 			return nil, ErrHermesDesktopUpstream
 		}
-		projected := make(map[string]map[string]json.RawMessage, len(fields))
-		for key, field := range fields {
-			if key == "" || len(key) > 256 {
-				continue
-			}
-			entry := hermesDesktopPick(field, "category description options searchable clearable type")
-			var category, description, fieldType string
-			if raw := entry["category"]; len(raw) > 0 && (json.Unmarshal(raw, &category) != nil || len(category) > 128) {
-				delete(entry, "category")
-			}
-			if raw := entry["description"]; len(raw) > 0 && (json.Unmarshal(raw, &description) != nil || len(description) > 4096) {
-				delete(entry, "description")
-			}
-			if raw := entry["type"]; len(raw) > 0 && (json.Unmarshal(raw, &fieldType) != nil || !strings.Contains(" boolean list number select string text ", " "+fieldType+" ")) {
-				delete(entry, "type")
-			}
-			for _, booleanKey := range []string{"searchable", "clearable"} {
-				var value bool
-				if raw := entry[booleanKey]; len(raw) > 0 && json.Unmarshal(raw, &value) != nil {
-					delete(entry, booleanKey)
-				}
-			}
-			if raw := entry["options"]; len(raw) > 0 {
-				var options []any
-				if json.Unmarshal(raw, &options) != nil || len(options) > 10000 {
-					delete(entry, "options")
-				} else {
-					valid := true
-					for _, option := range options {
-						switch option.(type) {
-						case nil, string, bool, float64:
-						default:
-							valid = false
-						}
-					}
-					if !valid {
-						delete(entry, "options")
-					}
-				}
-			}
-			projected[key] = entry
-		}
-		safe = map[string]json.RawMessage{}
-		safe["fields"], _ = json.Marshal(projected)
-		var order []string
-		if json.Unmarshal(object["category_order"], &order) == nil && len(order) <= 256 {
-			safe["category_order"], _ = json.Marshal(order)
-		}
-	case path == "/model/info":
-		safe = hermesDesktopPickScalars(object, "model provider auto_context_length config_context_length effective_context_length")
-	case path == "/profiles":
-		var profiles []map[string]json.RawMessage
-		if json.Unmarshal(object["profiles"], &profiles) != nil {
+		messages, ok := object["messages"].([]any)
+		if !ok {
 			return nil, ErrHermesDesktopUpstream
 		}
-		for _, profile := range profiles {
-			var isDefault bool
-			_ = json.Unmarshal(profile["is_default"], &isDefault)
-			if !isDefault {
-				continue
-			}
-			row := hermesDesktopPickScalars(profile, "display_name has_env is_default model name provider skill_count")
-			row["name"] = json.RawMessage(`"default"`)
-			row["path"] = json.RawMessage(`""`)
-			safe = map[string]json.RawMessage{}
-			safe["profiles"], _ = json.Marshal([]map[string]json.RawMessage{row})
-			break
-		}
-		if safe == nil {
-			safe = map[string]json.RawMessage{"profiles": json.RawMessage(`[]`)}
-		}
-	case path == "/model/options":
-		safe = hermesDesktopPickScalars(object, "model provider")
-		var providers []map[string]json.RawMessage
-		if json.Unmarshal(object["providers"], &providers) != nil {
-			return nil, ErrHermesDesktopUpstream
-		}
-		rows := []map[string]json.RawMessage{}
-		for _, provider := range providers {
-			var slug string
-			_ = json.Unmarshal(provider["slug"], &slug)
-			if !hermesDesktopModelName.MatchString(slug) {
-				continue
-			}
-			row := hermesDesktopPickScalars(provider, "slug name is_current authenticated total_models is_user_defined warning auth_type key_env api_url free_tier")
-			for _, key := range []string{"models", "featured_models", "unavailable_models"} {
-				var names []string
-				if json.Unmarshal(provider[key], &names) == nil && names != nil {
-					row[key], _ = json.Marshal(names)
+		for _, raw := range messages {
+			message, ok := raw.(map[string]any)
+			if ok && message["role"] == "system" {
+				// Keep the row and all metadata so pagination and renderer state stay
+				// exact, while the managed browser never receives a system prompt.
+				message["content"] = ""
+				if _, exists := message["display_content"]; exists {
+					message["display_content"] = ""
 				}
-			}
-			if pricing := provider["pricing"]; len(pricing) > 0 {
-				row["pricing"] = pricing
-			}
-			var aliases []string
-			if json.Unmarshal(provider["aliases"], &aliases) == nil {
-				valid := []string{}
-				for _, alias := range aliases {
-					if hermesDesktopModelName.MatchString(alias) && len(valid) < 32 {
-						valid = append(valid, alias)
-					}
+				if _, exists := message["text"]; exists {
+					message["text"] = ""
 				}
-				row["aliases"], _ = json.Marshal(valid)
+				message["display_kind"] = "hidden"
 			}
-			var capabilities map[string]map[string]json.RawMessage
-			var names []string
-			if json.Unmarshal(provider["capabilities"], &capabilities) == nil && json.Unmarshal(provider["models"], &names) == nil {
-				projected := map[string]map[string]bool{}
-				for _, name := range names {
-					if !hermesDesktopModelName.MatchString(name) || len(projected) >= 10000 {
-						continue
-					}
-					flags := map[string]bool{}
-					for _, field := range []string{"fast", "reasoning", "can_disable_reasoning"} {
-						var value bool
-						if raw := capabilities[name][field]; len(raw) > 0 && string(raw) != "null" && json.Unmarshal(raw, &value) == nil {
-							flags[field] = value
-						}
-					}
-					if len(flags) > 0 {
-						projected[name] = flags
-					}
-				}
-				row["capabilities"], _ = json.Marshal(projected)
-			}
-			rows = append(rows, row)
 		}
-		safe["providers"], _ = json.Marshal(rows)
-	case path == "/sessions":
-		safe = hermesDesktopPickScalars(object, "total limit offset")
-		var rows []json.RawMessage
-		if json.Unmarshal(object["sessions"], &rows) != nil {
-			return nil, ErrHermesDesktopUpstream
-		}
-		projected := make([]json.RawMessage, 0, len(rows))
-		for _, row := range rows {
-			value, err := hermesDesktopSessionRow(row)
-			if err != nil {
-				return nil, err
-			}
-			projected = append(projected, value)
-		}
-		safe["sessions"], _ = json.Marshal(projected)
-	case strings.HasSuffix(path, "/messages"):
-		safe = hermesDesktopPickScalars(object, "session_id")
-		var pagination map[string]json.RawMessage
-		if json.Unmarshal(object["pagination"], &pagination) == nil && pagination != nil {
-			safe["pagination"], _ = json.Marshal(hermesDesktopPickScalars(pagination, "limit offset order returned"))
-		}
-		var messages []map[string]json.RawMessage
-		if json.Unmarshal(object["messages"], &messages) != nil {
-			return nil, ErrHermesDesktopUpstream
-		}
-		rows := make([]map[string]json.RawMessage, 0, len(messages))
-		for _, message := range messages {
-			var role string
-			_ = json.Unmarshal(message["role"], &role)
-			if role == "system" {
-				// The stock renderer advances pagination by messages.length.
-				// Keep the physical row count without exposing a system prompt.
-				hidden := hermesDesktopPickScalars(message, "id row_id timestamp")
-				hidden["role"], hidden["content"], hidden["display_kind"] = json.RawMessage(`"system"`), json.RawMessage(`""`), json.RawMessage(`"hidden"`)
-				rows = append(rows, hidden)
-				continue
-			}
-			rows = append(rows, hermesDesktopPick(message, "id row_id role content display_content text timestamp tool_call_id tool_calls tool_name name args context reasoning reasoning_content reasoning_details codex_reasoning_items display_kind display_metadata"))
-		}
-		safe["messages"], _ = json.Marshal(rows)
-	default:
-		return hermesDesktopSessionRow(body)
 	}
-	return json.Marshal(safe)
+	return json.Marshal(value)
 }
 
 func (s *HermesDesktopService) desktopRead(ctx context.Context, target *hermesDesktopTarget, path string, query url.Values) ([]byte, error) {
 	q := url.Values{}
 	for key, values := range query {
-		if key != "profile" {
-			q[key] = append([]string(nil), values...)
-		}
-	}
-	if path == "/model/options" {
-		q.Set("explicit_only", "1")
+		q[key] = append([]string(nil), values...)
 	}
 	body, _, cookies, err := s.upstreamRequest(ctx, target, http.MethodGet, "/api"+path, q.Encode())
 	if err != nil {
 		return nil, err
 	}
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	sessionProjection := len(parts) >= 2 && len(parts) <= 3 && parts[0] == "sessions" && hermesDesktopSessionID.MatchString(parts[1]) && (len(parts) == 2 || parts[2] == "messages")
-	project := path == "/status" || path == "/config" || path == "/config/defaults" || path == "/config/schema" || path == "/model/info" || path == "/model/options" || path == "/profiles" || path == "/sessions" || sessionProjection
+	sessionProjection := len(parts) == 3 && parts[0] == "sessions" && hermesDesktopSessionID.MatchString(parts[1]) && parts[2] == "messages"
+	project := sessionProjection
 	if project {
 		body, err = hermesDesktopProjectHTTP(path, body)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if path == "/config/schema" || path == "/config" || path == "/config/defaults" {
-		secrets := []string{*target.instance.AccessToken}
-		for _, cookie := range cookies {
-			secrets = append(secrets, cookie.Value)
-		}
-		return hermesDesktopRedactStringValues(body, secrets...)
-	}
-	if !project {
-		secrets := []string{*target.instance.AccessToken}
-		for _, cookie := range cookies {
-			secrets = append(secrets, cookie.Value)
-		}
-		return hermesDesktopRedactStringValues(body, secrets...)
 	}
 	return hermesDesktopSanitize(body, *target.instance.AccessToken, cookies)
 }
@@ -345,6 +161,9 @@ func (s *HermesDesktopService) desktopSidebar(ctx context.Context, target *herme
 		} else if exclude := query.Get(section + "_exclude"); exclude != "" {
 			q.Set("exclude_sources", exclude)
 		}
+		if profile := query.Get("recents_profile"); profile != "" && profile != "all" {
+			q.Set("profile", profile)
+		}
 		body, err := s.desktopRead(ctx, target, "/sessions", q)
 		if err != nil {
 			return nil, err // Never turn unavailable real history into fake empty success.
@@ -357,106 +176,19 @@ func (s *HermesDesktopService) desktopSidebar(ctx context.Context, target *herme
 			return nil, ErrHermesDesktopUpstream
 		}
 		n, _ := strconv.Atoi(limit)
-		result[section] = map[string]any{"sessions": page.Sessions, "profiles_truncated": map[string]bool{"default": page.Total > n}}
+		profile := query.Get("recents_profile")
+		if profile == "" || profile == "all" {
+			profile = "default"
+		}
+		result[section] = map[string]any{"sessions": page.Sessions, "profiles_truncated": map[string]bool{profile: page.Total > n}}
 	}
 	return json.Marshal(result)
 }
 
-type hermesDesktopCatalogEntry struct {
-	expires   time.Time
-	choices   map[string]bool
-	providers map[string]bool
-}
-
-func (s *HermesDesktopService) desktopModelAllowed(ctx context.Context, target *hermesDesktopTarget, provider, model string) bool {
-	entry, ok := s.desktopCatalog(ctx, target)
-	return ok && entry.choices[provider+"\x00"+model]
-}
-
-func (s *HermesDesktopService) desktopCatalog(ctx context.Context, target *hermesDesktopTarget) (hermesDesktopCatalogEntry, bool) {
-	// Cache is per instance, generation, endpoint AND managed credential hash,
-	// not per browser-supplied profile. No external/unconfigured provider wins.
-	key := target.authKey()
-	cacheKey := hermesGatewayCacheKey{allocation: key, target: target.url.String(), credential: sha256.Sum256([]byte(*target.instance.AccessToken))}
-	s.mu.Lock()
-	entry := s.catalog[cacheKey]
-	s.mu.Unlock()
-	if time.Now().Before(entry.expires) {
-		return entry, true
-	}
-	body, err := s.desktopRead(ctx, target, "/model/options", url.Values{"explicit_only": {"1"}})
-	if err != nil {
-		return hermesDesktopCatalogEntry{}, false
-	}
-	var payload struct {
-		Model     string `json:"model"`
-		Provider  string `json:"provider"`
-		Providers []struct {
-			Slug          string   `json:"slug"`
-			Models        []string `json:"models"`
-			Authenticated bool     `json:"authenticated"`
-		} `json:"providers"`
-	}
-	if json.Unmarshal(body, &payload) != nil {
-		return hermesDesktopCatalogEntry{}, false
-	}
-	entry = hermesDesktopCatalogEntry{expires: time.Now().Add(30 * time.Second), choices: map[string]bool{}, providers: map[string]bool{}}
-	// Some supported providers expose only their already-configured default
-	// until their inventory finishes loading. That exact pair remains valid;
-	// missing catalogue data never authorizes arbitrary model/provider strings.
-	if hermesDesktopModelName.MatchString(payload.Provider) && hermesDesktopModelName.MatchString(payload.Model) {
-		entry.choices[payload.Provider+"\x00"+payload.Model] = true
-		entry.providers[payload.Provider] = true
-	}
-	for _, p := range payload.Providers {
-		if !p.Authenticated && p.Slug != payload.Provider {
-			continue
-		}
-		if hermesDesktopModelName.MatchString(p.Slug) && len(entry.providers) < 512 {
-			entry.providers[p.Slug] = true
-		}
-		for _, m := range p.Models {
-			if hermesDesktopModelName.MatchString(m) && len(entry.choices) < 10000 {
-				entry.choices[p.Slug+"\x00"+m] = true
-			}
-		}
-	}
-	s.mu.Lock()
-	if len(s.catalog) >= 512 {
-		clear(s.catalog)
-	}
-	s.catalog[cacheKey] = entry
-	s.mu.Unlock()
-	return entry, true
-}
-
 func (s *HermesDesktopService) desktopRPCModelAllowed(ctx context.Context, target *hermesDesktopTarget, frame []byte) bool {
-	var request struct {
-		Method string `json:"method"`
-		Params struct {
-			Key      string `json:"key"`
-			Model    string `json:"model"`
-			Provider string `json:"provider"`
-			Value    string `json:"value"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(frame, &request) != nil {
-		return false
-	}
-	if request.Method == "config.set" {
-		if request.Params.Key == "reasoning" || request.Params.Key == "fast" {
-			return true // Exact values and the live-session binding are checked separately.
-		}
-		parts := hermesDesktopModelSwitch.FindStringSubmatch(request.Params.Value)
-		return len(parts) == 3 && s.desktopModelAllowed(ctx, target, parts[2], parts[1])
-	}
-	if request.Method == "session.create" && (request.Params.Model != "" || request.Params.Provider != "") {
-		return request.Params.Model != "" && request.Params.Provider != "" && s.desktopModelAllowed(ctx, target, request.Params.Provider, request.Params.Model)
-	}
-	if request.Method == "setup.runtime_check" && request.Params.Provider != "" {
-		entry, ok := s.desktopCatalog(ctx, target)
-		return ok && entry.providers[request.Params.Provider]
-	}
+	// Runtime owns provider/model validation. The BFF only binds the request to
+	// the authenticated instance and workspace; a catalogue cache here would
+	// silently turn Desktop's evolving model UI into a local allowlist.
 	return true
 }
 
@@ -577,7 +309,7 @@ func (scope *hermesDesktopRPCScope) observe(frame []byte) ([]byte, error) {
 			}
 			projected := make([]json.RawMessage, 0, len(approvals))
 			for _, approval := range approvals {
-				safe, err := scope.projectApproval(request.sessionID, approval, true)
+				safe, err := scope.projectApproval(request.sessionID, approval, false)
 				if err != nil {
 					return nil, err
 				}
@@ -641,11 +373,10 @@ func hermesDesktopProjectCheck(method string, raw json.RawMessage) (json.RawMess
 		return nil, ErrHermesDesktopUpstream
 	}
 	_ = json.Unmarshal(object[key], &value)
-	result := map[string]any{key: value}
-	if method == "setup.runtime_check" && !value {
-		result["error"] = "The configured runtime is not ready. Check provider configuration in ClawManager."
-	}
-	return json.Marshal(result)
+	// Keep the Runtime's response contract intact. The websocket layer applies
+	// the instance credential redactor after this validation, so readiness and
+	// approval metadata are not silently replaced by a smaller local schema.
+	return json.Marshal(object)
 }
 
 // Callers hold scope.mu. approval.pending in the pinned Runtime returns raw
@@ -672,36 +403,37 @@ func (scope *hermesDesktopRPCScope) projectApproval(sid string, raw json.RawMess
 		// A malformed live/resume payload must never offer blind approval.
 		denyOnly = true
 	}
+	allowedChoices := []string{"once", "session", "always", "deny"}
 	if choices, exists := object["choices"]; exists && !denyOnly {
 		var values []string
 		if json.Unmarshal(choices, &values) != nil {
 			return nil, ErrHermesDesktopUpstream
 		}
-		denyOnly = true
+		allowedChoices = allowedChoices[:0]
 		for _, choice := range values {
-			if choice == "once" {
-				denyOnly = false
+			if slices.Contains([]string{"once", "session", "always", "deny"}, choice) && !slices.Contains(allowedChoices, choice) {
+				allowedChoices = append(allowedChoices, choice)
 			}
+		}
+		if len(allowedChoices) == 0 || !slices.Contains(allowedChoices, "deny") {
+			allowedChoices = []string{"deny"}
 		}
 	}
 	// Once raw replay is deny-only, another event for the same request cannot
 	// re-enable it. A new approval must have a new server-generated request ID.
 	denyOnly = denyOnly || scope.approvals[sid][requestID]
 	scope.approvals[sid][requestID] = denyOnly
-	safe := hermesDesktopPickScalars(object, "request_id smart_denied")
-	safe["allow_permanent"], safe["allow_session"] = json.RawMessage("false"), json.RawMessage("false")
+	safe := object
+	if !denyOnly {
+		safe["choices"], _ = json.Marshal(allowedChoices)
+		safe["allow_permanent"] = json.RawMessage(strconv.FormatBool(slices.Contains(allowedChoices, "always")))
+		safe["allow_session"] = json.RawMessage(strconv.FormatBool(slices.Contains(allowedChoices, "session")))
+	}
 	if denyOnly {
 		safe["choices"] = json.RawMessage(`["deny"]`)
 		safe["command"] = json.RawMessage(`"Command hidden: this Runtime did not provide safe approval details."`)
 		safe["description"] = json.RawMessage(`"Deny this request and retry to receive a new live approval prompt."`)
-	} else {
-		safe["choices"] = json.RawMessage(`["once","deny"]`)
-		for _, key := range []string{"command", "description"} {
-			var value string
-			if json.Unmarshal(object[key], &value) == nil {
-				safe[key] = object[key]
-			}
-		}
+		safe["allow_permanent"], safe["allow_session"] = json.RawMessage("false"), json.RawMessage("false")
 	}
 	return json.Marshal(safe)
 }

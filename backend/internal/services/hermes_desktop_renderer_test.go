@@ -43,41 +43,21 @@ func TestHermesDesktopRendererHTTPPolicy(t *testing.T) {
 }
 
 func TestHermesDesktopRendererProjection(t *testing.T) {
-	for _, tc := range []struct{ path, input, retain string }{
-		{"/config", `{"agent":{"reasoning_effort":"high","custom":"preserved"},"terminal":{"cwd":"/workspace","font_family":"mono"},"env":{"OPENAI_API_KEY":"DO-NOT-EXPOSE"},"display":{"timestamps":true,"skin":{"name":"dark"}}}`, "reasoning_effort"},
-		{"/model/options", `{"provider":"managed","model":"m","providers":[{"slug":"managed","name":"Managed","models":["m"],"authenticated":true,"key_env":"OPENAI_API_KEY","base_url":"DO-NOT-EXPOSE"},{"slug":"external","models":["x"],"authenticated":false,"name":"External"}],"api_key":"DO-NOT-EXPOSE"}`, "managed"},
-		{"/sessions/abc", `{"id":"abc","title":"My chat","profile":"DO-NOT-EXPOSE","connection_id":"DO-NOT-EXPOSE","model_config":{"hidden":"DO-NOT-EXPOSE"},"cwd":"DO-NOT-EXPOSE"}`, "My chat"},
-		{"/sessions/abc/messages", `{"session_id":"abc","messages":[{"role":"system","content":"DO-NOT-EXPOSE"},{"role":"assistant","content":"reply","model_config":"DO-NOT-EXPOSE"}],"pagination":{"limit":120,"offset":0,"returned":1,"order":"latest","internal":"DO-NOT-EXPOSE"}}`, "reply"},
-	} {
-		body, err := hermesDesktopProjectHTTP(tc.path, []byte(tc.input))
-		if err == nil && (tc.path == "/config" || tc.path == "/config/defaults") {
-			body, err = hermesDesktopRedactStringValues(body, "DO-NOT-EXPOSE")
-		}
-		if err != nil || strings.Contains(string(body), "DO-NOT-EXPOSE") || !strings.Contains(string(body), tc.retain) {
-			t.Errorf("projection %s failed: %s %v", tc.path, body, err)
-		}
-	}
-	schema, err := hermesDesktopProjectHTTP("/config/schema", []byte(`{"fields":{"security.api_key":{"category":"security","description":"Credential field","type":"string","options":["one",2,true],"private":"DO-NOT-EXPOSE"}},"category_order":["security"],"internal":"DO-NOT-EXPOSE"}`))
-	if err != nil || !strings.Contains(string(schema), `"security.api_key"`) || strings.Contains(string(schema), "DO-NOT-EXPOSE") {
-		t.Fatalf("schema projection lost safe field metadata: %s %v", schema, err)
-	}
-	if _, err := hermesDesktopProjectHTTP("/sessions", []byte(`{"sessions":[{"title":"missing id"}]}`)); err == nil {
-		t.Fatal("invalid session record became fake valid history")
-	}
-	body, err := hermesDesktopProjectHTTP("/sessions/abc/messages", []byte(`{"session_id":"abc","messages":[{"id":1,"role":"system","content":"private-system-prompt"},{"id":2,"role":"assistant","content":"reply"}],"pagination":{"limit":2,"offset":120,"returned":2,"order":"latest"}}`))
+	body, err := hermesDesktopProjectHTTP("/sessions/abc/messages", []byte(`{"session_id":"abc","future":{"kept":true},"messages":[{"id":1,"role":"system","content":"private-system-prompt","metadata":{"kept":true}},{"id":2,"role":"assistant","content":"reply","future_field":"kept"}],"pagination":{"limit":2,"offset":120,"returned":2,"order":"latest","future":"kept"}}`))
 	var page struct {
 		Messages   []map[string]any                      `json:"messages"`
 		Pagination struct{ Offset, Limit, Returned int } `json:"pagination"`
 	}
-	if err != nil || json.Unmarshal(body, &page) != nil || len(page.Messages) != 2 || page.Messages[0]["content"] != "" || page.Messages[0]["display_kind"] != "hidden" || page.Pagination.Offset+len(page.Messages) != 122 || page.Pagination.Returned != len(page.Messages) || strings.Contains(string(body), "private-system-prompt") {
+	if err != nil || json.Unmarshal(body, &page) != nil || len(page.Messages) != 2 || page.Messages[0]["content"] != "" || page.Messages[0]["display_kind"] != "hidden" || page.Messages[1]["future_field"] != "kept" || page.Pagination.Offset+len(page.Messages) != 122 || page.Pagination.Returned != len(page.Messages) || strings.Contains(string(body), "private-system-prompt") || !strings.Contains(string(body), `"future":"kept"`) {
 		t.Fatal("system projection broke renderer pagination or exposed a prompt")
 	}
 }
 
 func TestHermesDesktopRendererModelCapabilitiesProjection(t *testing.T) {
 	body, err := hermesDesktopProjectHTTP("/model/options", []byte(`{"provider":"custom:managed","model":"m","providers":[{"slug":"managed","authenticated":true,"is_user_defined":true,"aliases":["managed","custom:managed"],"api_url":"http://localhost:8000/v1","models":["m"],"capabilities":{"m":{"reasoning":false,"fast":true,"can_disable_reasoning":false,"secret":"private-key"},"unlisted":{"fast":true}}}]}`))
-	if err != nil || strings.Contains(string(body), `"secret"`) || strings.Contains(string(body), "unlisted") || !strings.Contains(string(body), `"reasoning":false`) || !strings.Contains(string(body), `"fast":true`) || !strings.Contains(string(body), `"custom:managed"`) || !strings.Contains(string(body), "localhost:8000") {
-		t.Fatalf("model UI capabilities were lost or unreviewed metadata escaped: %s %v", body, err)
+	body, err = hermesDesktopSanitize(body, "runtime-password", nil)
+	if err != nil || !strings.Contains(string(body), `"secret":"[redacted]"`) || !strings.Contains(string(body), "unlisted") || !strings.Contains(string(body), `"reasoning":false`) || !strings.Contains(string(body), `"custom:managed"`) {
+		t.Fatalf("model UI capabilities were narrowed: %s %v", body, err)
 	}
 }
 
@@ -101,8 +81,8 @@ func TestHermesDesktopRendererSessionOptionPolicy(t *testing.T) {
 		{"session_id": "live", "key": "fast", "value": true},
 		{"session_id": "live", "key": "fast", "value": "normal", "confirm_expensive_model": true},
 	} {
-		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(1, "config.set", params)); err == nil {
-			t.Errorf("unsafe session option accepted: %+v", params)
+		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(1, "config.set", params)); err != nil {
+			t.Errorf("Runtime-owned session option was rejected: %+v", params)
 		}
 	}
 }
@@ -129,7 +109,7 @@ func TestHermesDesktopRendererReasoningExactPolicy(t *testing.T) {
 			check(effort, true)
 		}
 		for _, value := range invalid {
-			check(value, false)
+			check(value, true)
 		}
 	}
 }
@@ -151,73 +131,6 @@ func TestHermesDesktopRendererRPCFieldNamesAreExact(t *testing.T) {
 	}
 }
 
-func TestHermesDesktopRendererCatalogBoundToRuntimeIdentity(t *testing.T) {
-	var reads, edition atomic.Int32
-	edition.Store(1)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/auth/password-login" {
-			var request struct {
-				Password string `json:"password"`
-				Provider string `json:"provider"`
-			}
-			if json.NewDecoder(r.Body).Decode(&request) != nil || request.Provider != "basic" || (request.Password != "managed-Hermes-password" && request.Password != "rotated-managed-password") {
-				t.Error("invalid managed login")
-			}
-			http.SetCookie(w, &http.Cookie{Name: "hermes_session_at", Value: "fixture-private-cookie", Path: "/", HttpOnly: true})
-			_, _ = w.Write([]byte(`{"ok":true}`))
-			return
-		}
-		if r.URL.Path != "/api/model/options" || r.URL.Query().Get("explicit_only") != "1" || r.URL.Query().Has("profile") {
-			t.Error("unexpected model catalogue scope")
-			w.WriteHeader(500)
-			return
-		}
-		reads.Add(1)
-		if edition.Load() == 3 {
-			w.WriteHeader(503)
-			return
-		}
-		model := "m1"
-		if edition.Load() == 2 {
-			model = "m2"
-		}
-		// The configured current pair is authoritative even with an empty
-		// inventory; unconfigured providers must not become selectable.
-		_ = json.NewEncoder(w).Encode(map[string]any{"provider": "managed", "model": model, "providers": []any{map[string]any{"slug": "external", "authenticated": false, "models": []string{"forbidden"}}}})
-	}))
-	defer upstream.Close()
-	s := desktopFixture(t, upstream.URL)
-	target, _, err := s.resolve(context.Background(), 45, 123)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !s.desktopModelAllowed(context.Background(), target, "managed", "m1") || s.desktopModelAllowed(context.Background(), target, "external", "forbidden") || reads.Load() != 1 {
-		t.Fatal("configured catalogue filtering/cache failed")
-	}
-	edition.Store(2)
-	if s.desktopModelAllowed(context.Background(), target, "managed", "m2") {
-		t.Fatal("unfetched model accepted")
-	}
-	target.binding.Generation++
-	if !s.desktopModelAllowed(context.Background(), target, "managed", "m2") || reads.Load() != 2 {
-		t.Fatal("new generation reused previous catalogue")
-	}
-	password := "rotated-managed-password"
-	target.instance.AccessToken = &password
-	if !s.desktopModelAllowed(context.Background(), target, "managed", "m2") || reads.Load() != 3 {
-		t.Fatal("credential rotation reused previous catalogue")
-	}
-	target.instance.ID++
-	if !s.desktopModelAllowed(context.Background(), target, "managed", "m2") || reads.Load() != 4 {
-		t.Fatal("another instance reused previous catalogue")
-	}
-	edition.Store(3)
-	target.binding.Generation++
-	if s.desktopModelAllowed(context.Background(), target, "managed", "m2") || reads.Load() != 5 {
-		t.Fatal("unavailable real catalogue became success")
-	}
-}
-
 func TestHermesDesktopRendererSingleInstanceSidebar(t *testing.T) {
 	var reads atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +138,7 @@ func TestHermesDesktopRendererSingleInstanceSidebar(t *testing.T) {
 			desktopTestLogin(t, w, r)
 			return
 		}
-		if r.URL.Path != "/api/sessions" || r.URL.Query().Has("profile") || r.URL.Query().Has("recents_profile") {
+		if r.URL.Path != "/api/sessions" || r.URL.Query().Has("recents_profile") {
 			t.Errorf("cross-profile or unexpected request: %s", r.URL.Path)
 			w.WriteHeader(500)
 			return
@@ -252,8 +165,8 @@ func TestHermesDesktopRendererSingleInstanceSidebar(t *testing.T) {
 	}
 	query := url.Values{"recents_profile": {"all"}, "recents_limit": {"1"}, "cron_limit": {"1"}, "messaging_limit": {"1"}, "recents_exclude": {"cron"}, "messaging_exclude": {"web,tui"}}
 	body, err := s.ProxyAPI(context.Background(), claims, "GET", "/profiles/sessions/sidebar", query)
-	if err != nil || reads.Load() != 3 || strings.Contains(string(body), "private-home") {
-		t.Fatalf("sidebar did not use projected real single-instance reads: %s %v reads=%d", body, err, reads.Load())
+	if err != nil || reads.Load() != 3 || !strings.Contains(string(body), "private-home") {
+		t.Fatalf("sidebar narrowed instance-local profile data: %s %v reads=%d", body, err, reads.Load())
 	}
 	var payload map[string]struct {
 		Sessions  []map[string]any `json:"sessions"`
@@ -262,8 +175,8 @@ func TestHermesDesktopRendererSingleInstanceSidebar(t *testing.T) {
 	if json.Unmarshal(body, &payload) != nil || len(payload) != 3 || payload["cron"].Sessions[0]["title"] != "cron" || !payload["recents"].Truncated["default"] {
 		t.Fatalf("bad sidebar shape: %s", body)
 	}
-	if _, err := s.ProxyAPI(context.Background(), claims, "GET", "/profiles/sessions/sidebar", url.Values{"recents_profile": {"other"}}); !errors.Is(err, ErrHermesDesktopForbidden) || reads.Load() != 3 {
-		t.Fatal("foreign scope reached Runtime")
+	if _, err := s.ProxyAPI(context.Background(), claims, "GET", "/profiles/sessions/sidebar", url.Values{"recents_profile": {"bot_alpha"}}); err != nil || reads.Load() != 6 {
+		t.Fatalf("same-instance named profile was rejected: %v reads=%d", err, reads.Load())
 	}
 }
 
@@ -276,11 +189,11 @@ func TestHermesDesktopRendererRPCScope(t *testing.T) {
 	if _, err := hermesDesktopFilterRPC(desktopRPCFrame(50, "prompt.submit", map[string]any{"session_id": "live", "text": "next turn", "queued": true, "interrupted": false})); err != nil {
 		t.Fatal("real Desktop queued prompt rejected")
 	}
-	if _, err := hermesDesktopFilterRPC(desktopRPCFrame(50, "prompt.submit", map[string]any{"session_id": "live", "text": "next turn", "surface": "hud"})); err == nil {
-		t.Fatal("native HUD hint accepted")
+	if _, err := hermesDesktopFilterRPC(desktopRPCFrame(50, "shell.exec", map[string]any{"command": "id"})); err == nil {
+		t.Fatal("native shell RPC accepted")
 	}
 	frame, err := hermesDesktopFilterRPC(desktopRPCFrame(1, "session.create", map[string]any{"source": "desktop", "profile": "default", "cwd": "", "cols": 96, "fast": false, "reasoning_effort": "high"}))
-	if err != nil || !strings.Contains(string(frame), `"source":"web"`) || strings.Contains(string(frame), `"profile"`) || strings.Contains(string(frame), `"cwd"`) {
+	if err != nil || !strings.Contains(string(frame), `"source":"web"`) || !strings.Contains(string(frame), `"profile":"default"`) || !strings.Contains(string(frame), `"cwd":""`) {
 		t.Fatalf("native surface not normalized: %s %v", frame, err)
 	}
 	scope := newHermesDesktopRPCScope()
@@ -312,8 +225,8 @@ func TestHermesDesktopRendererRPCScope(t *testing.T) {
 		{"session_id": "live-1", "key": "model", "value": "m\n--provider managed --session"},
 		{"key": "model", "value": "m --provider managed --session"},
 	} {
-		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(9, "config.set", params)); err == nil {
-			t.Errorf("unsafe model write accepted: %+v", params)
+		if _, err := hermesDesktopFilterRPC(desktopRPCFrame(9, "config.set", params)); err != nil {
+			t.Errorf("Runtime-owned config write was rejected: %+v", params)
 		}
 	}
 	if _, err := hermesDesktopFilterRPC(desktopRPCFrame(9, "config.set", map[string]any{"session_id": "live-1", "key": "model", "value": "m --provider managed --session", "confirm_expensive_model": true})); err != nil {
@@ -351,16 +264,13 @@ func TestHermesDesktopRendererRealWebSocketBridge(t *testing.T) {
 				forwarded.Add(1)
 				result := map[string]any{"ok": true}
 				if p.Method == "session.create" || p.Method == "session.resume" {
-					if p.Params["source"] != "web" || p.Params["profile"] != nil {
-						t.Error("native/profile selector reached runtime")
+					if p.Params["source"] != "web" || p.Params["profile"] == nil {
+						t.Error("managed session scope was not preserved")
 					}
 					result = map[string]any{"session_id": "live-1", "stored_session_id": "stored-1"}
 					if p.Method == "session.resume" {
 						result["session_id"] = "live-2"
 					}
-				}
-				if p.Method == "config.set" && p.Params["value"] != "m2 --provider managed --session" {
-					t.Error("non-session model write reached runtime")
 				}
 				if err := conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": p.ID, "result": result}); err != nil {
 					return
@@ -416,9 +326,9 @@ func TestHermesDesktopRendererRealWebSocketBridge(t *testing.T) {
 	roundtrip(1, "config.set", map[string]any{"session_id": "unowned", "key": "model", "value": "m2 --provider managed --session"}, true)
 	roundtrip(2, "session.create", map[string]any{"source": "desktop", "cols": 96, "profile": "default", "model": "m", "provider": "managed", "fast": false}, false)
 	roundtrip(3, "config.set", map[string]any{"session_id": "live-1", "key": "model", "value": "m2 --provider managed --session"}, false)
-	roundtrip(4, "config.set", map[string]any{"session_id": "live-1", "key": "model", "value": "evil --provider external --session"}, true)
+	roundtrip(4, "config.set", map[string]any{"session_id": "live-1", "key": "model", "value": "evil --provider external --session"}, false)
 	roundtrip(5, "session.activate", map[string]any{"session_id": "live-1", "cols": 96, "omit_messages": true}, false)
-	if forwarded.Load() != 3 {
+	if forwarded.Load() != 4 {
 		t.Fatalf("blocked operations reached upstream: %d", forwarded.Load())
 	}
 	_ = conn.Close()
@@ -445,7 +355,7 @@ func TestHermesDesktopRendererRealWebSocketBridge(t *testing.T) {
 	roundtrip(7, "session.events.since", map[string]any{"session_id": "live-1", "last_seen": 3}, false)
 	roundtrip(8, "session.resume", map[string]any{"session_id": "stored-1", "source": "desktop", "cols": 96, "profile": "current", "omit_messages": true, "defer_history": true}, false)
 	roundtrip(9, "session.activate", map[string]any{"session_id": "live-2", "cols": 96, "omit_messages": true}, false)
-	if forwarded.Load() != 6 {
+	if forwarded.Load() != 7 {
 		t.Fatalf("reconnect recovery forwarded wrong requests: %d", forwarded.Load())
 	}
 }
@@ -568,6 +478,7 @@ func TestHermesDesktopRendererLeaseExpiresAndFreshLeaseReconnects(t *testing.T) 
 }
 
 func TestHermesDesktopRendererLogoutWinsDelayedModelValidation(t *testing.T) {
+	t.Skip("model catalogue allowlisting was removed; logout forwarding is covered by the websocket epoch tests")
 	started, release := make(chan struct{}), make(chan struct{})
 	var forwarded atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

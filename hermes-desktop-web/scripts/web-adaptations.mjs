@@ -56,22 +56,18 @@ export const adaptations = [
     edits: [['export function PetSettings() {', `export function PetSettings() {\n  return ${notice('桌宠资源与原生窗口')}`]]
   },
   {
-    file: 'app/session/hooks/use-context-suggestions.ts', reason: 'Do not auto-enumerate filesystem paths through complete.path in the managed browser.',
-    edits: [['}: ContextSuggestionsOptions) {', '}: ContextSuggestionsOptions) {\n  return // Runtime path discovery is not a CM Web capability.']]
+    file: 'app/session/hooks/use-model-controls.ts', reason: 'Model changes in a managed instance must affect only the active session; never mutate a profile-wide default from Web.',
+    edits: [["      const scope = persistsAsDefault ? '--global' : '--session'", "      const scope = '--session'"]]
   },
   {
-    file: 'store/projects.ts', reason: 'Stop background project-tree reads and native repository discovery without inventing a successful empty Runtime response.',
+    file: 'store/projects.ts', reason: 'Use the Runtime projects.* API for the single managed instance and never enumerate or register host repositories.',
     edits: [
-      ['export async function refreshProjects(): Promise<void> {', 'export async function refreshProjects(): Promise<void> {\n  return // Project management belongs to the CM workspace.'],
-      ['export async function refreshProjectTree(): Promise<void> {', 'export async function refreshProjectTree(): Promise<void> {\n  return // No project-tree polling in a managed browser.'],
-      ['export async function scanAndRecordRepos(force = false): Promise<void> {', 'export async function scanAndRecordRepos(force = false): Promise<void> {\n  return // Never scan or register host repositories from this client.']
+      ['export async function pickProjectFolder(): Promise<null | string> {\n  const [dir] = await selectDesktopPaths({\n    defaultPath: (await desktopDefaultCwd())?.cwd,\n    directories: true,\n    multiple: false\n  })\n\n  return dir || null\n}', "export async function pickProjectFolder(): Promise<null | string> {\n  return '.'\n}"]
     ]
   },
   {
-    file: 'app/chat/sidebar/project-dialog.tsx', reason: 'Keep the original project dialog entry but explain that native project/folder management is unavailable.',
-    prepend: noticeImport,
-    edits: [['export function ProjectDialog() {', 'function NativeProjectDialog() {']],
-    append: '\nexport function ProjectDialog() {\n  const state = useStore($projectDialog)\n  return <Dialog open={state !== null} onOpenChange={open => { if (!open) closeProjectDialog() }}><DialogContent><DialogHeader><DialogTitle>ClawManager Web</DialogTitle><DialogDescription>项目与目录由 ClawManager 工作区管理。</DialogDescription></DialogHeader><CMWebUnavailable feature="原生项目 / 文件夹管理" /><DialogFooter><Button onClick={closeProjectDialog}>关闭</Button></DialogFooter></DialogContent></Dialog>\n}\n'
+    file: 'app/chat/sidebar/project-dialog.tsx', reason: 'Create and manage projects against the complete current instance workspace, represented by the Runtime root sentinel.',
+    edits: [['      setFolders([])', "      setFolders(['.'])"]]
   },
   {
     file: 'store/session-states.ts', reason: 'Keep clarify request ownership explicit at the existing owner-routed dispatch seam.',
@@ -119,23 +115,6 @@ export const adaptations = [
   {
     file: 'store/session-sync.ts', reason: 'No Electron-wide cross-user/instance browser channel.',
     edits: [["const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL)", 'const channel: BroadcastChannel | null = null // Each CM frame is isolated.']]
-  },
-  {
-    file: 'app/right-sidebar/terminal/persistent.tsx', reason: 'No native shell/PTY process capability in this renderer.',
-    edits: [['export function PersistentTerminal({ onAddSelectionToChat }: PersistentTerminalProps) {', 'export function PersistentTerminal({ onAddSelectionToChat }: PersistentTerminalProps) {\n  return null // The original terminal pane displays a capability notice.']]
-  },
-  {
-    file: 'app/contrib/surfaces.tsx', reason: 'Keep the original terminal pane/tab but clearly disable native execution.',
-    prepend: noticeImport,
-    edits: [['export const TerminalSurface = memo(function TerminalSurface() {', `export const TerminalSurface = memo(function TerminalSurface() {\n  return ${notice('本机终端 / Shell')}`]]
-  },
-  {
-    file: 'app/contrib/panes.tsx', reason: 'No arbitrary host filesystem or Git access; CM Workspace remains the supported route.',
-    prepend: noticeImport,
-    edits: [
-      ['export function FilesPane() {', `export function FilesPane() {\n  return ${notice('原生文件浏览器（请使用 ClawManager 工作区）')}`],
-      ['export function ReviewPaneContent() {', `export function ReviewPaneContent() {\n  return ${notice('原生 Git / 代码审查')}`]
-    ]
   },
   {
     file: 'app/chat/right-rail/preview-pane.tsx', reason: 'Electron webview/host preview is not an ordinary web iframe capability.',

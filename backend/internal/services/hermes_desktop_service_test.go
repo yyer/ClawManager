@@ -315,13 +315,13 @@ func TestHermesDesktopExpiredUpstreamCookieRetriesOnce(t *testing.T) {
 }
 
 func TestHermesDesktopHTTPPolicyAndSanitization(t *testing.T) {
-	for _, raw := range []string{"/auth/ws-ticket", "/sessions/../../config", "/sessions?limit=1&limit=2", "/fs/read?path=/etc/passwd", "/runtime/health?token=secret"} {
+	for _, raw := range []string{"/auth/ws-ticket", "/sessions/../../config", "/sessions?limit=1&limit=2", "/fs/read?path=/etc/passwd"} {
 		u, _ := url.Parse(raw)
 		if hermesDesktopHTTPAllowed("GET", u.Path, u.Query()) {
 			t.Errorf("allowed %s", raw)
 		}
 	}
-	for _, raw := range []string{"/status", "/config/schema", "/sessions?limit=40&offset=0&min_messages=0&archived=exclude&order=recent", "/sessions/abc-123/messages?limit=200&order=latest", "/model/options?explicit_only=1&include_unconfigured=true"} {
+	for _, raw := range []string{"/status", "/config/schema", "/runtime/health?token=secret", "/sessions?limit=40&offset=0&min_messages=0&archived=exclude&order=recent", "/sessions/abc-123/messages?limit=200&order=latest", "/model/options?explicit_only=1&include_unconfigured=true"} {
 		u, _ := url.Parse(raw)
 		if !hermesDesktopHTTPAllowed("GET", u.Path, u.Query()) {
 			t.Errorf("rejected %s", raw)
@@ -334,13 +334,16 @@ func TestHermesDesktopHTTPPolicyAndSanitization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"sensitive", "api_key", "private-password", "cookie-value", "camel-secret", "camel-access", "camel-session"} {
+	for _, secret := range []string{"sensitive", "private-password", "cookie-value", "camel-secret", "camel-access", "camel-session"} {
 		if strings.Contains(string(body), secret) {
 			t.Errorf("leaked %s", secret)
 		}
 	}
 	if !strings.Contains(string(body), "input_tokens") {
 		t.Fatal("usage counts removed")
+	}
+	if !strings.Contains(string(body), `"api_key":"[redacted]"`) || !strings.Contains(string(body), `"session_token":"[redacted]"`) {
+		t.Fatal("sensitive response shape was removed instead of redacted")
 	}
 }
 
@@ -349,9 +352,9 @@ func TestHermesDesktopRPCPolicy(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"session.create","params":{"source":"native"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"shell.exec","params":{"command":"id"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.create","params":{"cwd":"/workspaces/another"}}`,
-		`{"jsonrpc":"2.0","id":1,"method":"session.resume","params":{"session_id":"abc","profile":"other"}}`,
-		`{"jsonrpc":"2.0","id":1,"method":"prompt.submit","params":{"session_id":"abc","text":"hello","_hosted_task":{}}}`,
-		`{"jsonrpc":"2.0","id":1,"method":"approval.respond","params":{"session_id":"abc","choice":"always"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.resume","params":{"session_id":"abc","profile":"../other"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"profiles.describe","params":{"name":"../other"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"projects.create","params":{"name":"demo","folders":["/etc"]}}`,
 		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`,
 	} {
 		if _, err := hermesDesktopFilterRPC([]byte(raw)); err == nil {
@@ -359,8 +362,11 @@ func TestHermesDesktopRPCPolicy(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"jsonrpc":"2.0","id":1,"method":"session.create","params":{"source":"web"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.create","params":{"source":"web","profile":"bot_alpha","cwd":"."}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.events.since","params":{"session_id":"abc","last_seen":2}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"profiles.describe","params":{"name":"bot_alpha"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"projects.list","params":{"profile":"bot_alpha"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"projects.create","params":{"name":"demo","folders":["."],"primary_path":".","profile":"bot_alpha"}}`,
 		`{"jsonrpc":"2.0","id":"__heartbeat__1","method":"gateway.ping","params":{}}`,
 	} {
 		if _, err := hermesDesktopFilterRPC([]byte(raw)); err != nil {
@@ -531,7 +537,7 @@ func TestHermesDesktopUpstreamAuthenticationAndWebSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := s.ProxyAPI(context.Background(), claims, "GET", "/status", nil)
-	if err != nil || strings.Contains(string(status), "token") || strings.Contains(string(status), "api_key") {
+	if err != nil || strings.Contains(string(status), "runtime-token") || !strings.Contains(string(status), `"api_key":"[redacted]"`) || !strings.Contains(string(status), `"session_token":"[redacted]"`) {
 		t.Fatalf("status=%s err=%v", status, err)
 	}
 	schema, err := s.ProxyAPI(context.Background(), claims, "GET", "/config/schema", nil)

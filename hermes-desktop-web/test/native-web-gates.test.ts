@@ -11,7 +11,7 @@ async function patched(file: string) {
 }
 
 // Execute the actual patched declarations without importing the native stores.
-// Any missed early gate would touch the unresolved native identifiers and fail.
+// Native-only surfaces remain gated; managed projects intentionally use Runtime RPC.
 async function declaration(file: string, name: string, notices: Error[] = []) {
   const source = await patched(file)
   const statement = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
@@ -22,13 +22,9 @@ async function declaration(file: string, name: string, notices: Error[] = []) {
   return new Function('cmWebNotifyError', `${output}; return ${name}`)((error: Error) => notices.push(error)) as (...args: unknown[]) => unknown
 }
 
-test('fixed-source background gates never poll native pet, paths, project trees or repositories', async () => {
+test('fixed-source background gates never poll native pet or overlays', async () => {
   const cases: Array<[string, string, unknown[]]> = [
     ['components/pet/floating-pet.tsx', 'FloatingPet', []],
-    ['app/session/hooks/use-context-suggestions.ts', 'useContextSuggestions', [{}]],
-    ['store/projects.ts', 'refreshProjects', []],
-    ['store/projects.ts', 'refreshProjectTree', []],
-    ['store/projects.ts', 'scanAndRecordRepos', []],
   ]
   for (const [file, name, args] of cases) {
     const fn = await declaration(file, name)
