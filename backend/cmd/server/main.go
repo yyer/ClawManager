@@ -244,6 +244,7 @@ func main() {
 		Teams: repository.NewHermesDesktopTeamGuard(database), ExternalAccess: externalAccessService, Agent: runtimeAgentClient, Redis: platformRedis,
 	})
 	instanceHandler.SetHermesDesktopService(hermesDesktopService)
+	ieiSystemHandler.SetHermesDesktopService(hermesDesktopService)
 	hermesDesktopHandler := handlers.NewHermesDesktopHandler(hermesDesktopService)
 	authHandler.SetDesktopLogoutHook(hermesDesktopService.RevokeUserSessions)
 	systemSettingsHandler := handlers.NewSystemSettingsHandler(systemImageSettingService)
