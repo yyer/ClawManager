@@ -507,6 +507,16 @@ func (h *IEISystemHandler) GenerateInstanceAccess(c *gin.Context) {
 	}
 	proxyURL := h.instanceHandler.proxyService.GetProxyURLForInstance(instance, accessToken.Token)
 	browserURL := browserAccessEntryURL(accessURL, proxyURL)
+	// OpenClaw Lite bootstraps its control UI through the shared proxy and can
+	// issue early navigation/subresource requests before the path-scoped
+	// instance cookie is available in every browser/proxy combination. Carry
+	// the short-lived ClawManager capability on the first URL for this runtime
+	// only. The proxy strips it before forwarding to OpenClaw and promotes it
+	// to the existing HttpOnly cookie, while all other instance types retain
+	// their established token-free same-origin entry behavior.
+	if isOpenClawLiteInstance(instance) {
+		browserURL = proxyURL
+	}
 	workspaceAvailable := isDesktopWorkspaceInstance(instance) ||
 		(instance.WorkspacePath != nil && strings.TrimSpace(*instance.WorkspacePath) != "")
 	workspaceRoot := "Workspace"
@@ -743,6 +753,15 @@ func (h *IEISystemHandler) setInstanceAccessCookie(c *gin.Context, instanceID in
 		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func isOpenClawLiteInstance(instance *models.Instance) bool {
+	if instance == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(instance.Type), services.RuntimeTypeOpenClaw) &&
+		strings.EqualFold(strings.TrimSpace(instance.RuntimeType), services.RuntimeBackendGateway) &&
+		strings.EqualFold(strings.TrimSpace(instance.InstanceMode), services.InstanceModeLite)
 }
 
 func (h *IEISystemHandler) noStore(c *gin.Context) {
