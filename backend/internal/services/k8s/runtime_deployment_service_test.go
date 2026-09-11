@@ -153,7 +153,7 @@ func TestBuildRuntimeDeploymentInjectsAgentV2Environment(t *testing.T) {
 	requireEnv(t, container, "RUNTIME_AGENT_REPORT_TOKEN", "report-secret")
 	requireEnv(t, container, "RUNTIME_GATEWAY_PORT_START", "21000")
 	requireEnv(t, container, "RUNTIME_GATEWAY_PORT_END", "21099")
-	requireEnv(t, container, "HERMES_TUI_DIR", "/usr/local/lib/hermes-agent/ui-tui")
+	requireEnvAbsent(t, container, "HERMES_TUI_DIR")
 	requireEnv(t, container, "CLAWMANAGER_TRUSTED_PROXY_CIDRS", "10.42.0.0/16,10.43.0.0/16")
 	requireEnvFieldRef(t, container, "POD_NAME", "metadata.name")
 	requireEnvFieldRef(t, container, "POD_NAMESPACE", "metadata.namespace")

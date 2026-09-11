@@ -26,7 +26,6 @@ const (
 	defaultWorkspaceMount         = "/workspaces"
 	defaultGatewayPortStart       = 20000
 	defaultGatewayPortEnd         = 20299
-	hermesTUIDir                  = "/usr/local/lib/hermes-agent/ui-tui"
 )
 
 type RuntimeDeploymentSpec struct {
@@ -178,9 +177,6 @@ func buildRuntimeAgentEnv(spec RuntimeDeploymentSpec, workspaceRoot string, gate
 		{Name: "RUNTIME_AGENT_REPORT_TOKEN", Value: spec.AgentReportToken},
 		{Name: "RUNTIME_GATEWAY_PORT_START", Value: strconv.Itoa(gatewayPortStart)},
 		{Name: "RUNTIME_GATEWAY_PORT_END", Value: strconv.Itoa(gatewayPortEnd)},
-	}
-	if strings.EqualFold(spec.RuntimeType, "hermes") {
-		env = append(env, corev1.EnvVar{Name: "HERMES_TUI_DIR", Value: hermesTUIDir})
 	}
 	env = append(env,
 		fieldRefEnv("POD_NAME", "metadata.name"),
