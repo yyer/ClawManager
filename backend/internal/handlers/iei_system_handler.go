@@ -51,6 +51,7 @@ type ieiInstanceView struct {
 	ID             int        `json:"id"`
 	Owner          string     `json:"owner"`
 	Name           string     `json:"name"`
+	Alias          *string    `json:"alias,omitempty"`
 	Description    *string    `json:"description,omitempty"`
 	Type           string     `json:"type"`
 	RuntimeType    string     `json:"runtime_type"`
@@ -613,6 +614,7 @@ func newIEIInstanceView(instance *models.Instance) ieiInstanceView {
 		ID:             instance.ID,
 		Owner:          owner,
 		Name:           instance.Name,
+		Alias:          instance.Alias,
 		Description:    instance.Description,
 		Type:           instance.Type,
 		RuntimeType:    instance.RuntimeType,

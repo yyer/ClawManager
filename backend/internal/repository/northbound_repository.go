@@ -371,7 +371,7 @@ func (r *NorthboundRepository) GetActiveLifecycleOperation(userID, instanceID in
 		db.Cond{
 			"user_id":           userID,
 			"status IN":         []string{"queued", "processing"},
-			"operation_type IN": []string{"lite_instance_restart", "lite_instance_reset", "pro_instance_restart", "pro_instance_reset"},
+			"operation_type IN": []string{"lite_instance_restart", "lite_instance_reset", "lite_instance_delete", "pro_instance_restart", "pro_instance_reset", "pro_instance_delete"},
 		},
 		db.Or(
 			db.Cond{"instance_id": instanceID},
@@ -385,6 +385,22 @@ func (r *NorthboundRepository) GetActiveLifecycleOperation(userID, instanceID in
 		return nil, fmt.Errorf("failed to get active lifecycle operation: %w", err)
 	}
 	return &item, nil
+}
+
+// MarkOperationSucceededWithoutInstance completes operations whose resource
+// was intentionally deleted. Keeping instance_id NULL avoids restoring an
+// invalid foreign-key reference after ON DELETE SET NULL has run.
+func (r *NorthboundRepository) MarkOperationSucceededWithoutInstance(ctx context.Context, operationID string, now time.Time) error {
+	_, err := r.sess.SQL().ExecContext(ctx, `
+		UPDATE northbound_operations
+		SET status = 'succeeded', instance_id = NULL, error_code = NULL, error_message = NULL,
+		    lease_owner = NULL, lease_expires_at = NULL, finished_at = ?, updated_at = ?
+		WHERE operation_id = ?
+	`, now, now, operationID)
+	if err != nil {
+		return fmt.Errorf("failed to complete northbound operation without instance: %w", err)
+	}
+	return nil
 }
 
 func (r *NorthboundRepository) CountPendingOperationsByUser(userID int) (int, error) {
