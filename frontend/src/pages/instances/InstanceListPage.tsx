@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Monitor, MonitorPlay, Play, Plus, Search, Square, Trash2 } from "lucide-react";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import InstanceLifecycleBatches from "../../components/InstanceLifecycleBatches";
 import UserLayout from "../../components/UserLayout";
 import { useI18n } from "../../contexts/I18nContext";
 import { instanceService } from "../../services/instanceService";
@@ -161,6 +162,9 @@ function getErrorMessage(err: unknown, fallback: string) {
 const InstanceListPage: React.FC = () => {
   const { t, locale } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialQuery = new URLSearchParams(location.search);
+  const detailState = { returnTo: location.pathname + location.search };
   const [instances, setInstances] = useState<Instance[]>([]);
   const [teamMemberships, setTeamMemberships] = useState<Map<number, TeamMembership[]>>(
     new Map(),
@@ -170,12 +174,12 @@ const InstanceListPage: React.FC = () => {
   const [deletingIds, setDeletingIds] = useState<number[]>([]);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
-  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-  const [page, setPage] = useState(1);
+  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>(() => (["available", "starting", "unavailable"].includes(initialQuery.get("availability") || "") ? initialQuery.get("availability") : "all") as AvailabilityFilter);
+  const [typeFilter, setTypeFilter] = useState(initialQuery.get("type") || "all");
+  const [modeFilter, setModeFilter] = useState<ModeFilter>(() => (["lite", "pro"].includes(initialQuery.get("mode") || "") ? initialQuery.get("mode") : "all") as ModeFilter);
+  const [searchQuery, setSearchQuery] = useState(initialQuery.get("q") || "");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(initialQuery.get("q") || "");
+  const [page, setPage] = useState(() => Math.max(1, Number(initialQuery.get("page")) || 1));
   const [total, setTotal] = useState(0);
   const [selectedLiteIds, setSelectedLiteIds] = useState<number[]>([]);
   const [batchCreateOpen, setBatchCreateOpen] = useState(false);
@@ -237,12 +241,25 @@ const InstanceListPage: React.FC = () => {
     void loadInstances();
   }, [loadInstances]);
   useEffect(() => {
+    if (searchQuery === debouncedSearchQuery) return;
     const timeoutId = window.setTimeout(() => {
       setPage(1);
       setDebouncedSearchQuery(searchQuery);
     }, 250);
     return () => window.clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [searchQuery, debouncedSearchQuery]);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (typeFilter !== "all") params.set("type", typeFilter);
+    if (modeFilter !== "all") params.set("mode", modeFilter);
+    if (availabilityFilter !== "all") params.set("availability", availabilityFilter);
+    if (page > 1) params.set("page", String(page));
+    const search = params.toString();
+    if (location.search.replace(/^\?/, "") !== search) {
+      navigate({ pathname: location.pathname, search }, { replace: true });
+    }
+  }, [searchQuery, typeFilter, modeFilter, availabilityFilter, page, navigate, location.pathname, location.search]);
   useEffect(() => {
     let cancelled = false;
     systemSettingsService
@@ -642,6 +659,7 @@ const InstanceListPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+      <InstanceLifecycleBatches selectedIds={selectedLiteIds} onChanged={() => void loadInstances({ silent: true })} />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
           <Link to="/instances/new" className="app-button-primary self-start">
@@ -681,7 +699,7 @@ const InstanceListPage: React.FC = () => {
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder={t("instances.searchPlaceholder")}
+              placeholder={`ID / ${t("instances.searchPlaceholder")}`}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               className="app-input w-full pl-9 sm:w-64"
@@ -790,7 +808,7 @@ const InstanceListPage: React.FC = () => {
                 </th>
                 <th className="w-[28%] px-4 py-3">Instance</th>
                 <th className="w-[13%] px-4 py-3">Type</th>
-                <th className="w-[20%] px-4 py-3">Team</th>
+                <th className="w-[20%] px-4 py-3">Information</th>
                 <th className="w-[16%] px-4 py-3">Availability</th>
                 <th className="w-[10%] px-4 py-3">Workspace</th>
                 <th className="w-[10%] px-4 py-3 text-right">Actions</th>
@@ -808,11 +826,11 @@ const InstanceListPage: React.FC = () => {
                     key={instance.id}
                     role="link"
                     tabIndex={0}
-                    onClick={() => navigate(`/instances/${instance.id}`)}
+                    onClick={() => navigate(`/instances/${instance.id}`, { state: detailState })}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
-                        navigate(`/instances/${instance.id}`);
+                        navigate(`/instances/${instance.id}`, { state: detailState });
                       }
                     }}
                     className={`cursor-pointer focus:outline-none focus-visible:bg-slate-50 ${
@@ -836,6 +854,7 @@ const InstanceListPage: React.FC = () => {
                     <td className="max-w-[280px] px-4 py-3">
                       <Link
                         to={`/instances/${instance.id}`}
+                        state={detailState}
                         onClick={(event) => event.stopPropagation()}
                         className="block truncate font-medium text-slate-950 hover:text-red-700"
                       >
@@ -848,6 +867,12 @@ const InstanceListPage: React.FC = () => {
                             : "-",
                         })}
                       </div>
+                      {primaryMembership && <Link
+                        to={`/teams/${primaryMembership.team.id}`}
+                        title={`${primaryMembership.team.name} / ${primaryMembership.member.display_name || primaryMembership.member.member_key} / ${primaryMembership.member.role}`}
+                        onClick={(event) => event.stopPropagation()}
+                        className="mt-1 block truncate text-xs text-violet-700 hover:underline"
+                      >Team: {primaryMembership.team.name}{memberships.length > 1 ? ` (+${memberships.length - 1})` : ""}</Link>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -862,30 +887,13 @@ const InstanceListPage: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      {primaryMembership ? (
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="inline-flex shrink-0 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
-                              Team
-                            </span>
-                            <Link
-                              to={`/teams/${primaryMembership.team.id}`}
-                              onClick={(event) => event.stopPropagation()}
-                              className="truncate font-medium text-slate-700 hover:text-red-700"
-                            >
-                              {primaryMembership.team.name}
-                            </Link>
-                          </div>
-                          <div className="mt-1 truncate text-xs text-slate-500">
-                            {primaryMembership.member.display_name ||
-                              primaryMembership.member.member_key}{" "}
-                            / {primaryMembership.member.role}
-                            {memberships.length > 1 ? ` / +${memberships.length - 1}` : ""}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">-</span>
-                      )}
+                      <div className="text-xs">ID: {instance.id}</div>
+                      <div className="mt-1 text-xs text-slate-500">最后在线：{instance.last_online_at ? new Date(instance.last_online_at).toLocaleString(locale) : "暂无记录"}</div>
+                      {instance.status === "error" && <div tabIndex={0}
+                        className="group relative mt-1 text-xs text-red-600"
+                      ><div className="truncate">错误：{instance.runtime_error_message?.split(/\r?\n/).find(line => line.trim()) || "原因未记录"}</div>
+                        <div role="tooltip" className="absolute left-0 top-full z-50 hidden max-h-64 w-80 max-w-[75vw] overflow-auto whitespace-pre-wrap break-words rounded border border-red-100 bg-white p-3 text-slate-700 shadow-lg group-hover:block group-focus-within:block">{instance.runtime_error_message || "原因未记录"}</div>
+                      </div>}
                     </td>
                     <td className="px-4 py-3">
                       <span

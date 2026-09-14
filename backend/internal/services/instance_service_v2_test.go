@@ -118,6 +118,20 @@ func TestFinalizeResetReplacementIsIdempotentAfterSourceCleanup(t *testing.T) {
 	}
 }
 
+func TestDiscardResetReplacementNeverDeletesPromotedInstance(t *testing.T) {
+	for _, owner := range []*string{nil, factoryResetString(""), factoryResetString("user@example.com")} {
+		repo := newV2LifecycleInstanceRepo()
+		repo.byID[202] = &models.Instance{ID: 202, UserID: 7, Owner: owner, Name: "user-instance", Status: "running"}
+		service := &instanceService{instanceRepo: repo}
+		if err := service.DiscardResetReplacement(202); err == nil {
+			t.Fatal("promoted replacement discard accepted")
+		}
+		if repo.byID[202] == nil || repo.byID[202].Status != "running" {
+			t.Fatal("promoted replacement changed")
+		}
+	}
+}
+
 func TestInstanceServiceCreateV2CreatesWorkspaceOnly(t *testing.T) {
 	workspaceRoot := strings.ReplaceAll(t.TempDir(), "\\", "/")
 	instanceRepo := newV2LifecycleInstanceRepo()

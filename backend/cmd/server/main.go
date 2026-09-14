@@ -132,7 +132,9 @@ func main() {
 	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
 	var northboundCoreServer *http.Server
 	var northboundOperationWorker *northbound.OperationWorker
-	var northboundCoreService *northbound.CoreService
+	northboundCoreService := northbound.NewCoreService(northboundRepo, userRepo, instanceService, externalAccessService, cfg.Northbound, northboundRuntimeSettings)
+	northboundCoreService.SetAuditRepository(auditEventRepo)
+	northboundOperationWorker = northbound.NewOperationWorker(northboundCoreService, cfg.Runtime.BackendReplicaID)
 	if cfg.Northbound.Enabled {
 		coreTLSConfig, tlsErr := northbound.CoreTLSConfig(cfg.Northbound)
 		if tlsErr != nil {
@@ -141,9 +143,6 @@ func main() {
 		if len(cfg.Northbound.InternalJWTSecret) < 32 {
 			log.Fatal("Failed to initialize northbound Core: NORTHBOUND_INTERNAL_JWT_SECRET must contain at least 32 bytes")
 		}
-		northboundCoreService = northbound.NewCoreService(northboundRepo, userRepo, instanceService, externalAccessService, cfg.Northbound, northboundRuntimeSettings)
-		northboundCoreService.SetAuditRepository(auditEventRepo)
-		northboundOperationWorker = northbound.NewOperationWorker(northboundCoreService, cfg.Runtime.BackendReplicaID)
 		coreHandler := northbound.NewCoreHandler(northboundCoreService, cfg.Northbound.InternalJWTSecret)
 		coreRouter := gin.New()
 		_ = coreRouter.SetTrustedProxies(nil)
@@ -531,6 +530,9 @@ func main() {
 		instances := api.Group("/instances")
 		instances.Use(middleware.Auth())
 		instances.Use(middleware.SetUserInfo(userRepo))
+		instanceHandler.SetBatchMutationReservation(northboundRepo.ReserveInstanceMutations)
+		instances.Use(northboundCoreService.BatchMutationGuard)
+		northboundCoreService.RegisterBatchRoutes(instances)
 		{
 			instances.GET("/:id/hermes-desktop/bootstrap", hermesDesktopHandler.Bootstrap)
 			instances.POST("/:id/hermes-desktop/bootstrap", hermesDesktopHandler.Bootstrap)
@@ -608,6 +610,7 @@ func main() {
 			adminRuntime.GET("/runtime-pods/:id/gateways", runtimePoolHandler.GetPodGateways)
 			adminRuntime.POST("/runtime-pods/:id/drain", runtimePoolHandler.DrainPod)
 			adminRuntime.POST("/runtime-rollouts", runtimePoolHandler.StartRollout)
+			adminRuntime.GET("/runtime-rollouts", runtimePoolHandler.ListRollouts)
 		}
 
 		teams := api.Group("/teams")

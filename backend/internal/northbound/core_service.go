@@ -295,7 +295,7 @@ func (s *CoreService) SubmitLifecycle(principal Principal, idempotencyKey string
 		return nil, false, apiError(409, "LIFECYCLE_IN_PROGRESS", "Another lifecycle operation is already in progress", nil)
 	}
 	status := strings.ToLower(strings.TrimSpace(instance.Status))
-	if action == "restart" && status != "running" {
+	if action == "restart" && status != "running" && status != "error" {
 		return nil, false, apiError(409, "INVALID_INSTANCE_STATE", "Instance is not running", nil)
 	}
 	if action == "reset" && status != "running" && status != "stopped" && status != "error" {
@@ -698,6 +698,7 @@ func (w *OperationWorker) Stop() {
 }
 
 func (w *OperationWorker) loop(ctx context.Context) {
+	var nextBatchCheck time.Time
 	for {
 		tick := time.Duration(w.service.settings().OperationTickMilliseconds) * time.Millisecond
 		if tick <= 0 {
@@ -709,6 +710,13 @@ func (w *OperationWorker) loop(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
+			if time.Now().After(nextBatchCheck) {
+				nextBatchCheck = time.Now().Add(3 * time.Second)
+				if err := w.service.repo.AdvanceLifecycleBatches(ctx); err != nil {
+					log.Printf("lifecycle batch scheduler failed: %v", err)
+					continue
+				}
+			}
 			w.processOne(ctx)
 		}
 	}
@@ -827,7 +835,7 @@ func (w *OperationWorker) processLifecycle(ctx context.Context, item *models.Nor
 		w.finishOrContinueLifecycle(ctx, item, request.InstanceID, currentStatus, lifecycleAuditPrefix(item.OperationType))
 		return
 	}
-	if (item.OperationType == OperationTypeLiteRestart || item.OperationType == OperationTypeProRestart) && currentStatus != "running" {
+	if (item.OperationType == OperationTypeLiteRestart || item.OperationType == OperationTypeProRestart) && currentStatus != "running" && currentStatus != "error" {
 		_ = w.service.repo.MarkOperationFailed(ctx, item.OperationID, "INVALID_INSTANCE_STATE", "Instance is not running", time.Now().UTC())
 		return
 	}
@@ -866,7 +874,15 @@ func (w *OperationWorker) processLifecycle(ctx context.Context, item *models.Nor
 			_ = w.service.repo.MarkOperationFailed(ctx, item.OperationID, "RESET_UNAVAILABLE", "Safe replacement reset is unavailable; original instance was not changed", time.Now().UTC())
 			return
 		}
-		replacement, createErr := replacer.CreateResetReplacement(request.InstanceID, item.OperationID)
+		var replacement *models.Instance
+		createErr := w.runLifecycleActionWithLease(ctx, item, func() error {
+			var err error
+			replacement, err = replacer.CreateResetReplacement(request.InstanceID, item.OperationID)
+			return err
+		})
+		if ctx.Err() != nil {
+			return
+		}
 		if createErr != nil || replacement == nil {
 			message := "Unable to create a clean replacement; original instance and data were not deleted"
 			if createErr != nil {
@@ -944,7 +960,16 @@ func (w *OperationWorker) finishOrContinueReplacementReset(ctx context.Context, 
 	status := strings.ToLower(strings.TrimSpace(replacement.Status))
 	now := time.Now().UTC()
 	if status == "running" {
-		cleanupPending, warning, finalizeErr := replacer.FinalizeResetReplacement(sourceInstanceID, replacementID)
+		var cleanupPending bool
+		var warning string
+		finalizeErr := w.runLifecycleActionWithLease(ctx, item, func() error {
+			var err error
+			cleanupPending, warning, err = replacer.FinalizeResetReplacement(sourceInstanceID, replacementID)
+			return err
+		})
+		if ctx.Err() != nil {
+			return
+		}
 		if finalizeErr != nil {
 			log.Printf("northbound replacement reset %s cutover failed: %v", item.OperationID, finalizeErr)
 			_ = replacer.DiscardResetReplacement(replacementID)

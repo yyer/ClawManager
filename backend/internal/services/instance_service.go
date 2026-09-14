@@ -2056,7 +2056,7 @@ func (s *instanceService) Stop(instanceID int) error {
 		return s.stopV2Instance(ctx, instance)
 	}
 
-	if instance.Status != "running" {
+	if instance.Status != "running" && instance.Status != "error" {
 		return fmt.Errorf("instance is not running")
 	}
 
@@ -2278,6 +2278,9 @@ func (s *instanceService) FinalizeResetReplacement(sourceInstanceID, replacement
 		// trying to discard the user's new instance.
 		return false, "", nil
 	}
+	if source.UserID != replacement.UserID {
+		return false, "", fmt.Errorf("factory-reset replacement user mismatch")
+	}
 	stagingNamePrefix := fmt.Sprintf("reset-%d-", sourceInstanceID)
 	quarantineName := factoryResetQuarantineName(source.ID)
 	alreadyPromoted := source.Owner != nil &&
@@ -2285,17 +2288,19 @@ func (s *instanceService) FinalizeResetReplacement(sourceInstanceID, replacement
 		source.Name == quarantineName
 
 	if alreadyPromoted {
-		if replacement.Owner == nil || strings.TrimSpace(*replacement.Owner) == "" || strings.HasPrefix(replacement.Name, stagingNamePrefix) {
+		if strings.HasPrefix(replacement.Name, stagingNamePrefix) {
 			return false, "", fmt.Errorf("factory-reset replacement cutover state is inconsistent")
 		}
 		// The network-policy name for Pro instances includes the original
 		// instance name. After cutover that name lives on the replacement.
 		source.Name = replacement.Name
 	} else {
-		if source.Owner == nil || strings.TrimSpace(*source.Owner) == "" {
-			return false, "", fmt.Errorf("factory-reset source identity is unavailable")
+		// Workspace-created instances need not have a northbound display owner.
+		// UserID remains the authorization identity throughout replacement.
+		originalOwner := ""
+		if source.Owner != nil {
+			originalOwner = strings.TrimSpace(*source.Owner)
 		}
-		originalOwner := strings.TrimSpace(*source.Owner)
 		originalName := source.Name
 
 		promoter, ok := s.instanceRepo.(repository.InstanceResetReplacementRepository)
@@ -2343,6 +2348,11 @@ func (s *instanceService) DiscardResetReplacement(replacementInstanceID int) err
 	replacement, err := s.instanceRepo.GetByID(replacementInstanceID)
 	if err != nil || replacement == nil {
 		return err
+	}
+	// A cutover commit can succeed even if its response was lost. Never erase
+	// a promoted instance when a worker retries or sees an ambiguous DB error.
+	if replacement.Owner == nil || *replacement.Owner != factoryResetStagingOwner {
+		return fmt.Errorf("refusing to discard a non-staging replacement")
 	}
 	replacement.Owner = factoryResetString(factoryResetQuarantineOwner)
 	replacement.Status = "stopped"

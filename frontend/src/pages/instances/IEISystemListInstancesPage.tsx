@@ -116,7 +116,7 @@ function operationIsPending(
 ) {
   if (!operation) return false;
   const operationStatus = operation.status.toLowerCase();
-  if (["queued", "processing"].includes(operationStatus)) return true;
+  if (["queued", "processing", "batch_pending"].includes(operationStatus)) return true;
   return operationStatus === "succeeded" && instanceStatus?.toLowerCase() === "creating";
 }
 
@@ -420,7 +420,7 @@ export default function IEISystemListInstancesPage() {
   };
 
   const handleRestart = async () => {
-    if (!selectedInstance || selectedLifecyclePending || selectedInstance.status.toLowerCase() !== "running") return;
+    if (!selectedInstance || selectedLifecyclePending || !["running", "error"].includes(selectedInstance.status.toLowerCase())) return;
     if (!window.confirm(`确认重启实例“${instanceDisplayName(selectedInstance)}”？工作区数据会保留。`)) return;
     const instanceID = selectedInstance.id;
     setLifecycleErrors((current) => {
@@ -765,7 +765,7 @@ export default function IEISystemListInstancesPage() {
                   <button
                     type="button"
                     onClick={() => void handleRestart()}
-                    disabled={selectedLifecyclePending || selectedInstance.status.toLowerCase() !== "running"}
+                  disabled={selectedLifecyclePending || !["running", "error"].includes(selectedInstance.status.toLowerCase())}
                     className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Power className={`h-4 w-4 ${selectedLifecyclePending && selectedOperation?.action === "restart" ? "animate-pulse" : ""}`} />
