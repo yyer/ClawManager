@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"clawreef/internal/heartbeat"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
 	"clawreef/internal/services/k8s"
@@ -141,7 +142,7 @@ func NewRuntimeScheduler(
 		runtimeNamespace:          "clawmanager-system",
 		gatewayPortStart:          RuntimeGatewayPortStart,
 		gatewayPortEnd:            RuntimeGatewayPortEnd,
-		heartbeatTimeout:          10 * time.Second,
+		heartbeatTimeout:          heartbeat.Timeout,
 		maxGatewaysPerPod:         RuntimePodCapacity,
 		gatewayStartInFlightLimit: defaultRuntimeGatewayStartInFlightLimit,
 		gatewayCreateLocks:        map[int64]*sync.Mutex{},
@@ -699,6 +700,17 @@ func (s *RuntimeScheduler) syncInstanceStateFromBinding(ctx context.Context, ins
 		return s.instanceRepo.UpdateRuntimeState(ctx, instance.ID, "running", maxInt(instance.RuntimeGeneration, binding.Generation), nil)
 	case "error", "failed":
 		message := "runtime gateway failed"
+		if binding.ErrorMessage != nil && strings.TrimSpace(*binding.ErrorMessage) != "" {
+			message = strings.TrimSpace(*binding.ErrorMessage)
+		}
+		if strings.EqualFold(strings.TrimSpace(instance.Status), "error") &&
+			instance.RuntimeErrorMessage != nil &&
+			strings.TrimSpace(*instance.RuntimeErrorMessage) == message {
+			return nil
+		}
+		return s.instanceRepo.UpdateRuntimeState(ctx, instance.ID, "error", maxInt(instance.RuntimeGeneration, binding.Generation), &message)
+	case "unhealthy", "unavailable":
+		message := "runtime gateway is unavailable"
 		if binding.ErrorMessage != nil && strings.TrimSpace(*binding.ErrorMessage) != "" {
 			message = strings.TrimSpace(*binding.ErrorMessage)
 		}

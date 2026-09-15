@@ -125,6 +125,31 @@ func TestRuntimeManifestsStartHermesRuntime(t *testing.T) {
 	}
 }
 
+func TestNineNodeProductionHermesRuntimeEnablesDesktopWeb(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	manifest := filepath.Join(repoRoot, "deployments", "k8s", "sites", "nine-node-production", "20-clawmanager-production.yaml")
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("read production manifest: %v", err)
+	}
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	pattern := regexp.MustCompile(`(?s)name:\s+hermes-runtime.*?(?:\n---|\z)`)
+	hermesDeployment := pattern.FindString(text)
+	if hermesDeployment == "" {
+		t.Fatal("production manifest must contain hermes-runtime deployment")
+	}
+	for _, want := range []string{
+		"- name: CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED\n              value: \"true\"",
+		"- name: CLAWMANAGER_HERMES_BACKEND_MODE\n              value: \"serve\"",
+		"- name: CLAWMANAGER_CONTROL_UI_ORIGIN",
+		"- name: CLAWMANAGER_TRUSTED_PROXY_CIDRS",
+	} {
+		if !strings.Contains(hermesDeployment, want) {
+			t.Fatalf("production hermes-runtime must contain %q", want)
+		}
+	}
+}
+
 func TestRuntimeManifestsStartDeepSeekHarnessRuntime(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	for _, manifest := range deploymentRuntimeManifests(repoRoot) {

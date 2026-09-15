@@ -156,7 +156,7 @@ external default image.
 
 - Master has no schedulable Longhorn disk.
 - Longhorn disks exist only on the eight workers.
-- MySQL/MinIO/Redis PVC sizes are 500 GiB/500 GiB/20 GiB.
+- MySQL/MinIO/Redis PVC sizes are 1 TiB/500 GiB/20 GiB.
 - Workspace is 8 TiB, RWX, `nfs-static`, NFSv4.2 and `Retain`.
 - `log_bin=ON`, `binlog_expire_logs_seconds=604800`, and
   `max_binlog_size=134217728`.

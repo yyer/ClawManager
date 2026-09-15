@@ -1387,7 +1387,7 @@ spec:
             - name: RUNTIME_SCHEDULER_ENABLED
               value: "true"
             - name: RUNTIME_HEARTBEAT_TIMEOUT
-              value: "10s"
+              value: "360s"
             - name: RUNTIME_AGENT_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
