@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"clawreef/internal/heartbeat"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
 )
@@ -186,7 +187,7 @@ func (s *instanceAgentService) Register(bootstrapToken string, req AgentRegister
 	return &AgentRegisterResponse{
 		SessionToken:               sessionToken,
 		SessionExpiresAt:           sessionExpiresAt,
-		HeartbeatIntervalSeconds:   15,
+		HeartbeatIntervalSeconds:   heartbeat.ReportIntervalSeconds(),
 		CommandPollIntervalSeconds: 5,
 		ServerTime:                 now,
 	}, nil
@@ -368,9 +369,9 @@ func deriveAgentStatus(agent *models.InstanceAgent) string {
 	}
 	age := time.Since(*agent.LastHeartbeatAt)
 	switch {
-	case age <= 45*time.Second:
+	case age <= heartbeat.OnlineWindow:
 		return agentStatusOnline
-	case age <= 120*time.Second:
+	case age <= heartbeat.Timeout:
 		return agentStatusStale
 	default:
 		return agentStatusOffline
