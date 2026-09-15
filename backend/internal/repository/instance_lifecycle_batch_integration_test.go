@@ -24,7 +24,14 @@ func TestLifecycleBatchMySQL500(t *testing.T) {
 	if !strings.HasPrefix(host, "127.0.0.1:") {
 		t.Fatal("test must use a local disposable database")
 	}
-	sess, err := mysql.Open(mysql.ConnectionURL{Host: host, User: "root", Password: os.Getenv("CLAWMANAGER_BATCH_TEST_PASSWORD"), Database: "clawmanager_batch_test", Options: map[string]string{"parseTime": "true"}})
+	database := os.Getenv("CLAWMANAGER_BATCH_TEST_DB")
+	if database == "" {
+		database = "clawmanager_batch_test"
+	}
+	if database != "clawmanager_batch_test" && !strings.HasPrefix(database, "clawmanager_batch_test_") {
+		t.Fatal("disposable test database required")
+	}
+	sess, err := mysql.Open(mysql.ConnectionURL{Host: host, User: "root", Password: os.Getenv("CLAWMANAGER_BATCH_TEST_PASSWORD"), Database: database, Options: map[string]string{"parseTime": "true"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +85,11 @@ func TestLifecycleBatchMySQL500(t *testing.T) {
 			if _, err := sess.SQL().Exec(`INSERT INTO instances VALUES (?,1,?,'lite','error')`, id, name); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := sess.SQL().Exec(`INSERT INTO instance_runtime_bindings VALUES (?,?)`, id, id%8+1); err != nil {
+			if _, err := sess.SQL().Exec(`INSERT INTO instance_runtime_bindings VALUES (?,?)`, id, id%20+1); err != nil {
 				t.Fatal(err)
 			}
 			opID := fmt.Sprintf("op-%d", id)
-			items = append(items, models.InstanceLifecycleBatchItem{BatchID: b.BatchID, SourceID: id, SourceName: name, RuntimeType: fmt.Sprintf("type-%d", id%4), OperationID: opID, State: "pending"})
+			items = append(items, models.InstanceLifecycleBatchItem{BatchID: b.BatchID, SourceID: id, SourceName: name, RuntimeType: fmt.Sprintf("type-%d-%d", group, id%10), OperationID: opID, State: "pending"})
 			ops = append(ops, &models.NorthboundOperation{OperationID: opID, UserID: 1, SessionID: b.BatchID, OperationType: "lite_instance_" + action, IdempotencyKeyHash: strings.Repeat("a", 64), RequestHash: strings.Repeat("b", 64), RequestPayload: fmt.Sprintf(`{"instance_id":%d}`, id), Status: "batch_pending", AvailableAt: now, InstanceID: &id, CreatedAt: now, UpdatedAt: now})
 		}
 		if err := r.CreateLifecycleBatch(ctx, b, items, ops, false); err != nil {
@@ -108,6 +115,7 @@ func TestLifecycleBatchMySQL500(t *testing.T) {
 		t.Fatal(err)
 	}
 	completed := 0
+	peak := 0
 	for round := 0; round < 510 && completed < 500; round++ {
 		var wg sync.WaitGroup
 		errs := make(chan error, 8)
@@ -148,7 +156,10 @@ func TestLifecycleBatchMySQL500(t *testing.T) {
 				completed++
 			}
 		}
-		if active > 5 || resets > 2 {
+		if active > peak {
+			peak = active
+		}
+		if active > 10 || resets > 5 || active-resets > 5 {
 			t.Fatalf("limit exceeded active=%d reset=%d", active, resets)
 		}
 		if active == 0 {
@@ -157,6 +168,9 @@ func TestLifecycleBatchMySQL500(t *testing.T) {
 	}
 	if completed != 500 {
 		t.Fatalf("completed %d/500", completed)
+	}
+	if peak != 10 {
+		t.Fatalf("expected mixed work to exercise all 10 slots, peak=%d", peak)
 	}
 	// A direct mutation and a batch cannot acquire the same instance together.
 	release, err := r.ReserveInstanceMutations([]int{1})

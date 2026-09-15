@@ -11,6 +11,26 @@ import (
 	"github.com/upper/db/v4"
 )
 
+const lifecycleGlobalLimit = 10
+const lifecycleActionLimit = 5
+
+func lifecycleHasCapacity(action string, active []models.InstanceLifecycleBatchItem, batches map[string]models.InstanceLifecycleBatch) bool {
+	if len(active) >= lifecycleGlobalLimit || (action != "restart" && action != "reset") {
+		return false
+	}
+	count := 0
+	for _, item := range active {
+		batch, ok := batches[item.BatchID]
+		if !ok { // An unresolved reservation must never free capacity.
+			return false
+		}
+		if batch.Action == action {
+			count++
+		}
+	}
+	return count < lifecycleActionLimit
+}
+
 // The singleton is locked only during short DB transactions, never while
 // contacting Kubernetes/agents. All replicas share admission and reservations.
 func lockLifecycleScheduler(ctx context.Context, tx db.Session) error {
@@ -259,24 +279,23 @@ func (r *NorthboundRepository) AdvanceLifecycleBatches(ctx context.Context) erro
 			if !ok || b.Status != "running" {
 				continue
 			}
-			if len(active) >= 5 {
+			if len(active) >= lifecycleGlobalLimit {
 				break
 			}
+			if !lifecycleHasCapacity(b.Action, active, byID) {
+				continue
+			}
 			item.RuntimePodID = pods[item.SourceID]
-			resets := 0
 			blocked := false
 			for _, a := range active {
 				ab := byID[a.BatchID]
-				if ab.Action == "reset" {
-					resets++
-				}
 				// Runtime-type exclusion also protects replacement destinations:
 				// allocation may choose a different pod from the source.
 				if (item.RuntimePodID != 0 && a.RuntimePodID == item.RuntimePodID) || (a.RuntimeType == item.RuntimeType && (b.Action == "reset" || ab.Action == "reset" || item.RuntimePodID == 0 || a.RuntimePodID == 0)) {
 					blocked = true
 				}
 			}
-			if blocked || (b.Action == "reset" && resets >= 2) {
+			if blocked {
 				continue
 			}
 			// One canary per runtime/action in a batch before widening.

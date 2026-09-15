@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Monitor, MonitorPlay, Play, Plus, Search, Square, Trash2 } from "lucide-react";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import InstanceLifecycleBatches from "../../components/InstanceLifecycleBatches";
+import { collectUnavailableLiteIds, pruneVisibleSelection } from "../../lib/unavailableInstanceSelection";
 import UserLayout from "../../components/UserLayout";
 import { useI18n } from "../../contexts/I18nContext";
 import { instanceService } from "../../services/instanceService";
@@ -62,10 +63,10 @@ const loadAllTeams = async () => {
   return teams;
 };
 
-const loadTeamMemberships = async () => {
+const loadTeamMemberships = async (strict = false) => {
   const teams = await loadAllTeams();
   const details = await Promise.all(
-    teams.map((team) => teamService.getTeam(team.id).catch(() => null)),
+    teams.map((team) => strict ? teamService.getTeam(team.id) : teamService.getTeam(team.id).catch(() => null)),
   );
   const memberships = new Map<number, TeamMembership[]>();
 
@@ -182,6 +183,11 @@ const InstanceListPage: React.FC = () => {
   const [page, setPage] = useState(() => Math.max(1, Number(initialQuery.get("page")) || 1));
   const [total, setTotal] = useState(0);
   const [selectedLiteIds, setSelectedLiteIds] = useState<number[]>([]);
+  const [allUnavailableSelected, setAllUnavailableSelected] = useState(false);
+  const [selectingUnavailable, setSelectingUnavailable] = useState(false);
+  const [unavailableSelectionNotice, setUnavailableSelectionNotice] = useState("");
+  const selectionRequest = useRef(0);
+  useEffect(() => () => { selectionRequest.current++; }, []);
   const [batchCreateOpen, setBatchCreateOpen] = useState(false);
   const [batchCreatePrefix, setBatchCreatePrefix] = useState("lite-openclaw");
   const [batchCreateCount, setBatchCreateCount] = useState(3);
@@ -349,16 +355,44 @@ const InstanceListPage: React.FC = () => {
     selectableLiteIds.length > 0 && selectableLiteIds.every((id) => selectedLiteSet.has(id));
 
   useEffect(() => {
-    setSelectedLiteIds((ids) => ids.filter((id) => instances.some((instance) => instance.id === id && isLiteInstance(instance))));
+    setSelectedLiteIds((ids) => pruneVisibleSelection(ids, instances));
   }, [instances]);
 
+  const selectAllUnavailable = async (checked: boolean) => {
+    const request = ++selectionRequest.current;
+    setAllUnavailableSelected(false);
+    setSelectingUnavailable(checked);
+    setUnavailableSelectionNotice("");
+    if (!checked) { setSelectedLiteIds([]); return; }
+    try {
+      const memberships = await loadTeamMemberships(true);
+      const ids = await collectUnavailableLiteIds(instanceService.getInstances, new Set(memberships.keys()), () => request !== selectionRequest.current);
+      if (request !== selectionRequest.current) return;
+      setSelectedLiteIds(ids);
+      setAllUnavailableSelected(ids.length > 0);
+      setUnavailableSelectionNotice(ids.length ? `已跨页选中 ${ids.length} 个不可用 Lite 实例；不受当前搜索、类型筛选限制。${ids.length > 500 ? "单次批量重启/重置最多选择 500 个，请减少选择。" : ""}` : "没有可选的不可用 Lite 实例。");
+    } catch (err) {
+      if (request === selectionRequest.current) setUnavailableSelectionNotice(getErrorMessage(err, "全选失败，原选择已保留，请重试。"));
+    } finally {
+      if (request === selectionRequest.current) setSelectingUnavailable(false);
+    }
+  };
+
   const toggleLiteSelection = useCallback((id: number) => {
+    selectionRequest.current++;
+    setSelectingUnavailable(false);
+    setAllUnavailableSelected(false);
+    setUnavailableSelectionNotice("");
     setSelectedLiteIds((ids) =>
       ids.includes(id) ? ids.filter((selectedId) => selectedId !== id) : [...ids, id],
     );
   }, []);
 
   const toggleAllVisibleLite = useCallback(() => {
+    selectionRequest.current++;
+    setSelectingUnavailable(false);
+    setAllUnavailableSelected(false);
+    setUnavailableSelectionNotice("");
     setSelectedLiteIds((ids) => {
       const visible = new Set(selectableLiteIds);
       if (selectableLiteIds.length > 0 && selectableLiteIds.every((id) => ids.includes(id))) {
@@ -659,7 +693,13 @@ const InstanceListPage: React.FC = () => {
           </div>
         </div>
       ) : null}
-      <InstanceLifecycleBatches selectedIds={selectedLiteIds} onChanged={() => void loadInstances({ silent: true })} />
+      <InstanceLifecycleBatches selectedIds={selectedLiteIds} selectionBusy={selectingUnavailable} onChanged={() => void loadInstances({ silent: true })} selectionControl={<>
+        <label className="flex items-center gap-2 text-sm text-slate-600" title="跨所有页面选择当前账号的不可用独立 Lite 实例；排除删除中、清理残留及团队实例，不受当前筛选限制。">
+          <input type="checkbox" checked={allUnavailableSelected || selectingUnavailable} onChange={e => void selectAllUnavailable(e.target.checked)} />
+          {selectingUnavailable ? "正在跨页获取…（取消勾选可中止）" : "选中所有不可用实例"}
+        </label>
+        {unavailableSelectionNotice && <span role="status" className="text-xs text-slate-500">{unavailableSelectionNotice}</span>}
+      </>} />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
           <Link to="/instances/new" className="app-button-primary self-start">
@@ -680,7 +720,7 @@ const InstanceListPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setPendingBatchDelete(true)}
-            disabled={selectedLiteCount === 0 || batchDeleteLoading}
+            disabled={selectedLiteCount === 0 || batchDeleteLoading || selectingUnavailable}
             className="app-button-secondary self-start border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" />
