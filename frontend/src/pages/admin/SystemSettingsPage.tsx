@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Rocket, Save, Trash2 } from 'lucide-react';
 import AdminLayout from '../../components/AdminLayout';
+import { RuntimeRolloutProgress } from '../../components/RuntimeRolloutProgress';
 import { useI18n } from '../../contexts/I18nContext';
 import PasswordSettingsSection from '../../components/PasswordSettingsSection';
 import {
@@ -675,6 +676,7 @@ const SystemSettingsPage: React.FC = () => {
               {rolloutError}
             </div>
           )}
+          <RuntimeRolloutProgress runtimeType={rolloutRuntimeType} />
         </section>
 
         <section className="app-panel p-6">

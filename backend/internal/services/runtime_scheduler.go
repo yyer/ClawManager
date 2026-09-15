@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -250,6 +251,18 @@ func (s *RuntimeScheduler) StartRollout(ctx context.Context, rolloutID int64) er
 	if rollout == nil {
 		return fmt.Errorf("runtime rollout %d not found", rolloutID)
 	}
+	if inventory, ok := s.deployments.(k8s.RuntimeRolloutInventory); ok {
+		if rollout.Status != "pending" {
+			return nil
+		}
+		if err := s.startSequentialRollout(ctx, rollout, inventory); err != nil {
+			message := err.Error()
+			now := time.Now().UTC()
+			_ = s.rolloutRepo.UpdateStatus(ctx, rollout.ID, "error", nil, &now, &message)
+			return err
+		}
+		return nil
+	}
 
 	startedAt := time.Now().UTC()
 	if err := s.rolloutRepo.UpdateStatus(ctx, rollout.ID, "running", &startedAt, nil, nil); err != nil {
@@ -359,7 +372,26 @@ func (s *RuntimeScheduler) rolloutRuntimeDeployments(ctx context.Context, rollou
 		name      string
 	}
 	refs := map[deploymentRef]struct{}{}
+	// Concrete Kubernetes deployments provide a live inventory. Never authorize
+	// mutations from historical agent rows when that inventory is available.
+	liveInventory := false
+	if inventory, ok := s.deployments.(k8s.RuntimeRolloutInventory); ok {
+		liveInventory = true
+		targets, err := inventory.RolloutTargets(ctx, s.runtimeNamespace, rollout.RuntimeType)
+		if err != nil {
+			return err
+		}
+		if len(targets) == 0 {
+			return fmt.Errorf("no eligible live runtime deployment for %s rollout", rollout.RuntimeType)
+		}
+		for _, target := range targets {
+			refs[deploymentRef{namespace: target.Namespace, name: target.Name}] = struct{}{}
+		}
+	}
 	for _, pod := range pods {
+		if liveInventory {
+			break
+		}
 		if pod.RuntimeType != rollout.RuntimeType {
 			continue
 		}
@@ -377,13 +409,19 @@ func (s *RuntimeScheduler) rolloutRuntimeDeployments(ctx context.Context, rollou
 		}
 		refs[deploymentRef{namespace: s.runtimeNamespace, name: name}] = struct{}{}
 	}
-	var errs []error
+	ordered := make([]deploymentRef, 0, len(refs))
 	for ref := range refs {
+		ordered = append(ordered, ref)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].namespace+"/"+ordered[i].name < ordered[j].namespace+"/"+ordered[j].name
+	})
+	for _, ref := range ordered {
 		if err := s.deployments.RolloutImage(ctx, ref.namespace, ref.name, targetImage, maxUnavailable, maxSurge); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func (s *RuntimeScheduler) RuntimeDeploymentPods(ctx context.Context, runtimeType string) ([]models.RuntimePod, error) {
@@ -443,6 +481,9 @@ func (s *RuntimeScheduler) finishRolloutIfReady(ctx context.Context, rollout mod
 	if s == nil || s.podRepo == nil || s.rolloutRepo == nil {
 		return nil
 	}
+	if rollout.ErrorMessage != nil && strings.HasPrefix(*rollout.ErrorMessage, rolloutPlanPrefix) {
+		return s.advanceSequentialRollout(ctx, rollout)
+	}
 	targetImage := strings.TrimSpace(rollout.TargetImageRef)
 	if targetImage == "" {
 		return nil
@@ -472,7 +513,7 @@ func (s *RuntimeScheduler) currentRuntimePods(pods []models.RuntimePod, now time
 		return pods
 	}
 	cutoff := now.UTC().Add(-runtimeRolloutStaleWindowMultiplier * s.heartbeatTimeout)
-	current := pods[:0]
+	current := make([]models.RuntimePod, 0, len(pods))
 	for _, pod := range pods {
 		if pod.LastSeenAt != nil && pod.LastSeenAt.UTC().Before(cutoff) {
 			continue
@@ -1075,6 +1116,22 @@ func (s *RuntimeScheduler) prepareGatewayStartExcludingPorts(
 	environment, err := s.gatewayEnvironment(&instance)
 	if err != nil {
 		return nil, fmt.Errorf("build runtime gateway environment: %w", err)
+	}
+	if runtimeType == RuntimeTypeHermes {
+		if web, ok := s.deployments.(interface {
+			HermesGatewayEnvironment(context.Context, string, string) (map[string]string, error)
+		}); ok {
+			trusted, err := web.HermesGatewayEnvironment(ctx, pod.Namespace, pod.DeploymentName)
+			if err != nil {
+				return nil, fmt.Errorf("prepare Hermes Web trust: %w", err)
+			}
+			if environment == nil {
+				environment = map[string]string{}
+			}
+			for key, value := range trusted {
+				environment[key] = value
+			}
+		}
 	}
 	uid, gid := runtimeGatewayLinuxIDs(instance.ID, environment)
 	if runtimeType == RuntimeTypeOpenClaw {

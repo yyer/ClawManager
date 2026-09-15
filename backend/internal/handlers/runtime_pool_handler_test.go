@@ -223,7 +223,7 @@ func TestRuntimePoolHandlerStartRolloutStoresRequesterAndPublishesEvent(t *testi
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/runtime-rollouts", bytes.NewBufferString(`{
 		"runtime_type": "hermes",
-		"target_image_ref": "ghcr.io/example/hermes:v2",
+		"target_image_ref": "ghcr.io/example/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"batch_size": 2,
 		"max_unavailable": 1
 	}`))
@@ -244,7 +244,7 @@ func TestRuntimePoolHandlerStartRolloutStoresRequesterAndPublishesEvent(t *testi
 	}
 }
 
-func TestRuntimePoolHandlerStartRolloutRunsSchedulerImmediately(t *testing.T) {
+func TestRuntimePoolHandlerStartRolloutQueuesWithoutMutatingDeployments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rolloutRepo := &runtimePoolHandlerRolloutRepo{}
 	podRepo := &runtimePoolHandlerPodRepo{pods: []models.RuntimePod{{
@@ -277,7 +277,7 @@ func TestRuntimePoolHandlerStartRolloutRunsSchedulerImmediately(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/runtime-rollouts", bytes.NewBufferString(`{
 		"runtime_type": "hermes",
-		"target_image_ref": "registry/hermes:v2",
+		"target_image_ref": "registry/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"batch_size": 1,
 		"max_unavailable": 1
 	}`))
@@ -287,15 +287,11 @@ func TestRuntimePoolHandlerStartRolloutRunsSchedulerImmediately(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s, want 201", rec.Code, rec.Body.String())
 	}
-	if got := len(deployments.rollouts); got != 1 {
-		t.Fatalf("deployment rollouts = %d, want 1", got)
+	if got := len(deployments.rollouts); got != 0 {
+		t.Fatalf("HTTP handler mutated %d deployments", got)
 	}
-	rollout := deployments.rollouts[0]
-	if rollout.namespace != "clawmanager-system" || rollout.name != "hermes-runtime" || rollout.image != "registry/hermes:v2" {
-		t.Fatalf("deployment rollout = %+v, want hermes-runtime registry/hermes:v2", rollout)
-	}
-	if podRepo.markedPodID != 21 || podRepo.markedState != "draining" || !podRepo.markedDraining {
-		t.Fatalf("pod mark = id:%d state:%q draining:%t, want drain pod 21", podRepo.markedPodID, podRepo.markedState, podRepo.markedDraining)
+	if podRepo.markedPodID != 0 {
+		t.Fatal("HTTP handler drained an active runtime")
 	}
 }
 

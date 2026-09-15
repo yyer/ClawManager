@@ -151,10 +151,33 @@ func (h *CoreHandler) SubmitProReset(c *gin.Context) {
 	h.submitLifecycle(c, ScopeProReset, "pro", "reset")
 }
 
+func (h *CoreHandler) SubmitLiteDelete(c *gin.Context) {
+	if !requireDeleteDataLossConfirmation(c) {
+		return
+	}
+	h.submitLifecycle(c, ScopeLiteDelete, "lite", "delete")
+}
+
+func (h *CoreHandler) SubmitProDelete(c *gin.Context) {
+	if !requireDeleteDataLossConfirmation(c) {
+		return
+	}
+	h.submitLifecycle(c, ScopeProDelete, "pro", "delete")
+}
+
 func requireResetDataLossConfirmation(c *gin.Context) bool {
 	var request ConfirmInstanceResetRequest
 	if err := c.ShouldBindJSON(&request); err != nil || !request.ConfirmDataLoss {
 		writeError(c, apiError(http.StatusBadRequest, "RESET_CONFIRMATION_REQUIRED", "Reset permanently deletes all instance data; set confirm_data_loss to true", err))
+		return false
+	}
+	return true
+}
+
+func requireDeleteDataLossConfirmation(c *gin.Context) bool {
+	var request ConfirmInstanceDeleteRequest
+	if err := c.ShouldBindJSON(&request); err != nil || !request.ConfirmDataLoss {
+		writeError(c, apiError(http.StatusBadRequest, "DELETE_CONFIRMATION_REQUIRED", "Delete permanently removes the instance and all data; set confirm_data_loss to true", err))
 		return false
 	}
 	return true
@@ -296,11 +319,13 @@ func RegisterCoreRoutes(router *gin.Engine, handler *CoreHandler) {
 	group.GET("/lite-instances/:id", handler.GetInstance)
 	group.POST("/lite-instances/:id/restart", handler.SubmitLiteRestart)
 	group.POST("/lite-instances/:id/reset", handler.SubmitLiteReset)
+	group.POST("/lite-instances/:id/delete", handler.SubmitLiteDelete)
 	group.POST("/pro-instances", handler.SubmitProCreate)
 	group.GET("/pro-instances", handler.ListProInstances)
 	group.GET("/pro-instances/:id", handler.GetProInstance)
 	group.POST("/pro-instances/:id/restart", handler.SubmitProRestart)
 	group.POST("/pro-instances/:id/reset", handler.SubmitProReset)
+	group.POST("/pro-instances/:id/delete", handler.SubmitProDelete)
 	group.POST("/lite-instances/:id/external-access/password", handler.EnableShareLinkPassword)
 	group.POST("/lite-instances/:id/external-access/share-link/reset", handler.ResetShareLinkURL)
 	group.POST("/lite-instances/:id/external-access/password/reset", handler.ResetShareLinkPassword)
