@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"clawreef/internal/models"
 	"github.com/gin-gonic/gin"
@@ -24,8 +27,10 @@ const (
 	ScopeProRead         = "pro-instances:read"
 	ScopeLiteRestart     = "lite-instances:restart"
 	ScopeLiteReset       = "lite-instances:reset"
+	ScopeLiteDelete      = "lite-instances:delete"
 	ScopeProRestart      = "pro-instances:restart"
 	ScopeProReset        = "pro-instances:reset"
+	ScopeProDelete       = "pro-instances:delete"
 	ScopeShareLinkManage = "lite-instances:share-link:manage"
 	ScopeShareLinkReset  = "lite-instances:share-link:reset"
 
@@ -33,8 +38,10 @@ const (
 	OperationTypeProInstance  = "pro_instance"
 	OperationTypeLiteRestart  = "lite_instance_restart"
 	OperationTypeLiteReset    = "lite_instance_reset"
+	OperationTypeLiteDelete   = "lite_instance_delete"
 	OperationTypeProRestart   = "pro_instance_restart"
 	OperationTypeProReset     = "pro_instance_reset"
+	OperationTypeProDelete    = "pro_instance_delete"
 )
 
 type APIError struct {
@@ -104,6 +111,7 @@ func (p Principal) HasScope(required string) bool {
 
 type CreateLiteInstanceRequest struct {
 	Name        string  `json:"name" binding:"required,min=3,max=50"`
+	Alias       *string `json:"alias,omitempty"`
 	Owner       string  `json:"owner" binding:"required,min=1,max=128"`
 	Type        string  `json:"type" binding:"required,oneof=openclaw hermes opencode deepseek-harness workbuddy"`
 	Description *string `json:"description,omitempty"`
@@ -114,6 +122,7 @@ type CreateLiteInstanceRequest struct {
 // selection, so callers cannot mix Lite and Pro provisioning parameters.
 type CreateProInstanceRequest struct {
 	Name        string  `json:"name" binding:"required,min=3,max=50"`
+	Alias       *string `json:"alias,omitempty"`
 	Owner       string  `json:"owner" binding:"required,min=1,max=128"`
 	Type        string  `json:"type" binding:"required,oneof=openclaw hermes opencode deepseek-harness workbuddy"`
 	Description *string `json:"description,omitempty"`
@@ -127,6 +136,12 @@ type InstanceLifecycleRequest struct {
 // Older clients that submit an empty body must fail closed instead of silently
 // changing from the former data-preserving reset behavior.
 type ConfirmInstanceResetRequest struct {
+	ConfirmDataLoss bool `json:"confirm_data_loss"`
+}
+
+// ConfirmInstanceDeleteRequest makes permanent deletion opt-in even when the
+// caller already has a destructive delete scope.
+type ConfirmInstanceDeleteRequest struct {
 	ConfirmDataLoss bool `json:"confirm_data_loss"`
 }
 
@@ -168,6 +183,7 @@ func operationResponse(item *models.NorthboundOperation) OperationResponse {
 type LiteInstanceResponse struct {
 	ID             int        `json:"id"`
 	Name           string     `json:"name"`
+	Alias          *string    `json:"alias,omitempty"`
 	Owner          string     `json:"owner"`
 	Description    *string    `json:"description,omitempty"`
 	Type           string     `json:"type"`
@@ -202,6 +218,7 @@ func liteInstanceResponse(item *models.Instance) LiteInstanceResponse {
 	return LiteInstanceResponse{
 		ID:             item.ID,
 		Name:           item.Name,
+		Alias:          item.Alias,
 		Owner:          instanceOwner(item),
 		Description:    item.Description,
 		Type:           item.Type,
@@ -214,6 +231,25 @@ func liteInstanceResponse(item *models.Instance) LiteInstanceResponse {
 		UpdatedAt:      item.UpdatedAt,
 		StartedAt:      item.StartedAt,
 	}
+}
+
+func normalizeInstanceAlias(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	alias := strings.TrimSpace(*value)
+	if alias == "" {
+		return nil, nil
+	}
+	if !utf8.ValidString(alias) || utf8.RuneCountInString(alias) > 50 {
+		return nil, errors.New("alias must contain at most 50 characters")
+	}
+	for _, character := range alias {
+		if unicode.IsControl(character) {
+			return nil, errors.New("alias must not contain control characters")
+		}
+	}
+	return &alias, nil
 }
 
 func instanceOwner(item *models.Instance) string {

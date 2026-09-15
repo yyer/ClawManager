@@ -236,6 +236,21 @@ paths:
       responses:
         "202": { $ref: "#/components/responses/OperationAccepted" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/northbound/v1/lite-instances/{id}/delete:
+    post:
+      summary: Permanently delete a Lite instance and its workspace
+      description: Requires `lite-instances:delete`. This asynchronous operation removes runtime bindings, the Lite workspace, related runtime state, and the instance record. It cannot be undone; back up required data first.
+      operationId: deleteLiteInstance
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmInstanceDelete" } } }
+      responses:
+        "202": { $ref: "#/components/responses/OperationAccepted" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/northbound/v1/pro-instances:
     post:
       summary: Submit a managed Pro provisioning operation
@@ -360,6 +375,21 @@ paths:
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmInstanceReset" } } }
+      responses:
+        "202": { $ref: "#/components/responses/OperationAccepted" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/northbound/v1/pro-instances/{id}/delete:
+    post:
+      summary: Permanently delete a Pro instance and its persistent volume
+      description: Requires `pro-instances:delete`. This asynchronous operation removes the managed runtime resources, PVC/PV data, related runtime state, and the instance record. It cannot be undone; back up required data first.
+      operationId: deleteProInstance
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmInstanceDelete" } } }
       responses:
         "202": { $ref: "#/components/responses/OperationAccepted" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -551,7 +581,7 @@ components:
           description: Permissions fixed when the session is created; re-login is required to receive newly introduced scopes.
           items:
             type: string
-            enum: [lite-instances:create, lite-instances:read, lite-instances:restart, lite-instances:reset, pro-instances:create, pro-instances:read, pro-instances:restart, pro-instances:reset, lite-instances:share-link:manage, lite-instances:share-link:reset]
+            enum: [lite-instances:create, lite-instances:read, lite-instances:restart, lite-instances:reset, lite-instances:delete, pro-instances:create, pro-instances:read, pro-instances:restart, pro-instances:reset, pro-instances:delete, lite-instances:share-link:manage, lite-instances:share-link:reset]
         session_id: { type: string, description: Northbound session identifier for audit and logout; it is not an access token. }
     CreateLiteInstance:
       type: object
@@ -562,7 +592,11 @@ components:
           type: string
           minLength: 3
           maxLength: 50
-          description: Display name, trimmed by the server and unique per user. It must satisfy both the OpenAPI 3-50-character constraint and the server's 3-50-UTF-8-byte check.
+          description: Technical instance name, trimmed by the server and unique per user. It remains the Kubernetes and storage identity even when alias is supplied.
+        alias:
+          type: [string, "null"]
+          maxLength: 50
+          description: Optional user-facing alias. Omitted, null, or blank values are accepted and stored as no alias. Nonblank values are trimmed, may contain Chinese text, and must not contain control characters.
         owner:
           type: string
           minLength: 1
@@ -586,6 +620,10 @@ components:
           minLength: 3
           maxLength: 50
           description: Display name using the same contract as CreateLiteInstance.
+        alias:
+          type: [string, "null"]
+          maxLength: 50
+          description: Optional user-facing alias using the same backward-compatible contract as CreateLiteInstance.
         owner:
           type: string
           minLength: 1
@@ -612,6 +650,15 @@ components:
           type: boolean
           const: true
           description: Must be true. Reset permanently deletes the instance workspace and cannot be undone without a separate backup.
+    ConfirmInstanceDelete:
+      type: object
+      additionalProperties: false
+      required: [confirm_data_loss]
+      properties:
+        confirm_data_loss:
+          type: boolean
+          const: true
+          description: Must be true. Delete permanently removes the instance and its persistent data.
     EnableShareLinkPassword:
       type: object
       additionalProperties: false
@@ -641,6 +688,7 @@ components:
       properties:
         id: { type: integer, minimum: 1, description: Supported instance ID used by subsequent instance and ShareLink calls. }
         name: { type: string, description: Instance display name. }
+        alias: { type: [string, "null"], description: Optional user-facing alias. Portals display this first and fall back to name. }
         owner: { type: string, description: Creator or business owner identifier stored on this instance. }
         description: { type: [string, "null"], description: Optional instance metadata. }
         type: { type: string, enum: [openclaw, hermes, opencode, deepseek-harness, workbuddy], description: Managed runtime family; workbuddy identifies the fixed Linux Pro runtime. }
@@ -658,6 +706,7 @@ components:
       properties:
         id: { type: integer, minimum: 1 }
         name: { type: string }
+        alias: { type: [string, "null"] }
         owner: { type: string }
         description: { type: [string, "null"] }
         type: { type: string, enum: [openclaw, hermes, opencode, deepseek-harness, workbuddy] }
@@ -675,8 +724,8 @@ components:
       properties:
         operation_id: { type: string, description: Opaque ID used to poll this operation. }
         status: { type: string, enum: [queued, processing, succeeded, failed] }
-        resource_type: { type: string, enum: [lite_instance, pro_instance, lite_instance_restart, lite_instance_reset, pro_instance_restart, pro_instance_reset], description: Identifies provisioning or lifecycle work for the selected instance collection. }
-        instance_id: { type: integer, minimum: 1, description: Present after success; use it for instance and ShareLink endpoints. }
+        resource_type: { type: string, enum: [lite_instance, pro_instance, lite_instance_restart, lite_instance_reset, lite_instance_delete, pro_instance_restart, pro_instance_reset, pro_instance_delete], description: Identifies provisioning or lifecycle work for the selected instance collection. }
+        instance_id: { type: integer, minimum: 1, description: Present for create/restart/reset results. It is omitted after a successful delete. }
         error_code: { type: string }
         error_message: { type: string }
         created_at: { type: string, format: date-time }

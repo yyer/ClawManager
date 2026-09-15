@@ -11,6 +11,7 @@ export interface IEISystemInstance {
   id: number;
   owner: string;
   name: string;
+  alias?: string;
   description?: string;
   type: string;
   runtime_type: string;

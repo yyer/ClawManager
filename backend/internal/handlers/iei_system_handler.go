@@ -57,6 +57,7 @@ type ieiInstanceView struct {
 	ID             int        `json:"id"`
 	Owner          string     `json:"owner"`
 	Name           string     `json:"name"`
+	Alias          *string    `json:"alias,omitempty"`
 	Description    *string    `json:"description,omitempty"`
 	Type           string     `json:"type"`
 	RuntimeType    string     `json:"runtime_type"`
@@ -241,7 +242,7 @@ func (h *IEISystemHandler) RestartInstance(c *gin.Context) {
 	}
 
 	status := strings.ToLower(strings.TrimSpace(instance.Status))
-	if status != "running" {
+	if status != "running" && status != "error" {
 		utils.Error(c, http.StatusConflict, "Instance is not running")
 		return
 	}
@@ -427,7 +428,7 @@ func (h *IEISystemHandler) GenerateInstanceAccess(c *gin.Context) {
 			h.lifecycleError(c, err, "Unable to verify instance lifecycle status")
 			return
 		}
-		if operation != nil && (operation.Status == "queued" || operation.Status == "processing") {
+		if operation != nil && (operation.Status == "queued" || operation.Status == "processing" || operation.Status == "batch_pending") {
 			utils.Error(c, http.StatusConflict, "Instance lifecycle operation is in progress")
 			return
 		}
@@ -665,6 +666,7 @@ func newIEIInstanceView(instance *models.Instance) ieiInstanceView {
 		ID:             instance.ID,
 		Owner:          owner,
 		Name:           instance.Name,
+		Alias:          instance.Alias,
 		Description:    instance.Description,
 		Type:           instance.Type,
 		RuntimeType:    instance.RuntimeType,

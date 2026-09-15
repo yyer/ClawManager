@@ -11,7 +11,7 @@ const runtimes = [
   { value: 'workbuddy', label: 'WorkBuddy' },
 ];
 const proRuntimes = runtimes;
-const scopes = ['lite-instances:create', 'lite-instances:read', 'lite-instances:restart', 'lite-instances:reset', 'pro-instances:create', 'pro-instances:read', 'pro-instances:restart', 'pro-instances:reset', 'lite-instances:share-link:manage', 'lite-instances:share-link:reset'];
+const scopes = ['lite-instances:create', 'lite-instances:read', 'lite-instances:restart', 'lite-instances:reset', 'lite-instances:delete', 'pro-instances:create', 'pro-instances:read', 'pro-instances:restart', 'pro-instances:reset', 'pro-instances:delete', 'lite-instances:share-link:manage', 'lite-instances:share-link:reset'];
 
 function errorMessage(error: unknown) {
   const message = (error as { response?: { data?: { error?: string } } })?.response?.data?.error;

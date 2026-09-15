@@ -116,7 +116,7 @@ function operationIsPending(
 ) {
   if (!operation) return false;
   const operationStatus = operation.status.toLowerCase();
-  if (["queued", "processing"].includes(operationStatus)) return true;
+  if (["queued", "processing", "batch_pending"].includes(operationStatus)) return true;
   return operationStatus === "succeeded" && instanceStatus?.toLowerCase() === "creating";
 }
 
@@ -152,6 +152,10 @@ function formatTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function instanceDisplayName(instance: IEISystemInstance) {
+  return instance.alias?.trim() || instance.name;
 }
 
 function selectedInstanceIDFromURL() {
@@ -264,6 +268,7 @@ export default function IEISystemListInstancesPage() {
       const matchesRuntime = runtimeFilter === "all" || instance.type.toLowerCase() === runtimeFilter;
       const matchesQuery =
         !normalizedQuery ||
+        (instance.alias?.toLowerCase().includes(normalizedQuery) ?? false) ||
         instance.name.toLowerCase().includes(normalizedQuery) ||
         String(instance.id).includes(normalizedQuery) ||
         getIEIRuntimePresentation(instance.type).name.toLowerCase().includes(normalizedQuery);
@@ -415,8 +420,8 @@ export default function IEISystemListInstancesPage() {
   };
 
   const handleRestart = async () => {
-    if (!selectedInstance || selectedLifecyclePending || selectedInstance.status.toLowerCase() !== "running") return;
-    if (!window.confirm(`确认重启实例“${selectedInstance.name}”？工作区数据会保留。`)) return;
+    if (!selectedInstance || selectedLifecyclePending || !["running", "error"].includes(selectedInstance.status.toLowerCase())) return;
+    if (!window.confirm(`确认重启实例“${instanceDisplayName(selectedInstance)}”？工作区数据会保留。`)) return;
     const instanceID = selectedInstance.id;
     setLifecycleErrors((current) => {
       const next = { ...current };
@@ -443,12 +448,12 @@ export default function IEISystemListInstancesPage() {
     if (!["running", "stopped", "error"].includes(status)) return;
     if (
       !window.confirm(
-        `重置实例“${selectedInstance.name}”将永久删除其中的全部文件、配置、技能、任务和会话。\n\n系统不会自动备份，请先下载需要保留的数据。是否继续？`,
+        `重置实例“${instanceDisplayName(selectedInstance)}”将永久删除其中的全部文件、配置、技能、任务和会话。\n\n系统不会自动备份，请先下载需要保留的数据。是否继续？`,
       )
     ) return;
     if (
       !window.confirm(
-        `最后确认：重置成功后，实例“${selectedInstance.name}”的原数据无法恢复。\n\n确定清空全部数据并重新初始化实例吗？`,
+        `最后确认：重置成功后，实例“${instanceDisplayName(selectedInstance)}”的原数据无法恢复。\n\n确定清空全部数据并重新初始化实例吗？`,
       )
     ) return;
     const instanceID = selectedInstance.id;
@@ -673,7 +678,7 @@ export default function IEISystemListInstancesPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <h3 className="truncate text-[15px] font-bold text-slate-900">
-                                {instance.name}
+                                {instanceDisplayName(instance)}
                               </h3>
                               <span
                                 className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(displayStatus)}`}
@@ -726,7 +731,7 @@ export default function IEISystemListInstancesPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-3">
                       <h1 className="truncate text-2xl font-bold tracking-tight text-[#10203b]">
-                        {selectedInstance.name}
+                        {instanceDisplayName(selectedInstance)}
                       </h1>
                       <span
                         className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(selectedDisplayStatus)}`}
@@ -760,7 +765,7 @@ export default function IEISystemListInstancesPage() {
                   <button
                     type="button"
                     onClick={() => void handleRestart()}
-                    disabled={selectedLifecyclePending || selectedInstance.status.toLowerCase() !== "running"}
+                  disabled={selectedLifecyclePending || !["running", "error"].includes(selectedInstance.status.toLowerCase())}
                     className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Power className={`h-4 w-4 ${selectedLifecyclePending && selectedOperation?.action === "restart" ? "animate-pulse" : ""}`} />
@@ -884,7 +889,7 @@ export default function IEISystemListInstancesPage() {
                   </div>
                   <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                     <h3 className="max-w-full truncate text-lg font-bold text-[#10203b]">
-                      {selectedInstance.name}
+                      {instanceDisplayName(selectedInstance)}
                     </h3>
                   </div>
                   <span
@@ -897,7 +902,8 @@ export default function IEISystemListInstancesPage() {
                 <div className="mt-6 overflow-hidden rounded-xl border border-slate-200">
                   <dl className="divide-y divide-slate-100 px-4">
                     {[
-                      ["实例名称", selectedInstance.name],
+                      [selectedInstance.alias?.trim() ? "实例别名" : "实例名称", instanceDisplayName(selectedInstance)],
+                      ...(selectedInstance.alias?.trim() ? [["技术名称", selectedInstance.name]] : []),
                       ["实例 ID", `#${selectedInstance.id}`],
                       ["运行时", selectedRuntime.name],
                       ["运行时类型", selectedRuntime.category],

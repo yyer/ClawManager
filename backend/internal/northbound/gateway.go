@@ -339,8 +339,10 @@ func RegisterGatewayRoutes(router *gin.Engine, auth *AuthHandler, core *CoreClie
 	}{
 		{"/lite-instances/:id/restart", ScopeLiteRestart},
 		{"/lite-instances/:id/reset", ScopeLiteReset},
+		{"/lite-instances/:id/delete", ScopeLiteDelete},
 		{"/pro-instances/:id/restart", ScopeProRestart},
 		{"/pro-instances/:id/reset", ScopeProReset},
+		{"/pro-instances/:id/delete", ScopeProDelete},
 	} {
 		route := route
 		resources.POST(route.path, RequireScope(route.scope), createRate, func(c *gin.Context) {
@@ -416,7 +418,7 @@ func RegisterGatewayRoutes(router *gin.Engine, auth *AuthHandler, core *CoreClie
 			writeError(c, err)
 		}
 	})
-	resources.GET("/operations/:id", RequireAnyScope(ScopeLiteCreate, ScopeLiteRead, ScopeProCreate, ScopeProRead, ScopeLiteRestart, ScopeLiteReset, ScopeProRestart, ScopeProReset), queryRateLimit, func(c *gin.Context) {
+	resources.GET("/operations/:id", RequireAnyScope(ScopeLiteCreate, ScopeLiteRead, ScopeProCreate, ScopeProRead, ScopeLiteRestart, ScopeLiteReset, ScopeLiteDelete, ScopeProRestart, ScopeProReset, ScopeProDelete), queryRateLimit, func(c *gin.Context) {
 		if err := core.Forward(c, *currentPrincipal(c)); err != nil {
 			writeError(c, err)
 		}

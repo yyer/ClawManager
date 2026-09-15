@@ -203,6 +203,7 @@ func (s *instanceService) ValidateCreateRequests(userID int, requests []CreateIn
 // CreateInstanceRequest holds data for creating an instance
 type CreateInstanceRequest struct {
 	Name                    string              `json:"name" validate:"required,min=3,max=50"`
+	Alias                   *string             `json:"alias,omitempty"`
 	Owner                   *string             `json:"owner,omitempty"`
 	Description             *string             `json:"description,omitempty"`
 	Type                    string              `json:"type" validate:"required,oneof=openclaw ubuntu debian centos custom webtop hermes opencode workbuddy deepseek-harness codex claude-code"`
@@ -556,6 +557,7 @@ func (s *instanceService) create(userID int, req CreateInstanceRequest, validate
 		UserID:                   userID,
 		Owner:                    req.Owner,
 		Name:                     req.Name,
+		Alias:                    trimOptionalString(req.Alias),
 		Description:              req.Description,
 		Type:                     req.Type,
 		RuntimeType:              runtimeType,
@@ -935,6 +937,7 @@ func (s *instanceService) createV2Instance(ctx context.Context, userID int, req 
 		UserID:                   userID,
 		Owner:                    req.Owner,
 		Name:                     strings.TrimSpace(req.Name),
+		Alias:                    trimOptionalString(req.Alias),
 		Description:              trimOptionalString(req.Description),
 		Type:                     runtimeType,
 		RuntimeType:              RuntimeBackendGateway,
@@ -2053,7 +2056,7 @@ func (s *instanceService) Stop(instanceID int) error {
 		return s.stopV2Instance(ctx, instance)
 	}
 
-	if instance.Status != "running" {
+	if instance.Status != "running" && instance.Status != "error" {
 		return fmt.Errorf("instance is not running")
 	}
 
@@ -2142,6 +2145,12 @@ type InstanceReplacementResetService interface {
 	DiscardResetReplacement(replacementInstanceID int) error
 }
 
+// InstancePermanentDeleteService is used by the northbound worker for a
+// synchronous, verifiable removal of both runtime resources and user data.
+type InstancePermanentDeleteService interface {
+	DeletePermanently(instanceID int) error
+}
+
 const (
 	factoryResetStagingOwner    = "factory-reset-staging@clawmanager.local"
 	factoryResetQuarantineOwner = "admin@clawmanager.local"
@@ -2210,6 +2219,7 @@ func resetReplacementCreateRequest(source *models.Instance, operationID string) 
 	stagingOwner := factoryResetStagingOwner
 	return CreateInstanceRequest{
 		Name:                    factoryResetStagingName(source.ID, operationID),
+		Alias:                   source.Alias,
 		Owner:                   &stagingOwner,
 		Description:             source.Description,
 		Type:                    source.Type,
@@ -2228,6 +2238,21 @@ func resetReplacementCreateRequest(source *models.Instance, operationID string) 
 		StorageClass:            source.StorageClass,
 		ProvisioningOperationID: "reset_" + strings.TrimSpace(operationID),
 	}, nil
+}
+
+// DeletePermanently removes the same persistent resources as a factory-reset
+// source cleanup and returns only after the database record is gone. Unlike the
+// legacy UI Delete method it never reports success after merely scheduling a
+// best-effort background cleanup.
+func (s *instanceService) DeletePermanently(instanceID int) error {
+	instance, err := s.instanceRepo.GetByID(instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to get instance for permanent deletion: %w", err)
+	}
+	if instance == nil {
+		return nil
+	}
+	return s.cleanupResetSource(context.Background(), instance)
 }
 
 // FinalizeResetReplacement atomically hides the source and exposes the healthy
@@ -2253,6 +2278,9 @@ func (s *instanceService) FinalizeResetReplacement(sourceInstanceID, replacement
 		// trying to discard the user's new instance.
 		return false, "", nil
 	}
+	if source.UserID != replacement.UserID {
+		return false, "", fmt.Errorf("factory-reset replacement user mismatch")
+	}
 	stagingNamePrefix := fmt.Sprintf("reset-%d-", sourceInstanceID)
 	quarantineName := factoryResetQuarantineName(source.ID)
 	alreadyPromoted := source.Owner != nil &&
@@ -2260,17 +2288,19 @@ func (s *instanceService) FinalizeResetReplacement(sourceInstanceID, replacement
 		source.Name == quarantineName
 
 	if alreadyPromoted {
-		if replacement.Owner == nil || strings.TrimSpace(*replacement.Owner) == "" || strings.HasPrefix(replacement.Name, stagingNamePrefix) {
+		if strings.HasPrefix(replacement.Name, stagingNamePrefix) {
 			return false, "", fmt.Errorf("factory-reset replacement cutover state is inconsistent")
 		}
 		// The network-policy name for Pro instances includes the original
 		// instance name. After cutover that name lives on the replacement.
 		source.Name = replacement.Name
 	} else {
-		if source.Owner == nil || strings.TrimSpace(*source.Owner) == "" {
-			return false, "", fmt.Errorf("factory-reset source identity is unavailable")
+		// Workspace-created instances need not have a northbound display owner.
+		// UserID remains the authorization identity throughout replacement.
+		originalOwner := ""
+		if source.Owner != nil {
+			originalOwner = strings.TrimSpace(*source.Owner)
 		}
-		originalOwner := strings.TrimSpace(*source.Owner)
 		originalName := source.Name
 
 		promoter, ok := s.instanceRepo.(repository.InstanceResetReplacementRepository)
@@ -2318,6 +2348,11 @@ func (s *instanceService) DiscardResetReplacement(replacementInstanceID int) err
 	replacement, err := s.instanceRepo.GetByID(replacementInstanceID)
 	if err != nil || replacement == nil {
 		return err
+	}
+	// A cutover commit can succeed even if its response was lost. Never erase
+	// a promoted instance when a worker retries or sees an ambiguous DB error.
+	if replacement.Owner == nil || *replacement.Owner != factoryResetStagingOwner {
+		return fmt.Errorf("refusing to discard a non-staging replacement")
 	}
 	replacement.Owner = factoryResetString(factoryResetQuarantineOwner)
 	replacement.Status = "stopped"
