@@ -38,6 +38,7 @@ data:
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
       name VARCHAR(255) NOT NULL,
+      alias VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
       description TEXT,
       type ENUM('openclaw', 'ubuntu', 'debian', 'centos', 'custom', 'webtop', 'hermes') DEFAULT 'ubuntu',
       runtime_type ENUM('desktop', 'shell') NOT NULL DEFAULT 'desktop',
@@ -755,7 +756,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 500Gi
+      storage: 1Ti
   storageClassName: longhorn
 ---
 apiVersion: v1
@@ -1198,6 +1199,15 @@ spec:
             - name: northbound-core
               containerPort: 9002
           env:
+            # Enable only with the matching upstream Hermes Lite runtime.
+            - name: CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED
+              value: "true"
+            - name: HERMES_DEPLOYMENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CLAWMANAGER_CONTROL_UI_ORIGIN
+              value: "http://clawmanager-gateway.$(HERMES_DEPLOYMENT_NAMESPACE).svc.cluster.local:9001"
             - name: SERVER_ADDRESS
               value: ":9001"
             - name: SERVER_MODE
@@ -1278,6 +1288,10 @@ spec:
               value: "redis://clawmanager-redis.clawmanager-system.svc.cluster.local:6379/0"
             - name: CLAWMANAGER_DESKTOP_DIRECT_PROXY
               value: "true"
+            - name: CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED
+              value: "true"
+            - name: CLAWMANAGER_CONTROL_UI_ORIGIN
+              value: "http://clawmanager-gateway.clawmanager-system.svc.cluster.local:9001"
             # Browser sessions, IEI owner sessions and dedicated Runtime
             # origins are all served over HTTPS.
             - name: IEISYSTEM_COOKIE_SECURE
@@ -1359,7 +1373,7 @@ spec:
             - name: RUNTIME_SCHEDULER_ENABLED
               value: "true"
             - name: RUNTIME_HEARTBEAT_TIMEOUT
-              value: "10s"
+              value: "360s"
             - name: RUNTIME_AGENT_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -1540,20 +1554,30 @@ spec:
           env:
             - name: CLAWMANAGER_RUNTIME_TYPE
               value: hermes
+            - name: CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED
+              value: "true"
+            - name: CLAWMANAGER_HERMES_BACKEND_MODE
+              value: "serve"
+            - name: HERMES_DEPLOYMENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CLAWMANAGER_CONTROL_UI_ORIGIN
+              value: "http://clawmanager-gateway.$(HERMES_DEPLOYMENT_NAMESPACE).svc.cluster.local:9001"
+            # Set trusted proxy addresses through the managed Hermes rollout,
+            # or provide reviewed CLAWMANAGER_TRUSTED_PROXY_CIDRS explicitly.
             - name: CLAWMANAGER_BACKEND_URL
               value: "http://clawmanager-gateway.clawmanager-system.svc.cluster.local:9001"
             - name: CLAWMANAGER_RUNTIME_DEPLOYMENT_NAME
               value: hermes-runtime
             - name: CLAWMANAGER_RUNTIME_IMAGE_REF
-              value: 10.130.15.40:5000/agentsruntime/hermes-lite:master-20260824-737ad4c
+              value: 10.130.15.40:5000/agentsruntime/hermes-lite@sha256:2e2a10e4a8952da67065c5b35a0e942961afbd74cb446404a0adc77eb8cc980e
             - name: CLAWMANAGER_AGENT_PORT
               value: "19090"
             - name: CLAWMANAGER_GATEWAY_PORT_START
               value: "20000"
             - name: CLAWMANAGER_GATEWAY_PORT_END
               value: "20299"
-            - name: HERMES_TUI_DIR
-              value: /usr/local/lib/hermes-agent/ui-tui
             - name: CLAWMANAGER_AGENT_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:

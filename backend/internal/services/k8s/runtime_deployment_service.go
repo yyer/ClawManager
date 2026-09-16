@@ -26,7 +26,6 @@ const (
 	defaultWorkspaceMount         = "/workspaces"
 	defaultGatewayPortStart       = 20000
 	defaultGatewayPortEnd         = 20299
-	hermesTUIDir                  = "/usr/local/lib/hermes-agent/ui-tui"
 )
 
 type RuntimeDeploymentSpec struct {
@@ -179,9 +178,6 @@ func buildRuntimeAgentEnv(spec RuntimeDeploymentSpec, workspaceRoot string, gate
 		{Name: "RUNTIME_GATEWAY_PORT_START", Value: strconv.Itoa(gatewayPortStart)},
 		{Name: "RUNTIME_GATEWAY_PORT_END", Value: strconv.Itoa(gatewayPortEnd)},
 	}
-	if strings.EqualFold(spec.RuntimeType, "hermes") {
-		env = append(env, corev1.EnvVar{Name: "HERMES_TUI_DIR", Value: hermesTUIDir})
-	}
 	env = append(env,
 		fieldRefEnv("POD_NAME", "metadata.name"),
 		fieldRefEnv("POD_NAMESPACE", "metadata.namespace"),
@@ -295,6 +291,16 @@ func (s *runtimeDeploymentService) Scale(ctx context.Context, namespace, name st
 }
 
 func (s *runtimeDeploymentService) RolloutImage(ctx context.Context, namespace, name, image string, maxUnavailable, maxSurge int) error {
+	return s.rolloutCompatibleImage(ctx, namespace, name, image, maxUnavailable, maxSurge, false)
+}
+
+// Called only after the scheduler's repeated empty-pool checks. Ordinary
+// populated rollouts must never silently strip an upgrade's readiness contract.
+func (s *runtimeDeploymentService) RolloutEmptyPoolImage(ctx context.Context, namespace, name, image string) error {
+	return s.rolloutCompatibleImage(ctx, namespace, name, image, 0, 1, true)
+}
+
+func (s *runtimeDeploymentService) rolloutCompatibleImage(ctx context.Context, namespace, name, image string, maxUnavailable, maxSurge int, emptyPool bool) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("k8s client not initialized")
 	}
@@ -323,12 +329,35 @@ func (s *runtimeDeploymentService) RolloutImage(ctx context.Context, namespace, 
 		}
 
 		container := &updated.Spec.Template.Spec.Containers[containerIndex]
+		if existing.Labels["clawmanager.io/runtime-type"] == "hermes" {
+			trusted, err := s.HermesGatewayEnvironment(ctx, namespace, name)
+			if err != nil {
+				return err
+			}
+			for key, value := range trusted {
+				upsertEnvVar(container, key, value)
+			}
+		}
 		container.Image = image
 		upsertEnvVar(container, "CLAWMANAGER_RUNTIME_IMAGE_REF", image)
+		if emptyPool {
+			env := container.Env[:0]
+			for _, e := range container.Env {
+				if e.Name != "CLAWMANAGER_RUNTIME_UPGRADE_ID" {
+					env = append(env, e)
+				}
+			}
+			container.Env = env
+			if container.ReadinessProbe != nil && container.ReadinessProbe.HTTPGet != nil && container.ReadinessProbe.HTTPGet.Path == "/readyz" {
+				// Transport readiness is supplemented by authenticated Agent health
+				// in the rollout worker before the next pool is touched.
+				container.ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(runtimeAgentPort)}}, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 3}
+			}
+		}
 
 		updated.Spec.Strategy.Type = appsv1.RollingUpdateDeploymentStrategyType
 		updated.Spec.Strategy.RollingUpdate = &appsv1.RollingUpdateDeployment{
-			MaxUnavailable: intOrStringPtr(positiveRolloutInt(maxUnavailable)),
+			MaxUnavailable: intOrStringPtr(max(0, maxUnavailable)),
 			MaxSurge:       intOrStringPtr(positiveRolloutInt(maxSurge)),
 		}
 

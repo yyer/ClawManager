@@ -64,14 +64,16 @@
 | GET | `/pro-instances/{id}` | `pro-instances:read` | 查询一个受支持的 Pro 实例 |
 | POST | `/lite-instances/{id}/restart` | `lite-instances:restart` | 异步重启运行中的 Lite；WorkBuddy 兼容入口也适用 |
 | POST | `/lite-instances/{id}/reset` | `lite-instances:reset` | 恢复出厂：先建立并验证全新 Lite 实例，再删除旧实例和工作区；成功 Operation 的 `instance_id` 为新 ID；必须显式确认数据删除 |
+| POST | `/lite-instances/{id}/delete` | `lite-instances:delete` | 异步永久删除 Lite 实例、Runtime 绑定和工作区；必须显式确认数据删除 |
 | POST | `/pro-instances/{id}/restart` | `pro-instances:restart` | 异步重启运行中的 Pro，保留 PVC |
 | POST | `/pro-instances/{id}/reset` | `pro-instances:reset` | 恢复出厂：先建立并验证全新 Pro 实例和 PVC，再删除旧实例；成功 Operation 的 `instance_id` 为新 ID；必须显式确认数据删除 |
+| POST | `/pro-instances/{id}/delete` | `pro-instances:delete` | 异步永久删除 Pro 实例、运行资源和 PVC/PV 数据；必须显式确认数据删除 |
 | GET | `/operations/{id}` | create 或 read | 查询异步操作状态 |
 | POST | `/lite-instances/{id}/external-access/password` | `lite-instances:share-link:manage` | 启用密码模式 ShareLink 并生成 URL/密码 |
 | POST | `/lite-instances/{id}/external-access/share-link/reset` | `lite-instances:share-link:reset` | 重置 ShareLink URL |
 | POST | `/lite-instances/{id}/external-access/password/reset` | `lite-instances:share-link:reset` | 重置 ShareLink 密码 |
 
-完整路径需要加上 `/api/northbound/v1` 前缀。新登录会话会获得 Lite、Pro 和 ShareLink Scope；部署新版本前创建的会话需要重新执行 JWE 登录才能获得新增 Scope。
+完整路径需要加上 `/api/northbound/v1` 前缀。删除 Scope 不会自动授予已有调用方；管理员必须在北向设置中明确授权，权限变化会撤销旧会话，调用方随后重新登录。
 
 Scope 含义：
 
@@ -83,6 +85,7 @@ Scope 含义：
 | `pro-instances:read` | 按 owner 查询受支持的 Pro Runtime 和单个实例。 |
 | `lite-instances:restart` / `pro-instances:restart` | 重启运行中的对应模式实例。 |
 | `lite-instances:reset` / `pro-instances:reset` | 恢复出厂并永久删除旧实例的持久工作区；请求必须包含 `{"confirm_data_loss":true}`。系统先验证全新替代实例，创建失败时保留旧实例；成功后调用方必须使用 Operation 返回的新 `instance_id`。 |
+| `lite-instances:delete` / `pro-instances:delete` | 永久删除当前调用方拥有的对应模式实例及持久数据；请求必须包含 `{"confirm_data_loss":true}`，成功 Operation 不再返回 `instance_id`。 |
 | `lite-instances:share-link:manage` | 为当前用户自己的受支持实例显式启用密码模式 ShareLink；会生成并返回敏感凭据。 |
 | `lite-instances:share-link:reset` | 重置已经启用的 ShareLink URL 或密码；不能首次启用，也不能修改有效期或 Workspace 权限。 |
 
@@ -309,6 +312,7 @@ Idempotency-Key: create-alice-openclaw-001
 
 {
   "name": "alice-openclaw",
+  "alias": "财务分析助手",
   "owner": "alice",
   "type": "openclaw",
   "description": "Created by northbound API"
@@ -319,7 +323,8 @@ Idempotency-Key: create-alice-openclaw-001
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
-| `name` | 是 | 实例显示名称；去除首尾空白后需同时满足 3～50 个 Unicode 字符和 3～50 个 UTF-8 字节，同一用户下不能重名。不会作为 Kubernetes 参数或镜像名使用。 |
+| `name` | 是 | 实例技术名称；去除首尾空白后需同时满足 3～50 个 Unicode 字符和 3～50 个 UTF-8 字节，同一用户下不能重名。继续用于资源和存储身份。 |
+| `alias` | 否 | 中文/用户可读别名，最多 50 个 Unicode 字符且不能包含控制字符；省略、`null` 或仅空白均按未设置处理，不会报错。门户优先显示别名，否则显示 `name`。 |
 | `owner` | 是 | 创建者或业务归属标识；去除首尾空白后为 1～128 个 UTF-8 字节，不能包含控制字符。保存和列表查询采用区分大小写的精确匹配。 |
 | `type` | 是 | 可选 `openclaw`、`hermes`、`opencode`、`deepseek-harness` 或 `workbuddy`。大小写会被规范为小写，其他类型不允许。前四种创建为 Lite；WorkBuddy 固定创建为 Linux Pro。 |
 | `description` | 否 | 实例备注，最多 2000 个 UTF-8 字节；只作为元数据，不会注入 Runtime。可省略或传 `null`。 |
@@ -809,6 +814,10 @@ python examples/northbound_client.py get
 # reset-instance 会显式发送 confirm_data_loss=true，执行前请先完成独立备份
 python examples/northbound_client.py restart-instance
 python examples/northbound_client.py reset-instance
+
+# 永久删除实例及全部数据；需要先显式授予 delete Scope
+# delete-instance 会发送 confirm_data_loss=true，成功后实例 ID 不再存在
+python examples/northbound_client.py delete-instance
 
 # 为已有实例开启密码模式；先设置 NORTHBOUND_INSTANCE_ID 和 NORTHBOUND_SHOW_SECRETS=true
 python examples/northbound_client.py enable-password

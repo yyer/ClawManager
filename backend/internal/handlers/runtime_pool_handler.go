@@ -136,6 +136,14 @@ func (h *RuntimePoolHandler) StartRollout(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "target image ref is required")
 		return
 	}
+	if runtimeType == services.RuntimeTypeHermes {
+		resolved, err := services.ResolveHermesRolloutImage(c.Request.Context(), targetImage)
+		if err != nil {
+			utils.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		targetImage = resolved
+	}
 	batchSize := req.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1
@@ -157,12 +165,8 @@ func (h *RuntimePoolHandler) StartRollout(c *gin.Context) {
 		utils.HandleError(c, err)
 		return
 	}
-	if h.scheduler != nil {
-		if err := h.scheduler.StartRollout(c.Request.Context(), rollout.ID); err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-	}
+	// The elected scheduler executes the durable job. Do not mutate runtime
+	// deployments in the HTTP request or race the background leader.
 	h.publish(c.Request.Context(), "runtime_rollout", map[string]any{
 		"rollout_id":       rollout.ID,
 		"runtime_type":     rollout.RuntimeType,
@@ -173,6 +177,26 @@ func (h *RuntimePoolHandler) StartRollout(c *gin.Context) {
 		"started_by":       rollout.StartedBy,
 	})
 	utils.Success(c, http.StatusCreated, "Runtime rollout created successfully", gin.H{"rollout": rollout})
+}
+
+func (h *RuntimePoolHandler) ListRollouts(c *gin.Context) {
+	repo, ok := h.rolloutRepo.(interface {
+		ListRecent(context.Context, string) ([]models.RuntimeRollout, error)
+	})
+	if !ok {
+		utils.Error(c, http.StatusServiceUnavailable, "Runtime rollout history unavailable")
+		return
+	}
+	items, err := repo.ListRecent(c.Request.Context(), strings.TrimSpace(c.Query("runtime_type")))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, r := range items {
+		result = append(result, services.RuntimeRolloutProgress(r))
+	}
+	utils.Success(c, http.StatusOK, "Runtime rollout history", gin.H{"items": result})
 }
 
 func (h *RuntimePoolHandler) publish(ctx context.Context, eventType string, payload any) {

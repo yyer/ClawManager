@@ -264,6 +264,7 @@ func TestRuntimeAgentHandlerGatewayReportSyncsInstanceRuntimeState(t *testing.T)
 			10: {InstanceID: 10, RuntimePodID: 9, Generation: 2},
 			11: {InstanceID: 11, RuntimePodID: 9, Generation: 2},
 			12: {InstanceID: 12, RuntimePodID: 9, Generation: 2},
+			13: {InstanceID: 13, RuntimePodID: 9, Generation: 2},
 		},
 	}
 	instanceRepo := &runtimeAgentHandlerInstanceRepo{}
@@ -277,7 +278,8 @@ func TestRuntimeAgentHandlerGatewayReportSyncsInstanceRuntimeState(t *testing.T)
 		"gateways": [
 			{"instance_id":10,"gateway_id":"gw-10","gateway_port":20010,"state":"healthy","generation":2},
 			{"instance_id":11,"gateway_id":"gw-11","gateway_port":20011,"state":"error","generation":2,"error_message":"` + message + `"},
-			{"instance_id":12,"gateway_id":"gw-12","gateway_port":20012,"state":"ready","generation":2}
+			{"instance_id":12,"gateway_id":"gw-12","gateway_port":20012,"state":"ready","generation":2},
+			{"instance_id":13,"gateway_id":"gw-13","gateway_port":20013,"state":"unhealthy","generation":2,"error_message":"http_health_failed"}
 		]
 	}`
 	rec := httptest.NewRecorder()
@@ -298,8 +300,20 @@ func TestRuntimeAgentHandlerGatewayReportSyncsInstanceRuntimeState(t *testing.T)
 	if got := instanceRepo.statusByID[12]; got != "running" {
 		t.Fatalf("ready gateway synced instance status = %q, want running", got)
 	}
+	if got := instanceRepo.statusByID[13]; got != "error" {
+		t.Fatalf("unhealthy gateway synced instance status = %q, want error", got)
+	}
+	if got := bindingRepo.stateByID[13]; got != services.RuntimeGatewayBindingUnhealthy {
+		t.Fatalf("unhealthy gateway binding state = %q, want %q", got, services.RuntimeGatewayBindingUnhealthy)
+	}
+	if bindingRepo.updateStateCalls != 2 {
+		t.Fatalf("UpdateState calls = %d, want error and unhealthy reports", bindingRepo.updateStateCalls)
+	}
 	if instanceRepo.messageByID[11] == nil || *instanceRepo.messageByID[11] != message {
 		t.Fatalf("error message = %#v, want %q", instanceRepo.messageByID[11], message)
+	}
+	if instanceRepo.messageByID[13] == nil || *instanceRepo.messageByID[13] != "http_health_failed" {
+		t.Fatalf("unhealthy message = %#v, want http_health_failed", instanceRepo.messageByID[13])
 	}
 }
 
@@ -440,6 +454,7 @@ func (r *runtimeAgentHandlerPodRepo) UpdateMetrics(ctx context.Context, podID in
 type runtimeAgentHandlerBindingRepo struct {
 	updateRunningCalls   int
 	updateStateCalls     int
+	stateByID            map[int]string
 	bindings             map[int]*models.InstanceRuntimeBinding
 	deletedInstanceIDs   []int
 	deletedRuntimePodIDs []int64
@@ -482,6 +497,10 @@ func (r *runtimeAgentHandlerBindingRepo) UpdateGatewayAssignment(ctx context.Con
 
 func (r *runtimeAgentHandlerBindingRepo) UpdateState(ctx context.Context, instanceID int, generation int, state string, message *string) error {
 	r.updateStateCalls++
+	if r.stateByID == nil {
+		r.stateByID = map[int]string{}
+	}
+	r.stateByID[instanceID] = state
 	return nil
 }
 

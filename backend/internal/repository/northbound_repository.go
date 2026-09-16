@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"clawreef/internal/models"
@@ -303,6 +304,29 @@ func (r *NorthboundRepository) RevokeSession(ctx context.Context, sessionID stri
 
 func (r *NorthboundRepository) CreateOperation(item *models.NorthboundOperation) error {
 	ensureTimestamps(&item.CreatedAt, &item.UpdatedAt)
+	if item.InstanceID != nil && (strings.HasSuffix(item.OperationType, "restart") || strings.HasSuffix(item.OperationType, "reset") || strings.HasSuffix(item.OperationType, "delete")) {
+		return r.sess.TxContext(context.Background(), func(tx db.Session) error {
+			if err := lockLifecycleScheduler(context.Background(), tx); err != nil {
+				return err
+			}
+			reserved, err := tx.Collection("instance_lifecycle_manual_guards").Find(db.Cond{"instance_id": *item.InstanceID}).Count()
+			if err != nil {
+				return err
+			}
+			if reserved > 0 {
+				return fmt.Errorf("instance has a direct mutation in progress")
+			}
+			count, err := tx.Collection("northbound_operations").Find(db.And(db.Cond{"status IN": []string{"queued", "processing", "batch_pending"}}, db.Or(db.Cond{"instance_id": *item.InstanceID}, db.Cond{"request_payload": fmt.Sprintf(`{"instance_id":%d}`, *item.InstanceID)}))).Count()
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				return fmt.Errorf("instance lifecycle operation is already reserved")
+			}
+			_, err = tx.Collection(item.TableName()).Insert(item)
+			return err
+		}, nil)
+	}
 	res, err := r.sess.Collection(item.TableName()).Insert(item)
 	if err != nil {
 		return fmt.Errorf("failed to create northbound operation: %w", err)
@@ -370,8 +394,8 @@ func (r *NorthboundRepository) GetActiveLifecycleOperation(userID, instanceID in
 	err := r.sess.Collection(item.TableName()).Find(db.And(
 		db.Cond{
 			"user_id":           userID,
-			"status IN":         []string{"queued", "processing"},
-			"operation_type IN": []string{"lite_instance_restart", "lite_instance_reset", "pro_instance_restart", "pro_instance_reset"},
+			"status IN":         []string{"queued", "processing", "batch_pending"},
+			"operation_type IN": []string{"lite_instance_restart", "lite_instance_reset", "lite_instance_delete", "pro_instance_restart", "pro_instance_reset", "pro_instance_delete"},
 		},
 		db.Or(
 			db.Cond{"instance_id": instanceID},
@@ -385,6 +409,22 @@ func (r *NorthboundRepository) GetActiveLifecycleOperation(userID, instanceID in
 		return nil, fmt.Errorf("failed to get active lifecycle operation: %w", err)
 	}
 	return &item, nil
+}
+
+// MarkOperationSucceededWithoutInstance completes operations whose resource
+// was intentionally deleted. Keeping instance_id NULL avoids restoring an
+// invalid foreign-key reference after ON DELETE SET NULL has run.
+func (r *NorthboundRepository) MarkOperationSucceededWithoutInstance(ctx context.Context, operationID string, now time.Time) error {
+	_, err := r.sess.SQL().ExecContext(ctx, `
+		UPDATE northbound_operations
+		SET status = 'succeeded', instance_id = NULL, error_code = NULL, error_message = NULL,
+		    lease_owner = NULL, lease_expires_at = NULL, finished_at = ?, updated_at = ?
+		WHERE operation_id = ?
+	`, now, now, operationID)
+	if err != nil {
+		return fmt.Errorf("failed to complete northbound operation without instance: %w", err)
+	}
+	return nil
 }
 
 func (r *NorthboundRepository) CountPendingOperationsByUser(userID int) (int, error) {
@@ -413,7 +453,8 @@ func (r *NorthboundRepository) ClaimNextOperation(ctx context.Context, leaseOwne
 				LIMIT 1
 			) candidate
 		)
-	`, leaseOwner, leaseUntil, now, now, now, now)
+		AND ((status = 'queued' AND available_at <= ?) OR (status = 'processing' AND lease_expires_at < ?))
+	`, leaseOwner, leaseUntil, now, now, now, now, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to claim northbound operation: %w", err)
 	}

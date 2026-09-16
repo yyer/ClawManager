@@ -95,7 +95,7 @@ func main() {
 	}
 
 	// Initialize services
-	authService := services.NewAuthService(userRepo, cfg.JWT)
+	authService := services.NewAuthService(userRepo, cfg.JWT, services.WithQuotaRepository(quotaRepo))
 	quotaService := services.NewQuotaService(quotaRepo)
 	userService := services.NewUserService(userRepo, quotaRepo)
 	systemImageSettingService := services.NewSystemImageSettingService(systemImageSettingRepo)
@@ -132,7 +132,9 @@ func main() {
 	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
 	var northboundCoreServer *http.Server
 	var northboundOperationWorker *northbound.OperationWorker
-	var northboundCoreService *northbound.CoreService
+	northboundCoreService := northbound.NewCoreService(northboundRepo, userRepo, instanceService, externalAccessService, cfg.Northbound, northboundRuntimeSettings)
+	northboundCoreService.SetAuditRepository(auditEventRepo)
+	northboundOperationWorker = northbound.NewOperationWorker(northboundCoreService, cfg.Runtime.BackendReplicaID)
 	if cfg.Northbound.Enabled {
 		coreTLSConfig, tlsErr := northbound.CoreTLSConfig(cfg.Northbound)
 		if tlsErr != nil {
@@ -141,9 +143,6 @@ func main() {
 		if len(cfg.Northbound.InternalJWTSecret) < 32 {
 			log.Fatal("Failed to initialize northbound Core: NORTHBOUND_INTERNAL_JWT_SECRET must contain at least 32 bytes")
 		}
-		northboundCoreService = northbound.NewCoreService(northboundRepo, userRepo, instanceService, externalAccessService, cfg.Northbound, northboundRuntimeSettings)
-		northboundCoreService.SetAuditRepository(auditEventRepo)
-		northboundOperationWorker = northbound.NewOperationWorker(northboundCoreService, cfg.Runtime.BackendReplicaID)
 		coreHandler := northbound.NewCoreHandler(northboundCoreService, cfg.Northbound.InternalJWTSecret)
 		coreRouter := gin.New()
 		_ = coreRouter.SetTrustedProxies(nil)
@@ -224,7 +223,7 @@ func main() {
 		skillService,
 		externalAccessService,
 		aiObservabilityService,
-		services.NewInstanceShellService(runtimePodRepo, bindingRepo),
+		services.NewInstanceShellService(),
 		services.WithInstanceProxyRuntimeRepositories(instanceRepo, runtimePodRepo, bindingRepo),
 	)
 	ieiSSOService, err := services.NewIEISSOService(cfg.IEISystem)
@@ -236,6 +235,17 @@ func main() {
 	if northboundCoreService != nil {
 		ieiSystemHandler.SetLifecycleService(northboundCoreService)
 	}
+
+	hermesDesktopService := services.NewHermesDesktopService(services.HermesDesktopConfig{
+		ControlUIOrigin: strings.TrimSpace(os.Getenv("CLAWMANAGER_CONTROL_UI_ORIGIN")),
+		Enabled:         strings.EqualFold(strings.TrimSpace(os.Getenv("CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED")), "true"),
+		Secret:          cfg.JWT.Secret, Instances: instanceRepo, Users: userRepo, Bindings: bindingRepo, Pods: runtimePodRepo,
+		Teams: repository.NewHermesDesktopTeamGuard(database), ExternalAccess: externalAccessService, Agent: runtimeAgentClient, Redis: platformRedis,
+	})
+	instanceHandler.SetHermesDesktopService(hermesDesktopService)
+	ieiSystemHandler.SetHermesDesktopService(hermesDesktopService)
+	hermesDesktopHandler := handlers.NewHermesDesktopHandler(hermesDesktopService)
+	authHandler.SetDesktopLogoutHook(hermesDesktopService.RevokeUserSessions)
 	systemSettingsHandler := handlers.NewSystemSettingsHandler(systemImageSettingService)
 	var northboundController services.NorthboundClusterController
 	if k8s.GetClient() != nil && k8s.GetClient().Clientset != nil {
@@ -407,7 +417,8 @@ func main() {
 	}
 
 	// Setup router
-	r := gin.Default()
+	r := gin.New()
+	r.Use(handlers.HermesDesktopRedactTickets(), gin.Logger(), gin.Recovery())
 
 	// Middleware
 	r.Use(middleware.CORS())
@@ -475,7 +486,7 @@ func main() {
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefreshToken)
-			auth.POST("/logout", authHandler.Logout)
+			auth.POST("/logout", middleware.Auth(), authHandler.Logout)
 			auth.GET("/me", middleware.Auth(), middleware.SetUserInfo(userRepo), authHandler.GetCurrentUser)
 			auth.POST("/change-password", middleware.Auth(), authHandler.ChangePassword)
 		}
@@ -504,10 +515,27 @@ func main() {
 		}
 
 		// Instance routes (authenticated)
+		// Desktop iframe requests use a separate, short-lived, instance-scoped
+		// HttpOnly cookie. Bootstrap alone uses the normal bearer middleware.
+		hermesDesktop := api.Group("/instances/:id/hermes-desktop")
+		hermesDesktop.GET("/session", hermesDesktopHandler.Session)
+		hermesDesktop.DELETE("/session", hermesDesktopHandler.ClearSession)
+		hermesDesktop.GET("/api/*path", hermesDesktopHandler.API)
+		hermesDesktop.POST("/api/*path", hermesDesktopHandler.API)
+		hermesDesktop.PUT("/api/*path", hermesDesktopHandler.API)
+		hermesDesktop.PATCH("/api/*path", hermesDesktopHandler.API)
+		hermesDesktop.DELETE("/api/*path", hermesDesktopHandler.API)
+		hermesDesktop.POST("/ws-ticket", hermesDesktopHandler.Ticket)
+		hermesDesktop.GET("/ws", hermesDesktopHandler.WebSocket)
 		instances := api.Group("/instances")
 		instances.Use(middleware.Auth())
 		instances.Use(middleware.SetUserInfo(userRepo))
+		instanceHandler.SetBatchMutationReservation(northboundRepo.ReserveInstanceMutations)
+		instances.Use(northboundCoreService.BatchMutationGuard)
+		northboundCoreService.RegisterBatchRoutes(instances)
 		{
+			instances.GET("/:id/hermes-desktop/bootstrap", hermesDesktopHandler.Bootstrap)
+			instances.POST("/:id/hermes-desktop/bootstrap", hermesDesktopHandler.Bootstrap)
 			instances.GET("", instanceHandler.ListInstances)
 			instances.GET("/summary", instanceHandler.GetInstanceSummary)
 			instances.POST("", instanceHandler.CreateInstance)
@@ -582,6 +610,7 @@ func main() {
 			adminRuntime.GET("/runtime-pods/:id/gateways", runtimePoolHandler.GetPodGateways)
 			adminRuntime.POST("/runtime-pods/:id/drain", runtimePoolHandler.DrainPod)
 			adminRuntime.POST("/runtime-rollouts", runtimePoolHandler.StartRollout)
+			adminRuntime.GET("/runtime-rollouts", runtimePoolHandler.ListRollouts)
 		}
 
 		teams := api.Group("/teams")

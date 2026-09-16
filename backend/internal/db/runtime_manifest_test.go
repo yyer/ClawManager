@@ -125,6 +125,34 @@ func TestRuntimeManifestsStartHermesRuntime(t *testing.T) {
 	}
 }
 
+func TestNineNodeProductionHermesRuntimeEnablesDesktopWeb(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	manifest := filepath.Join(repoRoot, "deployments", "k8s", "sites", "nine-node-production", "20-clawmanager-production.yaml")
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("read production manifest: %v", err)
+	}
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	pattern := regexp.MustCompile(`(?s)name:\s+hermes-runtime.*?(?:\n---|\z)`)
+	hermesDeployment := pattern.FindString(text)
+	if hermesDeployment == "" {
+		t.Fatal("production manifest must contain hermes-runtime deployment")
+	}
+	for _, want := range []string{
+		"- name: CLAWMANAGER_HERMES_DESKTOP_WEB_ENABLED\n              value: \"true\"",
+		"- name: CLAWMANAGER_HERMES_BACKEND_MODE\n              value: \"serve\"",
+		"- name: HERMES_DEPLOYMENT_NAMESPACE",
+		"- name: CLAWMANAGER_CONTROL_UI_ORIGIN\n              value: \"http://clawmanager-gateway.$(HERMES_DEPLOYMENT_NAMESPACE).svc.cluster.local:9001\"",
+	} {
+		if !strings.Contains(hermesDeployment, want) {
+			t.Fatalf("production hermes-runtime must contain %q", want)
+		}
+	}
+	if strings.Contains(hermesDeployment, "- name: CLAWMANAGER_TRUSTED_PROXY_CIDRS") {
+		t.Fatal("production Hermes trust must use verified Service endpoints unless an operator explicitly configures narrower proxies")
+	}
+}
+
 func TestRuntimeManifestsStartDeepSeekHarnessRuntime(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	for _, manifest := range deploymentRuntimeManifests(repoRoot) {
@@ -172,6 +200,27 @@ func TestRuntimeManifestsExposeOpenCodePublicURLTemplate(t *testing.T) {
 				t.Fatalf("manifest %s must expose the OpenCode public URL template", manifest)
 			}
 		})
+	}
+}
+
+func TestNginxRoutesOpenCodePerInstanceOrigins(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	raw, err := os.ReadFile(filepath.Join(repoRoot, "deployments", "nginx", "nginx.conf"))
+	if err != nil {
+		t.Fatalf("read nginx config: %v", err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"server_name ~^opencode-(?<runtime_inst_id>[0-9]+)\\..+$;",
+		"X-ClawManager-Runtime-Origin opencode",
+		"/api/v1/instances/$runtime_inst_id/proxy$1",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("nginx config must contain %q", required)
+		}
+	}
+	if got := strings.Count(text, "proxy_set_header X-ClawManager-Runtime-Origin \"\";"); got < 2 {
+		t.Fatalf("public nginx routes must clear the dedicated-origin marker, got %d guards", got)
 	}
 }
 
@@ -277,6 +326,7 @@ func TestDesktopAuthAllowsDedicatedOriginTokenRotation(t *testing.T) {
 		"var cookieTokens = readCookieTokens(r)",
 		"validateTokenCandidate(r, cookieTokens[i], key, false)",
 		"validateTokenCandidate(r, queryToken, key, true)",
+		"if (!queryCapability.payload.upstream)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("desktop auth must support managed query-token rotation; missing %q", want)
@@ -355,5 +405,42 @@ func deploymentRuntimeManifests(repoRoot string) []string {
 		filepath.Join(repoRoot, "deployments", "k8s", "single-node", "clawmanager.yaml"),
 		filepath.Join(repoRoot, "deployments", "k3s", "cluster", "clawmanager.yaml"),
 		filepath.Join(repoRoot, "deployments", "k3s", "single-node", "clawmanager.yaml"),
+	}
+}
+
+func TestInitialSchemasIncludeOptionalInstanceAlias(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	manifests := append(
+		deploymentRuntimeManifests(repoRoot),
+		filepath.Join(repoRoot, "backend", "deployments", "k8s", "clawreef-incluster.yaml"),
+		filepath.Join(repoRoot, "deployments", "k8s", "sites", "nine-node-production", "20-clawmanager-production.yaml"),
+	)
+	for _, manifest := range manifests {
+		raw, err := os.ReadFile(manifest)
+		if err != nil {
+			t.Fatalf("read manifest %s: %v", manifest, err)
+		}
+		if !strings.Contains(string(raw), "alias VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL") {
+			t.Fatalf("manifest %s must include the optional instance alias column", manifest)
+		}
+	}
+}
+
+func TestNorthboundGatewayBootstrapIncludesDynamicSettingsReadGrants(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	for _, relative := range []string{
+		filepath.Join("deployments", "k8s", "sites", "nine-node-production", "scripts", "bootstrap-northbound-secrets.sh"),
+		filepath.Join("deployments", "k8s", "northbound", "README.md"),
+		filepath.Join("docs", "northbound-upgrade-guide.md"),
+	} {
+		raw, err := os.ReadFile(filepath.Join(repoRoot, relative))
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		for _, table := range []string{"northbound_admin_settings", "northbound_caller_policies"} {
+			if !strings.Contains(string(raw), "GRANT SELECT ON clawmanager."+table) {
+				t.Fatalf("%s must grant Gateway read access to %s", relative, table)
+			}
+		}
 	}
 }

@@ -54,6 +54,10 @@ async function refreshDedicatedRuntimeCookie(accessURL: string) {
   });
 }
 
+function instanceDisplayName(instance: IEISystemInstance) {
+  return instance.alias?.trim() || instance.name;
+}
+
 export default function IEISystemInstancePage() {
   const { id = "" } = useParams<{ id: string }>();
   const instanceID = Number(id);
@@ -265,7 +269,7 @@ export default function IEISystemInstancePage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold text-slate-950">{instance.name}</h1>
+            <h1 className="truncate text-base font-semibold text-slate-950">{instanceDisplayName(instance)}</h1>
             <p className="text-xs text-slate-500">浪潮信息安全访问 · {instance.owner}</p>
           </div>
         </div>
@@ -312,7 +316,7 @@ export default function IEISystemInstancePage() {
           style={isFullscreen ? { height: "100vh", width: "100vw", borderRadius: 0 } : undefined}
         >
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-3">
-            <span className="min-w-0 truncate text-sm font-medium text-slate-950">{instance.name}</span>
+            <span className="min-w-0 truncate text-sm font-medium text-slate-950">{instanceDisplayName(instance)}</span>
             <div className="flex shrink-0 items-center gap-2">
               <button type="button" className="cm-icon-button" title="刷新访问" onClick={() => void openInstance()}>
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -334,7 +338,7 @@ export default function IEISystemInstancePage() {
           {frameSrc ? (
             <iframe
               key={`${frameSrc}:${frameVersion}`}
-              title={`${instance.name} service`}
+              title={`${instanceDisplayName(instance)} service`}
               src={frameSrc}
               className="min-h-0 w-full flex-1 border-0 bg-white"
               scrolling="no"

@@ -3,10 +3,11 @@ package services
 import "strings"
 
 const (
-	RuntimeGatewayBindingCreating = "creating"
-	RuntimeGatewayBindingRunning  = "running"
-	RuntimeGatewayBindingError    = "error"
-	RuntimeGatewayBindingStopped  = "stopped"
+	RuntimeGatewayBindingCreating  = "creating"
+	RuntimeGatewayBindingRunning   = "running"
+	RuntimeGatewayBindingUnhealthy = "unhealthy"
+	RuntimeGatewayBindingError     = "error"
+	RuntimeGatewayBindingStopped   = "stopped"
 )
 
 type RuntimeGatewayLifecycleState struct {
@@ -35,6 +36,14 @@ func NormalizeRuntimeGatewayLifecycle(rawState string, reportedMessage *string) 
 		state.InstanceState = "creating"
 		state.EventType = "runtime.instance.starting"
 		state.Message = messageOrDefault(message, "runtime gateway starting")
+	case "unhealthy", "unavailable":
+		// The gateway process is still owned by the current runtime agent. Keep
+		// its binding so a later successful probe can restore the instance in
+		// place, while exposing the failed health state as Unavailable.
+		state.BindingState = RuntimeGatewayBindingUnhealthy
+		state.InstanceState = "error"
+		state.EventType = "runtime.instance.unavailable"
+		state.Message = messageOrDefault(message, "runtime gateway reported "+raw)
 	case "error", "failed", "failure", "errored":
 		state.BindingState = RuntimeGatewayBindingError
 		state.InstanceState = "error"

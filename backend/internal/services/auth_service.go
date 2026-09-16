@@ -30,15 +30,34 @@ type TokenPair struct {
 // authService implements AuthService
 type authService struct {
 	userRepo  repository.UserRepository
+	quotaRepo repository.QuotaRepository
 	jwtConfig config.JWTConfig
 }
 
+// AuthServiceOption configures optional authentication dependencies while
+// preserving the local constructor's existing call sites.
+type AuthServiceOption func(*authService)
+
+// WithQuotaRepository ensures self-registered users receive the same default
+// quota as users created by an administrator.
+func WithQuotaRepository(quotaRepo repository.QuotaRepository) AuthServiceOption {
+	return func(s *authService) {
+		s.quotaRepo = quotaRepo
+	}
+}
+
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, jwtConfig config.JWTConfig) AuthService {
-	return &authService{
+func NewAuthService(userRepo repository.UserRepository, jwtConfig config.JWTConfig, options ...AuthServiceOption) AuthService {
+	s := &authService{
 		userRepo:  userRepo,
 		jwtConfig: jwtConfig,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(s)
+		}
+	}
+	return s
 }
 
 // Register registers a new user
@@ -80,6 +99,13 @@ func (s *authService) Register(username, email, password string) (*models.User, 
 
 	if err := s.userRepo.Create(user); err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+	// Self-registration needs the same ordinary quota as administrator-created
+	// users. Instance creation must not depend on first visiting the quota page.
+	if s.quotaRepo != nil {
+		if _, err := s.quotaRepo.CreateDefaultQuota(user.ID); err != nil {
+			return nil, fmt.Errorf("failed to create default quota: %w", err)
+		}
 	}
 
 	return user, nil
